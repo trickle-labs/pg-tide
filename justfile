@@ -20,6 +20,17 @@ test-unit:
     cargo test --package {{PG_TIDE_EXT}} --lib -- --test-threads=4
     cargo test --package {{PG_TIDE_RELAY}} --bins -- --test-threads=4
 
+# Run integration tests (requires Docker for testcontainers)
+test-integration:
+    cargo test --package {{PG_TIDE_RELAY}} --test '*' -- --test-threads=1
+
+# Run pgrx extension tests (requires PostgreSQL 18)
+test-pgrx:
+    cargo pgrx test pg18 --package {{PG_TIDE_EXT}}
+
+# Run all tests
+test-all: test-unit test-integration
+
 # Build the relay binary
 build-relay:
     cargo build --package {{PG_TIDE_RELAY}} --release
@@ -31,6 +42,18 @@ build:
 # Check all
 check:
     cargo check --all
+
+# Build documentation (requires mdbook)
+docs-build:
+    mdbook build
+
+# Serve documentation locally
+docs-serve:
+    mdbook serve --open
+
+# Build Docker image
+docker-build:
+    docker build -t ghcr.io/trickle-labs/pg-tide:latest .
 
 # Default: fmt + lint + test-unit
 all: fmt lint test-unit
