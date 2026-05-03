@@ -16,18 +16,6 @@ pub enum PgTideError {
     #[error("inbox not found: {0}")]
     InboxNotFound(String),
 
-    #[error("inbox table not found for inbox '{0}'")]
-    InboxTableNotFound(String),
-
-    #[error("inbox column missing: {0}")]
-    InboxColumnMissing(String),
-
-    #[error("inbox ordering priority conflict: {0}")]
-    InboxOrderingPriorityConflict(String),
-
-    #[error("relay pipeline already exists: {0}")]
-    RelayAlreadyExists(String),
-
     #[error("relay pipeline not found: {0}")]
     RelayNotFound(String),
 

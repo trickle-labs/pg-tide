@@ -19,12 +19,6 @@ use pgrx::prelude::*;
 
 // ── Internal helpers ──────────────────────────────────────────────────────
 
-/// Build an outbox name from a user-supplied logical name.
-/// Truncated to 63 bytes to stay within PostgreSQL identifier limits.
-pub fn outbox_name_for(name: &str) -> String {
-    name.chars().take(63).collect()
-}
-
 /// Check if an outbox with the given name exists in tide_outbox_config.
 pub fn outbox_exists(outbox_name: &str) -> bool {
     Spi::get_one_with_args::<bool>(
@@ -121,8 +115,7 @@ fn outbox_publish_impl(
     .map_err(|e| PgTideError::SpiError(format!("INSERT outbox_messages: {e}")))?;
 
     // Notify consumers.
-    let notify_sql = format!("SELECT pg_notify('tide_outbox_new', $1)");
-    let _ = Spi::run_with_args(&notify_sql, &[name.into()]);
+    let _ = Spi::run_with_args("SELECT pg_notify('tide_outbox_new', $1)", &[name.into()]);
 
     Ok(())
 }

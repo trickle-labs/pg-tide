@@ -83,6 +83,7 @@ fn relay_set_outbox_impl(
 
 /// Configure a reverse relay pipeline (external source → inbox).
 #[pg_extern(schema = "tide")]
+#[allow(clippy::too_many_arguments)]
 pub fn relay_set_inbox(
     p_name: &str,
     p_inbox: &str,
