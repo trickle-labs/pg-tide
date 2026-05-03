@@ -1,0 +1,9 @@
+# pg_tide extension control file
+comment = 'Transactional outbox, idempotent inbox, and relay catalog for PostgreSQL'
+default_version = '0.1.0'
+module_pathname = '$libdir/pg_tide_ext'
+relocatable = false
+requires = ''
+superuser = false
+trusted = true
+schema = 'tide'
