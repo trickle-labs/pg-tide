@@ -37,10 +37,7 @@ impl RelayMetrics {
         )?;
 
         let publish_errors = register_int_counter_vec!(
-            prometheus::opts!(
-                "pg_tide_relay_publish_errors_total",
-                "Total publish errors"
-            ),
+            prometheus::opts!("pg_tide_relay_publish_errors_total", "Total publish errors"),
             &["pipeline", "direction"]
         )?;
 

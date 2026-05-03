@@ -14,8 +14,8 @@
 //! Consumer groups are registered in `tide.tide_consumer_groups` with offsets
 //! in `tide.tide_consumer_offsets` and leases in `tide.tide_consumer_leases`.
 
-use pgrx::prelude::*;
 use crate::error::PgTideError;
+use pgrx::prelude::*;
 
 // ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -90,13 +90,8 @@ fn outbox_create_impl(
 /// transaction, providing the same atomicity as a direct INSERT.
 /// `pg_notify('tide_outbox_new', name)` fires after the INSERT.
 #[pg_extern(schema = "tide")]
-pub fn outbox_publish(
-    p_name: &str,
-    p_payload: pgrx::JsonB,
-    p_headers: pgrx::JsonB,
-) {
-    outbox_publish_impl(p_name, p_payload, p_headers)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+pub fn outbox_publish(p_name: &str, p_payload: pgrx::JsonB, p_headers: pgrx::JsonB) {
+    outbox_publish_impl(p_name, p_payload, p_headers).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn outbox_publish_impl(
@@ -126,9 +121,7 @@ fn outbox_publish_impl(
     .map_err(|e| PgTideError::SpiError(format!("INSERT outbox_messages: {e}")))?;
 
     // Notify consumers.
-    let notify_sql = format!(
-        "SELECT pg_notify('tide_outbox_new', $1)"
-    );
+    let notify_sql = format!("SELECT pg_notify('tide_outbox_new', $1)");
     let _ = Spi::run_with_args(&notify_sql, &[name.into()]);
 
     Ok(())
@@ -333,8 +326,7 @@ fn create_consumer_group_impl(
 /// Drop a consumer group.
 #[pg_extern(schema = "tide")]
 pub fn drop_consumer_group(p_name: &str, p_if_exists: default!(bool, false)) {
-    drop_consumer_group_impl(p_name, p_if_exists)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    drop_consumer_group_impl(p_name, p_if_exists).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn drop_consumer_group_impl(name: &str, if_exists: bool) -> Result<(), PgTideError> {
@@ -357,8 +349,7 @@ fn drop_consumer_group_impl(name: &str, if_exists: bool) -> Result<(), PgTideErr
 /// Commit consumer offset after successful processing.
 #[pg_extern(schema = "tide")]
 pub fn commit_offset(p_group: &str, p_consumer: &str, p_last_offset: i64) {
-    commit_offset_impl(p_group, p_consumer, p_last_offset)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    commit_offset_impl(p_group, p_consumer, p_last_offset).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn commit_offset_impl(group: &str, consumer: &str, last_offset: i64) -> Result<(), PgTideError> {
@@ -385,8 +376,7 @@ fn commit_offset_impl(group: &str, consumer: &str, last_offset: i64) -> Result<(
 /// Update consumer heartbeat timestamp.
 #[pg_extern(schema = "tide")]
 pub fn consumer_heartbeat(p_group: &str, p_consumer: &str) {
-    consumer_heartbeat_impl(p_group, p_consumer)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    consumer_heartbeat_impl(p_group, p_consumer).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn consumer_heartbeat_impl(group: &str, consumer: &str) -> Result<(), PgTideError> {

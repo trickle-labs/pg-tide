@@ -3,8 +3,8 @@
 //! Provides `tide.inbox_create()`, `tide.inbox_mark_processed()`,
 //! `tide.inbox_mark_failed()`, `tide.replay_inbox_messages()`, etc.
 
-use pgrx::prelude::*;
 use crate::error::PgTideError;
+use pgrx::prelude::*;
 
 // ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -113,9 +113,7 @@ fn inbox_drop_impl(name: &str, if_exists: bool) -> Result<(), PgTideError> {
     .unwrap_or(None)
     .unwrap_or_else(|| "tide".to_string());
 
-    let drop_table = format!(
-        r#"DROP TABLE IF EXISTS "{schema}"."{name}_inbox" CASCADE"#
-    );
+    let drop_table = format!(r#"DROP TABLE IF EXISTS "{schema}"."{name}_inbox" CASCADE"#);
     let _ = Spi::run(&drop_table);
 
     Spi::run_with_args(
@@ -133,8 +131,7 @@ fn inbox_drop_impl(name: &str, if_exists: bool) -> Result<(), PgTideError> {
 /// Mark an inbox message as successfully processed.
 #[pg_extern(schema = "tide")]
 pub fn inbox_mark_processed(p_name: &str, p_event_id: &str) {
-    inbox_mark_processed_impl(p_name, p_event_id)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    inbox_mark_processed_impl(p_name, p_event_id).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn inbox_mark_processed_impl(name: &str, event_id: &str) -> Result<(), PgTideError> {
@@ -165,8 +162,7 @@ fn inbox_mark_processed_impl(name: &str, event_id: &str) -> Result<(), PgTideErr
 /// Mark an inbox message as failed (increments retry_count, stores error).
 #[pg_extern(schema = "tide")]
 pub fn inbox_mark_failed(p_name: &str, p_event_id: &str, p_error: &str) {
-    inbox_mark_failed_impl(p_name, p_event_id, p_error)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    inbox_mark_failed_impl(p_name, p_event_id, p_error).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn inbox_mark_failed_impl(name: &str, event_id: &str, error: &str) -> Result<(), PgTideError> {
@@ -216,9 +212,7 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
         .unwrap_or_else(|| "tide".to_string());
 
         let pending: i64 = Spi::get_one_with_args::<i64>(
-            &format!(
-                r#"SELECT COUNT(*) FROM "{schema}"."{n}_inbox" WHERE processed_at IS NULL"#
-            ),
+            &format!(r#"SELECT COUNT(*) FROM "{schema}"."{n}_inbox" WHERE processed_at IS NULL"#),
             &[],
         )
         .unwrap_or(None)
@@ -253,14 +247,10 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
 /// Re-queue failed messages from DLQ back to the pending queue.
 #[pg_extern(schema = "tide")]
 pub fn replay_inbox_messages(p_name: &str, p_event_ids: Vec<String>) -> i64 {
-    replay_inbox_messages_impl(p_name, p_event_ids)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    replay_inbox_messages_impl(p_name, p_event_ids).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
-fn replay_inbox_messages_impl(
-    name: &str,
-    event_ids: Vec<String>,
-) -> Result<i64, PgTideError> {
+fn replay_inbox_messages_impl(name: &str, event_ids: Vec<String>) -> Result<i64, PgTideError> {
     if !inbox_exists(name) {
         return Err(PgTideError::InboxNotFound(name.to_string()));
     }

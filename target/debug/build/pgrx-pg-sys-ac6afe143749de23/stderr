@@ -1,0 +1,15 @@
+build_paths=BuildPaths { manifest_dir: "/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-sys-0.18.0", out_dir: "/Users/geir.gronmo/projects/pg-tide/target/debug/build/pgrx-pg-sys-ac6afe143749de23/out", src_dir: "/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-sys-0.18.0/src/include", shim_src: "/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-sys-0.18.0/pgrx-cshim.c", shim_dst: "/Users/geir.gronmo/projects/pg-tide/target/debug/build/pgrx-pg-sys-ac6afe143749de23/out/pgrx-cshim.c" }
+Generating bindings for pg18
+pg_config --configure CLANG = None
+pg_target_includes = ["/opt/homebrew/include/postgresql@18/server/"]
+Bindgen found Apple clang version 21.0.0 (clang-2100.0.123.102)
+found libclang at /Library/Developer/CommandLineTools/usr/lib/libclang.dylib
+Found include dirs ["/Library/Developer/CommandLineTools/usr/lib/clang/21/include"]
+[[bindings_diff]] cd "." && env -u DEBUG -u DYLD_FALLBACK_LIBRARY_PATH -u MAKEFLAGS -u MAKELEVEL -u MFLAGS -u NUM_JOBS -u OPT_LEVEL -u OUT_DIR -u PROFILE "rustfmt" "/Users/geir.gronmo/projects/pg-tide/target/debug/build/pgrx-pg-sys-ac6afe143749de23/out/pg18.rs" "--edition" "2021"
+[[bindings_diff]] -------- cd "." && env -u DEBUG -u DYLD_FALLBACK_LIBRARY_PATH -u MAKEFLAGS -u MAKELEVEL -u MFLAGS -u NUM_JOBS -u OPT_LEVEL -u OUT_DIR -u PROFILE "rustfmt" "/Users/geir.gronmo/projects/pg-tide/target/debug/build/pgrx-pg-sys-ac6afe143749de23/out/pg18.rs" "--edition" "2021" -------- 
+[[bindings_diff]] /----------------------------------------
+
+[[bindings_diff]] cd "." && env -u DEBUG -u DYLD_FALLBACK_LIBRARY_PATH -u MAKEFLAGS -u MAKELEVEL -u MFLAGS -u NUM_JOBS -u OPT_LEVEL -u OUT_DIR -u PROFILE "rustfmt" "/Users/geir.gronmo/projects/pg-tide/target/debug/build/pgrx-pg-sys-ac6afe143749de23/out/pg18_oids.rs" "--edition" "2021"
+[[bindings_diff]] -------- cd "." && env -u DEBUG -u DYLD_FALLBACK_LIBRARY_PATH -u MAKEFLAGS -u MAKELEVEL -u MFLAGS -u NUM_JOBS -u OPT_LEVEL -u OUT_DIR -u PROFILE "rustfmt" "/Users/geir.gronmo/projects/pg-tide/target/debug/build/pgrx-pg-sys-ac6afe143749de23/out/pg18_oids.rs" "--edition" "2021" -------- 
+[[bindings_diff]] /----------------------------------------
+

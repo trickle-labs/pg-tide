@@ -1,0 +1,10 @@
+/Users/geir.gronmo/projects/pg-tide/target/debug/deps/pgrx_pg_config-091dd9e885cbee17.d: /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/lib.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/decoding.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/cargo.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/path_methods.rs
+
+/Users/geir.gronmo/projects/pg-tide/target/debug/deps/libpgrx_pg_config-091dd9e885cbee17.rlib: /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/lib.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/decoding.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/cargo.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/path_methods.rs
+
+/Users/geir.gronmo/projects/pg-tide/target/debug/deps/libpgrx_pg_config-091dd9e885cbee17.rmeta: /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/lib.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/decoding.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/cargo.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/path_methods.rs
+
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/lib.rs:
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/decoding.rs:
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/cargo.rs:
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pgrx-pg-config-0.18.0/src/path_methods.rs:
