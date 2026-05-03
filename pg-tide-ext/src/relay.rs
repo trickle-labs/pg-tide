@@ -7,8 +7,8 @@
 //! The relay catalog stores pipeline configurations that the `pg-tide` binary
 //! reads to set up source/sink connections.
 
-use pgrx::prelude::*;
 use crate::error::PgTideError;
+use pgrx::prelude::*;
 
 fn relay_exists(name: &str) -> bool {
     let in_outbox = Spi::get_one_with_args::<bool>(
@@ -94,7 +94,14 @@ pub fn relay_set_inbox(
     p_idempotent: default!(bool, true),
 ) {
     relay_set_inbox_impl(
-        p_name, p_inbox, p_config, p_batch_size, p_source, p_enabled, p_max_retries, p_idempotent,
+        p_name,
+        p_inbox,
+        p_config,
+        p_batch_size,
+        p_source,
+        p_enabled,
+        p_max_retries,
+        p_idempotent,
     )
     .unwrap_or_else(|e| pgrx::error!("{}", e))
 }

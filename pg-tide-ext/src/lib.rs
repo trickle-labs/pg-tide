@@ -10,8 +10,8 @@
 use pgrx::prelude::*;
 
 mod error;
-mod outbox;
 mod inbox;
+mod outbox;
 mod relay;
 
 pgrx::pg_module_magic!();
@@ -24,8 +24,8 @@ extern "C-unwind" fn _PG_init() {
 }
 
 // Re-export all pg_extern functions so pgrx discovers them.
-use crate::outbox::*;
 use crate::inbox::*;
+use crate::outbox::*;
 use crate::relay::*;
 
 #[cfg(test)]

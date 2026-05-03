@@ -59,4 +59,4 @@ jobs:
             libclang-dev clang llvm-dev pkg-config
 
       - name: Run relay unit tests
-        run: cargo test --package pg-tide-relay --lib -- --test-threads=4
+        run: cargo test --package pg-tide-relay --bins -- --test-threads=4
