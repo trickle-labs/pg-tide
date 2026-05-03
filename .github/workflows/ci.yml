@@ -31,8 +31,57 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy (all targets)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      # pg-tide-relay is a pure Rust binary — no PostgreSQL needed.
+      # pg-tide-ext (pgrx) requires PostgreSQL 18 headers to compile.
+      # Clippy on the relay is fast; skip the ext here.
+      - name: Clippy (relay — no PostgreSQL required)
+        run: cargo clippy --package pg-tide-relay --all-targets --all-features -- -D warnings
+
+  lint-ext:
+    name: Clippy (pg-tide-ext)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-ext-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install PostgreSQL 18 and build dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates gnupg lsb-release \
+            libclang-dev clang llvm-dev pkg-config
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            --fail -sS https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-18 postgresql-server-dev-18
+
+      - name: Install cargo-pgrx
+        run: cargo install cargo-pgrx --version "=0.18.0" --locked
+
+      - name: Init pgrx with system PostgreSQL 18
+        run: cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
+
+      - name: Clippy (pg-tide-ext)
+        run: cargo clippy --package pg-tide-ext --all-targets --features pg18 -- -D warnings
 
   test-unit:
     name: Unit Tests
