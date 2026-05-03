@@ -1,0 +1,26 @@
+[book]
+title       = "pg_tide Documentation"
+authors     = ["The pg_tide Contributors"]
+src         = "docs/src"
+language    = "en"
+
+[build]
+build-dir   = "docs/book"
+
+[preprocessor.admonish]
+command     = "mdbook-admonish"
+assets_version = "3.0.2"
+
+[output.html]
+default-theme           = "navy"
+preferred-dark-theme    = "navy"
+git-repository-url      = "https://github.com/trickle-labs/pg-tide"
+edit-url-template       = "https://github.com/trickle-labs/pg-tide/edit/main/docs/src/{path}"
+site-url                = "/pg-tide/"
+
+[output.html.search]
+enable              = true
+limit-results       = 20
+use-boolean-and     = true
+boost-title         = 2
+heading-split-level = 3

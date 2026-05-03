@@ -1,67 +1,102 @@
 # pg_tide
 
-Transactional outbox, idempotent inbox, and relay catalog for PostgreSQL 18+.
+[![CI](https://github.com/trickle-labs/pg-tide/actions/workflows/ci.yml/badge.svg)](https://github.com/trickle-labs/pg-tide/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Extracted from [pg_trickle](https://github.com/trickle-labs/pg-trickle) v0.46.0
-as a standalone extension that works independently of pg_trickle.
+**Transactional outbox, idempotent inbox, and relay pipelines for PostgreSQL 18+.**
+
+pg_tide gives your PostgreSQL database a built-in messaging backbone. Publish events atomically within your existing transactions — no dual-writes, no distributed transactions, no message broker required at the database layer.
+
+When you're ready to fan out to Kafka, NATS, Redis Streams, or any other system, the `pg-tide` relay binary bridges the gap with exactly-once delivery semantics.
 
 ## Features
 
 - **Transactional Outbox** — publish messages within a database transaction; no 2PC, no dual-writes
-- **Idempotent Inbox** — exactly-once delivery semantics with event deduplication
-- **Relay Catalog** — store forward/reverse relay pipeline configurations, read by the `pg-tide` binary
-- **Consumer Groups** — named consumer groups with committed offsets and heartbeat tracking
+- **Idempotent Inbox** — exactly-once delivery with event deduplication via unique constraints
+- **Consumer Groups** — Kafka-style offset tracking with heartbeats and visibility leases
+- **Relay Binary** — standalone `pg-tide` process bridging outboxes/inboxes with external systems
+- **Multi-Backend** — NATS, Kafka, Redis Streams, RabbitMQ, SQS, HTTP Webhooks
+- **Hot Reload** — pipeline config lives in PostgreSQL; changes apply without relay restart
+- **HA Ready** — advisory lock coordination for automatic failover across relay instances
+
+## Quick Start
+
+```sql
+-- Install the extension
+CREATE EXTENSION pg_tide;
+
+-- Create an outbox
+SELECT tide.outbox_create('orders', p_retention_hours := 24);
+
+-- Publish a message (atomically with your business transaction)
+BEGIN;
+  INSERT INTO orders (id, total) VALUES (42, 99.99);
+  SELECT tide.outbox_publish('orders',
+    '{"order_id": 42, "total": 99.99}'::jsonb,
+    '{"event_type": "order.created"}'::jsonb
+  );
+COMMIT;
+
+-- Configure a relay pipeline
+SELECT tide.relay_set_outbox('orders-nats', 'orders', 'nats',
+  '{"url": "nats://localhost:4222", "subject": "orders.events"}'::jsonb
+);
+```
+
+Then start the relay:
+
+```bash
+pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
+```
+
+Messages flow automatically from the outbox to NATS. See the [documentation](https://trickle-labs.github.io/pg-tide/) for full details.
 
 ## Installation
+
+### Extension
 
 ```sql
 CREATE EXTENSION pg_tide;
 ```
 
-## Quick Start
+### Relay Binary
 
-```sql
--- Create an outbox
-SELECT tide.outbox_create('orders', 24, 10000);
+```bash
+# From GitHub releases
+curl -LO https://github.com/trickle-labs/pg-tide/releases/latest/download/pg-tide-x86_64-unknown-linux-gnu.tar.gz
+tar xzf pg-tide-*.tar.gz && sudo mv pg-tide /usr/local/bin/
 
--- Publish a message (within your business transaction)
-SELECT tide.outbox_publish('orders', '{"order_id": 42}'::jsonb, '{}'::jsonb);
-
--- Create a consumer group
-SELECT tide.create_consumer_group('my-consumer', 'orders');
-
--- Check status
-SELECT tide.outbox_status('orders');
+# Or via Docker
+docker pull ghcr.io/trickle-labs/pg-tide:latest
 ```
 
-## Schema
+## Documentation
 
-All objects live in the `tide` schema:
+Full documentation is available at **[trickle-labs.github.io/pg-tide](https://trickle-labs.github.io/pg-tide/)**.
 
-| Object | Type | Description |
-|--------|------|-------------|
-| `tide.outbox_create()` | function | Create a named outbox |
-| `tide.outbox_publish()` | function | Publish a message to an outbox |
-| `tide.outbox_drop()` | function | Drop an outbox and all its messages |
-| `tide.outbox_status()` | function | Status summary as JSONB |
-| `tide.outbox_disable()` | function | Pause publishing |
-| `tide.outbox_enable()` | function | Resume publishing |
-| `tide.create_consumer_group()` | function | Create a consumer group |
-| `tide.drop_consumer_group()` | function | Drop a consumer group |
-| `tide.commit_offset()` | function | Commit consumer offset |
-| `tide.consumer_heartbeat()` | function | Update consumer heartbeat |
-| `tide.inbox_create()` | function | Create a named inbox |
-| `tide.inbox_drop()` | function | Drop an inbox |
-| `tide.inbox_mark_processed()` | function | Mark a message as processed |
-| `tide.inbox_mark_failed()` | function | Mark a message as failed |
-| `tide.inbox_status()` | function | Inbox status as JSONB |
-| `tide.relay_set_outbox()` | function | Configure forward relay pipeline |
-| `tide.relay_set_inbox()` | function | Configure reverse relay pipeline |
-| `tide.relay_enable()` | function | Enable a relay pipeline |
-| `tide.relay_disable()` | function | Disable a relay pipeline |
-| `tide.relay_delete()` | function | Delete a relay pipeline |
-| `tide.outbox_pending` | view | Pending messages per outbox |
-| `tide.consumer_lag` | view | Consumer lag per group |
+- [Getting Started](https://trickle-labs.github.io/pg-tide/getting-started/quickstart.html)
+- [SQL API Reference](https://trickle-labs.github.io/pg-tide/sql-reference/outbox-api.html)
+- [Relay Configuration](https://trickle-labs.github.io/pg-tide/relay-guide/configuration.html)
+- [Architecture](https://trickle-labs.github.io/pg-tide/evaluate/architecture.html)
+
+## SQL API Overview
+
+All functions live in the `tide` schema:
+
+| Function | Description |
+|----------|-------------|
+| `tide.outbox_create()` | Create a named outbox |
+| `tide.outbox_publish()` | Publish a message atomically |
+| `tide.outbox_status()` | Status summary as JSONB |
+| `tide.inbox_create()` | Create a named inbox |
+| `tide.inbox_mark_processed()` | Mark message processed |
+| `tide.inbox_mark_failed()` | Record failure with retry tracking |
+| `tide.relay_set_outbox()` | Configure forward pipeline (outbox → sink) |
+| `tide.relay_set_inbox()` | Configure reverse pipeline (source → inbox) |
+| `tide.create_consumer_group()` | Create a consumer group |
+| `tide.commit_offset()` | Commit consumer position |
+
+Views: `tide.outbox_pending` · `tide.consumer_lag`
 
 ## Integration with pg_trickle
 
@@ -70,10 +105,7 @@ install pg_tide first and then use `pgtrickle.attach_outbox()` to automatically
 publish stream table changes to an outbox:
 
 ```sql
--- Install pg_tide first
 CREATE EXTENSION pg_tide;
-
--- Then attach to a stream table
 SELECT pgtrickle.attach_outbox('my_stream_table', retention_hours := 48);
 ```
 
