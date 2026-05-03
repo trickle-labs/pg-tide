@@ -68,7 +68,7 @@ impl super::Sink for RedisSink {
                 .arg("payload")
                 .arg(&payload);
 
-            cmd.query_async::<_, ()>(&mut self.conn)
+            cmd.query_async::<()>(&mut self.conn)
                 .await
                 .map_err(|e| RelayError::sink("redis", e))?;
         }
@@ -77,7 +77,7 @@ impl super::Sink for RedisSink {
 
     async fn is_healthy(&mut self) -> bool {
         redis::cmd("PING")
-            .query_async::<_, String>(&mut self.conn)
+            .query_async::<String>(&mut self.conn)
             .await
             .map(|r| r == "PONG")
             .unwrap_or(false)

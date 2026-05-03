@@ -16,7 +16,7 @@ pub struct SqsSink {
 #[cfg(feature = "sqs")]
 impl SqsSink {
     pub async fn new(queue_url: impl Into<String>, is_fifo: bool) -> Result<Self, RelayError> {
-        let config = aws_config::load_from_env().await;
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let client = SqsClient::new(&config);
         Ok(Self {
             client,

@@ -21,7 +21,7 @@ impl SqsSource {
         event_type: impl Into<String>,
         max_messages: i32,
     ) -> Result<Self, RelayError> {
-        let config = aws_config::load_from_env().await;
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let client = SqsClient::new(&config);
         Ok(Self {
             client,

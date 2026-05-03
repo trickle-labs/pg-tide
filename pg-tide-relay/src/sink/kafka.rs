@@ -6,7 +6,7 @@ use crate::error::RelayError;
 #[cfg(feature = "kafka")]
 use rdkafka::{
     ClientConfig,
-    producer::{FutureProducer, FutureRecord},
+    producer::{FutureProducer, FutureRecord, Producer},
 };
 
 #[cfg(feature = "kafka")]

@@ -58,7 +58,7 @@ impl super::Source for KafkaSource {
         let stream = self.consumer.stream();
         // Poll with a short timeout to collect up to batch_size messages.
         let timeout = std::time::Duration::from_millis(100);
-        let mut stream = tokio::time::timeout(timeout, async {
+        let stream = tokio::time::timeout(timeout, async {
             let mut msgs = Vec::new();
             let mut pinned = std::pin::pin!(stream);
             while msgs.len() < batch_size as usize {

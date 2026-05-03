@@ -62,8 +62,8 @@ impl super::Sink for RabbitMqSink {
 
             self.channel
                 .basic_publish(
-                    &self.exchange,
-                    &routing_key,
+                    self.exchange.as_str().into(),
+                    routing_key.as_str().into(),
                     BasicPublishOptions::default(),
                     &payload,
                     props,
@@ -81,7 +81,7 @@ impl super::Sink for RabbitMqSink {
     }
 
     async fn close(&mut self) -> Result<(), RelayError> {
-        let _ = self.channel.close(0, "relay shutdown").await;
+        let _ = self.channel.close(0, "relay shutdown".into()).await;
         Ok(())
     }
 }
