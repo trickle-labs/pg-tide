@@ -1,0 +1,14 @@
+[workspace]
+members = ["pg-tide-ext", "pg-tide-relay"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/trickle-labs/pg-tide"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
