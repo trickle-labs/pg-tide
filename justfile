@@ -10,14 +10,15 @@ fmt:
     cargo fmt --all
 
 # Run clippy (must pass with zero warnings)
+# pg-tide-ext (pgrx) needs cargo-pgrx + PostgreSQL 18; relay is pure Rust.
 lint:
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy --package pg-tide-relay --all-targets --all-features -- -D warnings
     cargo fmt --all -- --check
 
 # Run unit tests (no DB required)
 test-unit:
     cargo test --package {{PG_TIDE_EXT}} --lib -- --test-threads=4
-    cargo test --package {{PG_TIDE_RELAY}} --lib -- --test-threads=4
+    cargo test --package {{PG_TIDE_RELAY}} --bins -- --test-threads=4
 
 # Build the relay binary
 build-relay:
