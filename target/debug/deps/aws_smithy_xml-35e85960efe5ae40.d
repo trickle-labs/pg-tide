@@ -1,0 +1,9 @@
+/Users/geir.gronmo/projects/pg-tide/target/debug/deps/aws_smithy_xml-35e85960efe5ae40.d: /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/lib.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/decode.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/encode.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/escape.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/unescape.rs
+
+/Users/geir.gronmo/projects/pg-tide/target/debug/deps/libaws_smithy_xml-35e85960efe5ae40.rmeta: /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/lib.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/decode.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/encode.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/escape.rs /Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/unescape.rs
+
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/lib.rs:
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/decode.rs:
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/encode.rs:
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/escape.rs:
+/Users/geir.gronmo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-smithy-xml-0.60.15/src/unescape.rs:

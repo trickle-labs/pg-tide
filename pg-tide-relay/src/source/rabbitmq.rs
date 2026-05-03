@@ -5,7 +5,7 @@ use crate::error::RelayError;
 
 #[cfg(feature = "rabbitmq")]
 use lapin::{
-    Channel, Connection, ConnectionProperties, consumer::Consumer as LapinConsumer, options::*,
+    Channel, Connection, ConnectionProperties, Consumer as LapinConsumer, options::*,
     types::FieldTable,
 };
 
@@ -39,7 +39,7 @@ impl RabbitMqSource {
         // Declare the queue (idempotent).
         channel
             .queue_declare(
-                &queue,
+                queue.as_str().into(),
                 QueueDeclareOptions::default(),
                 FieldTable::default(),
             )
@@ -49,8 +49,8 @@ impl RabbitMqSource {
         // Basic consume with manual ack.
         let consumer = channel
             .basic_consume(
-                &queue,
-                &consumer_tag,
+                queue.as_str().into(),
+                consumer_tag.as_str().into(),
                 BasicConsumeOptions {
                     no_ack: false,
                     ..Default::default()
@@ -125,7 +125,7 @@ impl super::Source for RabbitMqSource {
     }
 
     async fn close(&mut self) -> Result<(), RelayError> {
-        let _ = self.channel.close(0, "relay shutdown").await;
+        let _ = self.channel.close(0, "relay shutdown".into()).await;
         Ok(())
     }
 }

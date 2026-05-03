@@ -85,7 +85,7 @@ impl super::Source for RedisSource {
                 let payload_str = entry
                     .map
                     .get("payload")
-                    .and_then(|v| v.as_bytes().map(|b| String::from_utf8_lossy(b).to_string()))
+                    .and_then(|v| redis::from_redis_value::<String>(v.clone()).ok())
                     .unwrap_or_default();
 
                 let payload: serde_json::Value =
@@ -94,7 +94,7 @@ impl super::Source for RedisSource {
                 let dedup_key = entry
                     .map
                     .get("pgt_dedup_key")
-                    .and_then(|v| v.as_bytes().map(|b| String::from_utf8_lossy(b).to_string()))
+                    .and_then(|v| redis::from_redis_value::<String>(v.clone()).ok())
                     .unwrap_or_else(|| entry.id.clone());
 
                 let event_type = payload
