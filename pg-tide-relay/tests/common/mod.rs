@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use std::time::Duration;
-use testcontainers::{runners::AsyncRunner, ContainerAsync};
+use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
 use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::{Client, NoTls};
 
@@ -24,6 +24,7 @@ impl PgTideTestDb {
     /// Spin up a fresh PostgreSQL container and install the pg_tide schema.
     pub async fn start() -> Self {
         let container = Postgres::default()
+            .with_tag("18")
             .start()
             .await
             .expect("failed to start postgres container");
