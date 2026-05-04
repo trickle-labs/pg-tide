@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 [features]
 default = ["pg18"]
 pg18 = ["pgrx/pg18"]
+pg_test = []
 
 [dependencies]
 pgrx = { version = "=0.18.0", default-features = false }
