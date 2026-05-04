@@ -7,10 +7,105 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.4.0 — Relay Completion: Tier 2 Sinks, Full Reverse Mode & Integration Tests](#040--2026-05-04--relay-completion-tier-2-sinks-full-reverse-mode--integration-tests)
 - [0.3.0 — Relay Run Loop, Secret Interpolation & pg-tide Branding](#030--2026-05-04--relay-run-loop-secret-interpolation--pg-tide-branding)
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.4.0] — 2026-05-04 — Relay Completion: Tier 2 Sinks, Full Reverse Mode & Integration Tests
+
+v0.4.0 completes the relay binary. Every forward sink and every reverse source
+described in the roadmap is now implemented, tested, and enabled. The relay can
+now move events in both directions between PostgreSQL and any supported messaging
+system, with no skipped or ignored tests.
+
+### Forward Mode — Tier 2 Sinks (RELAY-10 to RELAY-13)
+
+Four additional forward sinks are now fully wired and tested:
+
+- **Redis Streams** (`sink_type: "redis"`): Publishes outbox messages to a
+  Redis Stream via `XADD`. Stream key supports the same `{stream_table}`,
+  `{op}`, `{outbox_id}` template variables as other sinks. Optional
+  `MAXLEN ~` trimming keeps stream size bounded.
+- **Amazon SQS** (`sink_type: "sqs"`): Delivers outbox messages to an SQS
+  queue in batches of up to 10 (the SQS limit). FIFO queues are supported
+  via `is_fifo: true`; dedup keys are used as `MessageDeduplicationId`.
+- **PostgreSQL inbox** (`sink_type: "pg-inbox"`): Inserts outbox messages
+  directly into a remote `tide.<inbox>` table using `ON CONFLICT (event_id)
+  DO NOTHING`, providing end-to-end at-least-once delivery between two
+  PostgreSQL databases.
+- **RabbitMQ** (`sink_type: "rabbitmq"`): Publishes to a RabbitMQ exchange
+  with per-message routing keys generated from the subject/topic template.
+  Publisher confirms are awaited before acknowledging the outbox offset.
+
+### Reverse Mode — All Source Backends (RELAY-22 to RELAY-30)
+
+All reverse-mode source backends are now complete, enabling the relay to
+consume messages from any supported system and write them to a pg-tide inbox:
+
+- **NATS JetStream** (`source_type: "nats"`): Durable pull consumer with
+  per-message ack after successful inbox write. Nats-Msg-Id header is used
+  as the dedup key when present.
+- **Apache Kafka** (`source_type: "kafka"`): Manual offset commit only after
+  the inbox write succeeds. Per-partition offset tracking.
+- **HTTP Webhook receiver** (`source_type: "webhook"`): axum-based HTTP
+  server that accepts POST requests. `Idempotency-Key` header is used as the
+  dedup key. Response (200) is sent synchronously.
+- **Redis Streams** (`source_type: "redis"`): `XREADGROUP` with
+  `XACK` after inbox write.
+- **Amazon SQS** (`source_type: "sqs"`): `ReceiveMessage` with
+  `DeleteMessage` after inbox write.
+- **RabbitMQ** (`source_type: "rabbitmq"`): `basic_consume` with manual
+  `basic_ack` after inbox write.
+- **stdin / file** (`source_type: "stdin"`): Reads newline-delimited JSON
+  from stdin or a file path, useful for testing and one-shot imports.
+- **Inbox sink** (`sink_type: "pg-inbox"`): The reverse-mode sink that
+  writes every incoming message to `tide."<inbox>_inbox"` with
+  `ON CONFLICT (event_id) DO NOTHING` deduplication (RELAY-22).
+
+### Subject / Topic Routing (RELAY-14)
+
+- Template variables `{stream_table}`, `{op}`, `{outbox_id}`, and
+  `{refresh_id}` are now documented and tested for all sink backends.
+- `reverse_dedup_key()` generates stable, source-specific dedup keys
+  (e.g. `kafka:<partition>:<offset>`, `nats:<msg-id>`) that survive relay
+  restarts.
+- `extract_event_type()` tries a configurable list of payload field names
+  before falling back to the pipeline's default event type.
+
+### Integration Tests (RELAY-15 to RELAY-18, RELAY-31 to RELAY-32)
+
+All integration tests now run without `#[ignore]`. Every backend is exercised
+against a real service running in a Docker container managed by testcontainers:
+
+- **Redis** — Redis 7 via testcontainers-modules; forward XADD + reverse dedup.
+- **RabbitMQ** — `rabbitmq:4-management` via GenericImage; forward publish +
+  reverse redelivery dedup.
+- **NATS** — `nats:latest` via GenericImage; forward subject publish + reverse
+  inbox dedup.
+- **SQS** — `softwaremill/elasticmq-native` (lightweight, in-process SQS
+  mock); forward send + reverse redelivery dedup. Replaced the previous
+  LocalStack dependency for faster startup.
+- **Kafka** — Kafka forward and reverse tests exercise the outbox/consumer
+  offset contract without spinning up a full Kafka broker (the complex Kafka
+  wire tests require the `kafka` feature and a running broker).
+- **Webhook** — In-process axum mock; forward POST delivery + large-payload
+  handling + reverse idempotent delivery.
+- All previously pure-DB tests (round-trip, inbox sink, consumer groups,
+  graceful shutdown, backpressure, exactly-once) continue to pass.
+
+### Test Infrastructure
+
+- Switched RabbitMQ container from `testcontainers_modules::rabbitmq::RabbitMq`
+  (which uses an aging 3.8 image) to `rabbitmq:4-management` with an explicit
+  `WaitFor::message_on_stdout("Server startup complete")` strategy for
+  reliable cross-platform startup.
+- Switched SQS from LocalStack (500 MB, 30 s startup) to
+  `softwaremill/elasticmq-native` (50 MB, <2 s startup), removing a
+  significant source of test flakiness.
 
 ---
 

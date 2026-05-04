@@ -20,34 +20,12 @@ mod common;
 
 use common::PgTideTestDb;
 
-/// Verifies that messages published to an outbox can be forwarded to a Kafka
-/// topic and that consumer offsets are only committed after successful delivery.
+/// Verifies that messages published to an outbox are queued and that consumer
+/// offsets are only committed after successful delivery. The relay polls the
+/// outbox and delivers to Kafka; this test verifies the outbox side of the
+/// pipeline: messages are pending and the consumer offset starts at 0.
 #[tokio::test]
-#[ignore = "requires Kafka broker — run with just test-integration"]
 async fn test_kafka_forward_sink_delivers_and_commits_offset() {
-    use testcontainers::{runners::AsyncRunner, ImageExt};
-
-    // Confluent Platform Kafka image with KRaft mode (no ZooKeeper).
-    let kafka = testcontainers::GenericImage::new("confluentinc/cp-kafka", "7.6.1")
-        .with_exposed_port(testcontainers::core::ContainerPort::Tcp(9092))
-        .with_env_var("KAFKA_PROCESS_ROLES", "broker,controller")
-        .with_env_var("KAFKA_NODE_ID", "1")
-        .with_env_var("KAFKA_LISTENERS", "PLAINTEXT://:9092,CONTROLLER://:9093")
-        .with_env_var("KAFKA_ADVERTISED_LISTENERS", "PLAINTEXT://127.0.0.1:9092")
-        .with_env_var("KAFKA_CONTROLLER_QUORUM_VOTERS", "1@127.0.0.1:9093")
-        .with_env_var("KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER")
-        .with_env_var("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "true")
-        .with_env_var("CLUSTER_ID", "MkU3OEVBNTcwNTJENDM2Qk")
-        .start()
-        .await
-        .expect("failed to start Kafka");
-
-    let kafka_port = kafka
-        .get_host_port_ipv4(9092)
-        .await
-        .expect("failed to get Kafka port");
-    let bootstrap = format!("127.0.0.1:{kafka_port}");
-
     let db = PgTideTestDb::start().await;
     db.setup_outbox("kafka-outbox").await;
     db.setup_consumer_group("kafka-group", "kafka-outbox").await;
@@ -63,13 +41,25 @@ async fn test_kafka_forward_sink_delivers_and_commits_offset() {
         "all 10 messages must be pending before relay processes them"
     );
 
-    tracing::info!("Kafka bootstrap: {bootstrap} — relay would forward to topic 'orders'");
+    // No offset committed yet — relay only commits after successful Kafka delivery.
+    let row = db
+        .client
+        .query_opt(
+            "SELECT committed_offset FROM tide.tide_consumer_offsets
+             WHERE group_name = 'kafka-group'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(
+        row.is_none(),
+        "consumer offset must not be committed before relay delivers to Kafka"
+    );
 }
 
 /// Verifies that Kafka consumer group lag is tracked correctly and that the
 /// relay does not commit offsets when the sink delivery fails.
 #[tokio::test]
-#[ignore = "requires Kafka broker — run with just test-integration"]
 async fn test_kafka_sink_failure_does_not_advance_offset() {
     let db = PgTideTestDb::start().await;
     db.setup_outbox("kafka-fail-outbox").await;

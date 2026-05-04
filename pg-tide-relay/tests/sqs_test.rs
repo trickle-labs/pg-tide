@@ -1,52 +1,42 @@
-//! Integration tests: AWS SQS source and sink via LocalStack.
+//! Integration tests: AWS SQS source and sink via ElasticMQ.
 //!
-//! These tests require LocalStack. Run them with:
+//! Uses ElasticMQ — a lightweight in-memory SQS-compatible server that starts
+//! in under two seconds, with no LocalStack overhead.
 //!
-//! ```bash
-//! just test-integration --features sqs
-//! ```
-//!
-//! Or start LocalStack yourself:
+//! Run with:
 //!
 //! ```bash
-//! docker run --rm -p 4566:4566 localstack/localstack
-//! cargo test --package pg-tide-relay --test sqs_test -- --ignored
+//! cargo test --package pg-tide-relay --test sqs_test
 //! ```
 
 mod common;
 
 use common::PgTideTestDb;
 
-const LOCALSTACK_PORT: u16 = 4566;
+const ELASTICMQ_PORT: u16 = 9324;
 
 /// Verifies that messages can be forwarded from an outbox to an SQS queue
 /// and that queue attributes reflect the correct message count.
 #[tokio::test]
-#[ignore = "requires LocalStack — run with just test-integration"]
 async fn test_sqs_forward_sink_sends_messages() {
-    use testcontainers::{runners::AsyncRunner, ImageExt};
+    use testcontainers::{core::WaitFor, runners::AsyncRunner};
 
-    let ls = testcontainers::GenericImage::new("localstack/localstack", "latest")
-        .with_exposed_port(testcontainers::core::ContainerPort::Tcp(LOCALSTACK_PORT))
-        .with_env_var("SERVICES", "sqs")
+    // ElasticMQ is a lightweight SQS-compatible server — starts in <2 seconds,
+    // no LocalStack overhead, and exposes the standard SQS API at port 9324.
+    let emq = testcontainers::GenericImage::new("softwaremill/elasticmq-native", "latest")
+        .with_exposed_port(testcontainers::core::ContainerPort::Tcp(ELASTICMQ_PORT))
+        .with_wait_for(WaitFor::message_on_stdout("Started SQS rest server"))
         .start()
         .await
-        .expect("failed to start LocalStack");
+        .expect("failed to start ElasticMQ container");
 
-    let ls_port = ls
-        .get_host_port_ipv4(LOCALSTACK_PORT)
+    let emq_port = emq
+        .get_host_port_ipv4(ELASTICMQ_PORT)
         .await
-        .expect("failed to get LocalStack port");
-    let endpoint = format!("http://127.0.0.1:{ls_port}");
+        .expect("failed to get ElasticMQ port");
+    let endpoint = format!("http://127.0.0.1:{emq_port}");
 
-    let db = PgTideTestDb::start().await;
-    db.setup_outbox("sqs-outbox").await;
-
-    let payloads: Vec<serde_json::Value> =
-        (1..=5).map(|i| serde_json::json!({"task_id": i})).collect();
-    db.publish_messages("sqs-outbox", &payloads).await;
-
-    // Configure the AWS SDK to point at LocalStack.
+    // Configure the AWS SDK to point at ElasticMQ.
     let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_config::Region::new("us-east-1"))
         .endpoint_url(&endpoint)
@@ -55,7 +45,7 @@ async fn test_sqs_forward_sink_sends_messages() {
             "test",
             None,
             None,
-            "localstack",
+            "elasticmq",
         ))
         .load()
         .await;
@@ -70,7 +60,14 @@ async fn test_sqs_forward_sink_sends_messages() {
         .await
         .expect("failed to create SQS queue");
 
-    let queue_url = create_resp.queue_url().unwrap().to_string();
+    // ElasticMQ returns a URL with its internal address (localhost:9324).
+    // Replace with the actual mapped endpoint so subsequent SDK calls route correctly.
+    let raw_url = create_resp.queue_url().unwrap();
+    let queue_url = if let Some(path) = raw_url.find("/000000000000") {
+        format!("{endpoint}{}", &raw_url[path..])
+    } else {
+        raw_url.to_string()
+    };
 
     // Publish 5 messages to SQS (simulating relay delivery).
     for i in 1..=5_u32 {
@@ -107,7 +104,6 @@ async fn test_sqs_forward_sink_sends_messages() {
 /// Verifies that the inbox deduplicates messages arriving from SQS when the
 /// same message body is delivered more than once (SQS at-least-once semantics).
 #[tokio::test]
-#[ignore = "requires LocalStack — run with just test-integration"]
 async fn test_sqs_reverse_source_deduplicates_redelivery() {
     let db = PgTideTestDb::start().await;
     db.setup_inbox("sqs-inbox").await;
