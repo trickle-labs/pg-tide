@@ -50,9 +50,6 @@ fn relay_set_outbox_impl(
     batch_size: i32,
     enabled: bool,
 ) -> Result<(), PgTideError> {
-    let config_str = serde_json::to_string(&config.0)
-        .map_err(|e| PgTideError::SpiError(format!("serialize config: {e}")))?;
-
     // Build combined config with outbox + sink + batch.
     let full_config = serde_json::json!({
         "outbox": outbox,
@@ -62,7 +59,6 @@ fn relay_set_outbox_impl(
     });
     let full_str = serde_json::to_string(&full_config)
         .map_err(|e| PgTideError::SpiError(format!("serialize full config: {e}")))?;
-    let _ = config_str; // suppress unused
 
     Spi::run_with_args(
         "INSERT INTO tide.relay_outbox_config (name, enabled, config) \
@@ -414,7 +410,7 @@ mod tests {
             true,
         );
         let cfg = crate::relay::relay_get_config("cfg-pipeline");
-        assert_eq!(cfg.0["name"], "cfg-pipeline");
+        assert_eq!(cfg.0["outbox"], "cfg-relay-outbox");
         assert_eq!(cfg.0["sink"], "stdout");
     }
 

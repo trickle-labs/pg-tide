@@ -490,7 +490,7 @@ mod tests {
         let status = crate::outbox::outbox_status("status-outbox");
         let v = &status.0;
         assert_eq!(v["outbox_name"], "status-outbox");
-        assert_eq!(v["message_count"], 0);
+        assert_eq!(v["pending_messages"], 0);
     }
 
     #[pg_test]
@@ -532,7 +532,7 @@ mod tests {
     #[pg_test]
     fn test_consumer_group_create_and_commit_offset() {
         crate::outbox::outbox_create("cg-outbox", 24, 10_000);
-        crate::outbox::create_consumer_group("cg-group", "cg-outbox", "earliest");
+        crate::outbox::create_consumer_group("cg-group", "cg-outbox", "earliest", false);
 
         crate::outbox::commit_offset("cg-group", "worker-1", 42);
 
@@ -548,7 +548,7 @@ mod tests {
     #[pg_test]
     fn test_drop_consumer_group_cascades_offsets() {
         crate::outbox::outbox_create("cas-outbox", 24, 10_000);
-        crate::outbox::create_consumer_group("cas-group", "cas-outbox", "earliest");
+        crate::outbox::create_consumer_group("cas-group", "cas-outbox", "earliest", false);
         crate::outbox::commit_offset("cas-group", "w1", 5);
 
         crate::outbox::drop_consumer_group("cas-group", false);
