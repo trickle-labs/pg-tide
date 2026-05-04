@@ -542,6 +542,48 @@ async fn build_source(
             Ok(Box::new(src))
         }
 
+        #[cfg(feature = "pubsub")]
+        "pubsub" => {
+            let project_id = pipeline.require_str(&["source", "project_id"])?;
+            let subscription = pipeline.require_str(&["source", "subscription"])?;
+            let event_type = pipeline
+                .opt_str(&["source", "event_type"])
+                .unwrap_or("event");
+            let src =
+                crate::source::pubsub::PubSubSource::new(project_id, subscription, event_type)?;
+            Ok(Box::new(src))
+        }
+
+        #[cfg(feature = "kinesis")]
+        "kinesis" => {
+            let stream_name = pipeline.require_str(&["source", "stream_name"])?;
+            let event_type = pipeline
+                .opt_str(&["source", "event_type"])
+                .unwrap_or("event");
+            let iterator_type = pipeline
+                .opt_str(&["source", "iterator_type"])
+                .unwrap_or("TRIM_HORIZON");
+            let src =
+                crate::source::kinesis::KinesisSource::new(stream_name, event_type, iterator_type)
+                    .await?;
+            Ok(Box::new(src))
+        }
+
+        #[cfg(feature = "servicebus")]
+        "servicebus" => {
+            let connection_string = pipeline.require_str(&["source", "connection_string"])?;
+            let entity = pipeline.require_str(&["source", "entity"])?;
+            let event_type = pipeline
+                .opt_str(&["source", "event_type"])
+                .unwrap_or("event");
+            let src = crate::source::servicebus::ServiceBusSource::new(
+                connection_string,
+                entity,
+                event_type,
+            )?;
+            Ok(Box::new(src))
+        }
+
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
             reason: format!("unknown source_type: {other}"),
@@ -645,6 +687,47 @@ async fn build_sink(
                 crate::sink::rabbitmq::RabbitMqSink::new(url, exchange, routing_key_template)
                     .await?,
             ))
+        }
+
+        #[cfg(feature = "elasticsearch")]
+        "elasticsearch" => {
+            let url = pipeline.require_str(&["sink", "url"])?;
+            let index_template = pipeline
+                .opt_str(&["sink", "index_template"])
+                .unwrap_or("pg-tide-{stream_table}");
+            Ok(Box::new(
+                crate::sink::elasticsearch::ElasticsearchSink::new(url, index_template)?,
+            ))
+        }
+
+        #[cfg(feature = "pubsub")]
+        "pubsub" => {
+            let project_id = pipeline.require_str(&["sink", "project_id"])?;
+            let topic = pipeline.require_str(&["sink", "topic"])?;
+            Ok(Box::new(crate::sink::pubsub::PubSubSink::new(
+                project_id, topic,
+            )?))
+        }
+
+        #[cfg(feature = "kinesis")]
+        "kinesis" => {
+            let stream_name = pipeline.require_str(&["sink", "stream_name"])?;
+            let partition_key_template = pipeline
+                .opt_str(&["sink", "partition_key_template"])
+                .unwrap_or("{stream_table}");
+            Ok(Box::new(
+                crate::sink::kinesis::KinesisSink::new(stream_name, partition_key_template).await?,
+            ))
+        }
+
+        #[cfg(feature = "servicebus")]
+        "servicebus" => {
+            let connection_string = pipeline.require_str(&["sink", "connection_string"])?;
+            let entity = pipeline.require_str(&["sink", "entity"])?;
+            Ok(Box::new(crate::sink::servicebus::ServiceBusSink::new(
+                connection_string,
+                entity,
+            )?))
         }
 
         other => Err(RelayError::InvalidConfig {

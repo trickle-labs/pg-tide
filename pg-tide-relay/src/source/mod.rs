@@ -21,6 +21,16 @@ pub mod sqs;
 #[cfg(feature = "rabbitmq")]
 pub mod rabbitmq;
 
+// v0.5.0: Cloud provider parity backends
+#[cfg(feature = "pubsub")]
+pub mod pubsub;
+
+#[cfg(feature = "kinesis")]
+pub mod kinesis;
+
+#[cfg(feature = "servicebus")]
+pub mod servicebus;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;
