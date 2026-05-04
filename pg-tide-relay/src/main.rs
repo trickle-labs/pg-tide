@@ -1,4 +1,4 @@
-// pgtrickle-relay — entry point (RELAY-1).
+// pg-tide — relay entry point.
 // The relay backends and traits are public API used by external consumers.
 // Dead code warnings are suppressed because many types are feature-gated or
 // used only at runtime via trait objects rather than direct construction.
@@ -14,10 +14,11 @@ mod source;
 mod transforms;
 
 use clap::Parser;
+use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, watch, RwLock};
 use tracing_subscriber::EnvFilter;
 
 use cli::Cli;
@@ -49,31 +50,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let drain_timeout = Duration::from_secs(cli.drain_timeout);
 
-    // A30: Expand ${ENV:VAR_NAME} placeholders in connection strings.
+    // Expand ${ENV:VAR_NAME} placeholders in connection strings.
     cfg = cfg.resolve_env_vars();
 
     // Initialise tracing.
     init_tracing(&cfg);
 
     if cfg.postgres_url.is_empty() {
-        eprintln!("error: --postgres-url is required (or set PGTRICKLE_RELAY_POSTGRES_URL)");
+        eprintln!("error: --postgres-url is required (or set PG_TIDE_POSTGRES_URL)");
         std::process::exit(1);
     }
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         relay_group_id = %cfg.relay_group_id,
-        "pgtrickle-relay starting"
+        "pg-tide starting"
     );
 
-    // A38: Connect to PostgreSQL with exponential backoff.
+    // A38: Connect to PostgreSQL (coordinator connection) with exponential backoff.
     let (db_client, db_conn) = connect_with_backoff(&cfg.postgres_url).await?;
     let db = Arc::new(db_client);
 
-    // Spawn the connection driver.
+    // Spawn the coordinator connection driver.
     tokio::spawn(async move {
         if let Err(e) = db_conn.await {
-            tracing::error!("database connection error: {e}");
+            tracing::error!("coordinator DB connection error: {e}");
+        }
+    });
+
+    // Open a dedicated LISTEN connection for hot-reload notifications.
+    // poll_message drives the connection I/O and surfaces Notification events;
+    // spawning the connection as a background task would silently drop them.
+    let (notif_tx, notif_rx) = mpsc::channel::<()>(32);
+    let notify_url = cfg.postgres_url.clone();
+    tokio::spawn(async move {
+        let pair = tokio_postgres::connect(&notify_url, tokio_postgres::NoTls).await;
+        let (notif_client, notif_conn) = match pair {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("notification connection failed: {e}");
+                return;
+            }
+        };
+        if let Err(e) = notif_client.execute("LISTEN tide_relay_config", &[]).await {
+            tracing::error!("LISTEN setup failed: {e}");
+            return;
+        }
+        // Drive the connection manually so we can intercept notifications.
+        let mut conn = notif_conn;
+        let mut stream = std::pin::pin!(futures_util::stream::poll_fn(
+            move |cx| conn.poll_message(cx)
+        ));
+        while let Some(msg) = stream.next().await {
+            match msg {
+                Ok(tokio_postgres::AsyncMessage::Notification(_)) => {
+                    if notif_tx.send(()).await.is_err() {
+                        break; // coordinator stopped.
+                    }
+                }
+                Ok(_) => {} // notices, etc.
+                Err(e) => {
+                    tracing::error!("notification connection error: {e}");
+                    break;
+                }
+            }
         }
     });
 
@@ -89,29 +129,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     // Build coordinator.
-    let coordinator = coordinator::Coordinator::new(
+    let mut coordinator = coordinator::Coordinator::new(
         Arc::clone(&db),
         &cfg.relay_group_id,
         Arc::clone(&relay_metrics),
         Arc::clone(&health_state),
     );
 
-    // Load initial pipelines.
-    let pipelines = coordinator.load_pipelines().await?;
-    tracing::info!(count = pipelines.len(), "loaded relay pipelines");
-    for p in &pipelines {
-        tracing::info!(name = %p.name, direction = ?p.direction, "pipeline");
-    }
+    // Shutdown watch channel: signal handler sends true when SIGTERM/Ctrl-C arrives.
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    tokio::spawn(async move {
+        wait_for_shutdown().await;
+        let _ = shutdown_tx.send(true);
+    });
 
-    // Start LISTEN for config changes.
-    db.execute("LISTEN tide_relay_config", &[]).await?;
-
-    // Wait for shutdown signal, then drain in-flight work.
-    wait_for_shutdown().await;
+    // Run the coordinator discovery loop (blocks until shutdown).
+    coordinator
+        .run(
+            cfg.postgres_url.clone(),
+            cfg.default_batch_size,
+            Duration::from_secs(cfg.discovery_interval_secs),
+            shutdown_rx,
+            notif_rx,
+        )
+        .await?;
 
     tracing::info!(
         drain_timeout_secs = drain_timeout.as_secs(),
-        "pgtrickle-relay shutting down — draining in-flight messages"
+        "pg-tide shutting down — draining in-flight messages"
     );
 
     // Give active pipelines time to finish their current batch.
@@ -128,6 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     coordinator.release_all_locks().await?;
 
+    tracing::info!("pg-tide stopped");
     Ok(())
 }
 

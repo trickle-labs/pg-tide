@@ -165,6 +165,93 @@ impl PipelineConfig {
     }
 }
 
+// ── RELAY-SEC: Pipeline config secret resolution ───────────────────────────
+
+/// Recursively resolve `${env:VAR}` and `${file:/path}` tokens in every
+/// string value within a pipeline config JSONB.
+///
+/// On success returns the fully-resolved value.  On error (unknown env var,
+/// missing file, invalid var name) returns `RelayError::SecretNotFound` or
+/// similar so the coordinator can disable only the affected pipeline rather
+/// than crashing the process.
+pub fn resolve_pipeline_secrets(
+    config: serde_json::Value,
+) -> Result<serde_json::Value, crate::error::RelayError> {
+    resolve_json_value(config)
+}
+
+fn resolve_json_value(v: serde_json::Value) -> Result<serde_json::Value, crate::error::RelayError> {
+    match v {
+        serde_json::Value::String(s) => Ok(serde_json::Value::String(resolve_secret_str(&s)?)),
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k, resolve_json_value(v)?);
+            }
+            Ok(serde_json::Value::Object(out))
+        }
+        serde_json::Value::Array(arr) => {
+            let out: Result<Vec<_>, _> = arr.into_iter().map(resolve_json_value).collect();
+            Ok(serde_json::Value::Array(out?))
+        }
+        other => Ok(other),
+    }
+}
+
+fn resolve_secret_str(s: &str) -> Result<String, crate::error::RelayError> {
+    let mut result = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(start) = rest.find("${") {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        if let Some(end) = after.find('}') {
+            let token = &after[..end];
+            if let Some(var_name) = token.strip_prefix("env:") {
+                validate_secret_var_name(var_name)?;
+                match std::env::var(var_name) {
+                    Ok(val) => result.push_str(&val),
+                    Err(_) => {
+                        return Err(crate::error::RelayError::SecretNotFound {
+                            token: format!("${{{token}}}"),
+                        });
+                    }
+                }
+            } else if let Some(path) = token.strip_prefix("file:") {
+                let val = std::fs::read_to_string(path).map_err(|e| {
+                    crate::error::RelayError::SecretReadError {
+                        path: path.to_string(),
+                        reason: e.to_string(),
+                    }
+                })?;
+                result.push_str(val.trim_end_matches('\n'));
+            } else {
+                // Unknown token type — pass through verbatim.
+                result.push_str("${");
+                result.push_str(token);
+                result.push('}');
+            }
+            rest = &after[end + 1..];
+        } else {
+            // Malformed — no closing brace, pass through verbatim.
+            result.push_str("${");
+            rest = after;
+        }
+    }
+    result.push_str(rest);
+    Ok(result)
+}
+
+/// Only ASCII letters, digits, and underscores are allowed in variable names.
+fn validate_secret_var_name(name: &str) -> Result<(), crate::error::RelayError> {
+    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Ok(())
+    } else {
+        Err(crate::error::RelayError::InvalidSecretToken(
+            name.to_string(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
