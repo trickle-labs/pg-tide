@@ -1,0 +1,9 @@
+-- pg_tide 0.4.0 → 0.5.0
+-- No schema changes in this release.
+-- v0.5.0 adds cloud provider parity backends to the relay binary:
+--   Google Cloud Pub/Sub (source + sink)
+--   Amazon Kinesis Data Streams (source + sink)
+--   Azure Service Bus (source + sink)
+--   Elasticsearch / OpenSearch (sink)
+-- All new backends are configured via the existing relay_outbox_config and
+-- relay_inbox_config catalog tables — no DDL changes required.

@@ -7,11 +7,69 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.5.0 — Cloud Provider Parity: Pub/Sub, Kinesis, Azure Service Bus & Elasticsearch](#050--2026-05-04--cloud-provider-parity-pubsub-kinesis-azure-service-bus--elasticsearch)
 - [0.4.0 — Relay Completion: Tier 2 Sinks, Full Reverse Mode & Integration Tests](#040--2026-05-04--relay-completion-tier-2-sinks-full-reverse-mode--integration-tests)
 - [0.3.0 — Relay Run Loop, Secret Interpolation & pg-tide Branding](#030--2026-05-04--relay-run-loop-secret-interpolation--pg-tide-branding)
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.5.0] — 2026-05-04 — Cloud Provider Parity: Pub/Sub, Kinesis, Azure Service Bus & Elasticsearch
+
+v0.5.0 delivers cloud provider parity for the relay binary. Every major cloud
+messaging platform is now supported as both a forward sink and (where
+applicable) a reverse source. The relay can now integrate with GCP, AWS
+streaming, Azure, and Elasticsearch/OpenSearch out of the box — all
+configurable via the existing SQL catalog tables.
+
+### Google Cloud Pub/Sub (RELAY-P2-1)
+
+- **Sink** (`sink_type: "pubsub"`): Publishes outbox messages to a GCP Pub/Sub
+  topic via the REST API. Each message is base64-encoded with `pgt_dedup_key`,
+  `pgt_op`, and `pgt_subject` attributes for consumer-side correlation.
+  Supports both real GCP (via `PUBSUB_TOKEN` env-var) and the Pub/Sub emulator
+  (`PUBSUB_EMULATOR_HOST=host:port`).
+- **Source** (`source_type: "pubsub"`): Pull subscription consumer. Messages
+  are acknowledged only after successful inbox write. Uses `pgt_dedup_key`
+  attribute as the dedup key if present; otherwise falls back to the Pub/Sub
+  message ID.
+
+### Amazon Kinesis Data Streams (RELAY-P2-2)
+
+- **Sink** (`sink_type: "kinesis"`): Publishes outbox messages to a Kinesis
+  stream using `PutRecords` (up to 500 records per call). Partition key is
+  rendered from `partition_key_template` supporting the same `{stream_table}`,
+  `{op}`, `{outbox_id}` variables as other sinks.
+- **Source** (`source_type: "kinesis"`): Reads records from all shards using
+  `GetShardIterator` + `GetRecords`. Handles shard discovery automatically.
+  Dedup key is `kinesis:<shard_id>:<sequence_number>`.
+
+### Azure Service Bus (RELAY-P2-3)
+
+- **Sink** (`sink_type: "servicebus"`): Sends messages to an Azure Service Bus
+  queue or topic using the Service Bus REST API with SAS token authentication.
+  MessageId is set to the dedup key for native deduplication on queues with
+  `RequiresDuplicateDetection` enabled.
+- **Source** (`source_type: "servicebus"`): PeekLock-mode consumer. Messages
+  are completed (deleted from the queue) only after successful inbox write.
+  Abandoned messages are redelivered after the lock timeout.
+
+### Elasticsearch / OpenSearch (RELAY-P2-4)
+
+- **Sink** (`sink_type: "elasticsearch"`): Bulk-indexes outbox messages via
+  the `_bulk` HTTP API. Document ID is set to the dedup key for idempotent
+  upserts. Delete operations (`op = "delete"`) emit a `delete` bulk action.
+  Compatible with both Elasticsearch 8.x and OpenSearch 2.x.
+  - `index_template`: Supports `{stream_table}`, `{op}`, `{outbox_id}` template
+    variables (e.g. `"pg-tide-{stream_table}"`).
+  - Bulk response errors are surfaced as relay errors for retry.
+
+### No Schema Changes
+
+v0.5.0 adds no DDL changes. All new backends are configured via the existing
+`tide.relay_outbox_config` and `tide.relay_inbox_config` catalog tables.
 
 ---
 

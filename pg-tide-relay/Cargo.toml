@@ -18,14 +18,19 @@ path = "src/main.rs"
 default = ["nats", "webhook", "stdout"]
 
 # Optional backends (each adds a Cargo dependency)
-nats     = ["dep:async-nats"]
-webhook  = ["dep:reqwest"]
-kafka    = ["dep:rdkafka"]
-stdout   = []
-redis    = ["dep:redis"]
-sqs      = ["dep:aws-sdk-sqs", "dep:aws-config"]
-pg-inbox = []        # no extra deps — uses tokio-postgres already
-rabbitmq = ["dep:lapin"]
+nats            = ["dep:async-nats"]
+webhook         = ["dep:reqwest"]
+kafka           = ["dep:rdkafka"]
+stdout          = []
+redis           = ["dep:redis"]
+sqs             = ["dep:aws-sdk-sqs", "dep:aws-config"]
+pg-inbox        = []        # no extra deps — uses tokio-postgres already
+rabbitmq        = ["dep:lapin"]
+# v0.5.0: Cloud provider parity + analytics backends
+elasticsearch   = ["dep:reqwest", "dep:base64"]
+pubsub          = ["dep:reqwest", "dep:base64"]
+kinesis         = ["dep:aws-sdk-kinesis", "dep:aws-config"]
+servicebus      = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:base64"]
 
 [dependencies]
 # Core async runtime + CLI
@@ -61,6 +66,11 @@ redis = { version = "1.2", features = ["tokio-comp", "streams"], optional = true
 aws-sdk-sqs = { version = "1.98", optional = true }
 aws-config = { version = "1.8", optional = true }
 lapin = { version = "4", optional = true }
+# v0.5.0 optional backends
+aws-sdk-kinesis = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [dev-dependencies]
 testcontainers = "0.27"
@@ -74,9 +84,13 @@ lapin = "4"
 redis = { version = "1.2", features = ["tokio-comp"] }
 reqwest = { version = "0.12", features = ["json"], default-features = false }
 aws-sdk-sqs = "1.98"
+aws-sdk-kinesis = "1"
 aws-config = "1.8"
 axum = "0.8"
 bytes = "1"
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
 
 [[bench]]
 name = "throughput"
