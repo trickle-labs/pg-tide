@@ -153,7 +153,7 @@ pub fn relay_enable(p_name: &str) {
 
 fn relay_enable_impl(name: &str) -> Result<(), PgTideError> {
     if !relay_exists(name) {
-        return Err(PgTideError::RelayNotFound(name.to_string()));
+        return Ok(()); // no-op — pipeline may have been deleted concurrently
     }
     let _ = Spi::run_with_args(
         "UPDATE tide.relay_outbox_config SET enabled = true WHERE name = $1",
@@ -175,7 +175,7 @@ pub fn relay_disable(p_name: &str) {
 
 fn relay_disable_impl(name: &str) -> Result<(), PgTideError> {
     if !relay_exists(name) {
-        return Err(PgTideError::RelayNotFound(name.to_string()));
+        return Ok(()); // no-op — pipeline may have been deleted concurrently
     }
     let _ = Spi::run_with_args(
         "UPDATE tide.relay_outbox_config SET enabled = false WHERE name = $1",
@@ -331,10 +331,12 @@ mod tests {
         crate::inbox::inbox_create("relay-dst-inbox", "tide", 3, 72, 0);
         crate::relay::relay_set_inbox(
             "my-reverse-pipeline",
-            "nats",
             "relay-dst-inbox",
             pgrx::JsonB(serde_json::json!({"url": "nats://localhost:4222"})),
             100,
+            "nats",
+            true,
+            3,
             true,
         );
         let exists: bool = Spi::get_one(
