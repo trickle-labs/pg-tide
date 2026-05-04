@@ -6,27 +6,22 @@
 
 # Evaluate
 
-- [When to Use pg_tide](evaluate/when-to-use.md)
+- [Choosing pg_tide](evaluate/choosing-pg-tide.md)
 - [Architecture](evaluate/architecture.md)
-- [Comparison with Alternatives](evaluate/comparison.md)
 
 ---
 
 # Getting Started
 
 - [Installation](getting-started/installation.md)
-- [Quickstart](getting-started/quickstart.md)
-- [Tutorial: Your First Pipeline](getting-started/tutorial.md)
+- [Your First Pipeline](getting-started/first-pipeline.md)
 
 ---
 
 # Concepts
 
-- [Transactional Outbox](concepts/transactional-outbox.md)
-- [Idempotent Inbox](concepts/idempotent-inbox.md)
-- [Consumer Groups](concepts/consumer-groups.md)
-- [Relay Pipelines](concepts/relay-pipelines.md)
-- [Exactly-Once Delivery](concepts/exactly-once-delivery.md)
+- [Message Guarantees](concepts/message-guarantees.md)
+- [Consumption & Relay](concepts/consumption-and-relay.md)
 
 ---
 
@@ -44,34 +39,25 @@
 
 - [Configuration](relay-guide/configuration.md)
 - [CLI Reference](relay-guide/cli-reference.md)
-- [Backends](relay-guide/backends/index.md)
-  - [NATS](relay-guide/backends/nats.md)
-  - [Kafka](relay-guide/backends/kafka.md)
-  - [Redis](relay-guide/backends/redis.md)
-  - [RabbitMQ](relay-guide/backends/rabbitmq.md)
-  - [SQS](relay-guide/backends/sqs.md)
-  - [Webhook](relay-guide/backends/webhook.md)
-- [Error Handling](relay-guide/error-handling.md)
+- [Backends](relay-guide/backends.md)
+- [Error Handling](relay-guide/error-handling-guide.md)
 - [Monitoring](relay-guide/monitoring.md)
 
 ---
 
 # Operations
 
-- [Deployment](operations/deployment.md)
-- [Docker](operations/docker.md)
-- [Kubernetes](operations/kubernetes.md)
+- [Deployment Guide](operations/deployment-guide.md)
 - [Scaling](operations/scaling.md)
-- [Backup and Restore](operations/backup-and-restore.md)
-- [Upgrading](operations/upgrading.md)
+- [Maintenance](operations/maintenance.md)
 - [Troubleshooting](operations/troubleshooting.md)
 
 ---
 
 # Tutorials
 
-- [Outbox to Kafka](tutorials/outbox-to-kafka.md)
-- [Inbox from NATS](tutorials/inbox-from-nats.md)
+- [End-to-End Pipelines](tutorials/end-to-end-pipeline.md)
+- [Real-World Scenarios](tutorials/real-world-scenarios.md)
 - [Bidirectional Sync](tutorials/bidirectional-sync.md)
 - [Fan-out Pattern](tutorials/fan-out-pattern.md)
 - [Dead-Letter Queue](tutorials/dead-letter-queue.md)
@@ -89,7 +75,5 @@
 
 # Reference
 
-- [Configuration Reference](reference/configuration.md)
-- [Error Codes](reference/errors.md)
-- [Changelog](reference/changelog.md)
 - [Security](reference/security.md)
+- [Changelog](../CHANGELOG.md)

@@ -1,22 +1,43 @@
 # Relay Configuration
 
-The `pg-tide` relay binary reads its process-level configuration from CLI flags, environment variables, or a TOML config file. Pipeline definitions (which outbox connects to which sink) are stored in PostgreSQL — not in the config file.
+The `pg-tide` relay binary is configured through three layers, applied in order of increasing priority:
+
+1. **Default values** — sensible defaults built into the binary
+2. **TOML config file** — specified via `--config` or `PGTRICKLE_RELAY_CONFIG`
+3. **CLI flags / environment variables** — highest precedence
+
+Pipeline configuration (outbox sources, sink destinations, batch sizes) lives **in PostgreSQL** — not in the TOML file. The relay loads pipeline config from the `tide.relay_outbox_config` and `tide.relay_inbox_config` catalog tables at startup and reloads dynamically via `LISTEN/NOTIFY`.
 
 ---
 
-## Configuration Sources (Priority Order)
+## Quick Start
 
-1. **CLI flags** — highest priority
-2. **Environment variables** — override TOML
-3. **TOML config file** — base configuration
+The only required parameter is the PostgreSQL connection URL:
+
+```bash
+pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
+```
+
+For production, use environment variables:
+
+```bash
+export PGTRICKLE_RELAY_POSTGRES_URL="postgres://relay:${DB_PASSWORD}@pghost:5432/app"
+export PGTRICKLE_RELAY_METRICS_ADDR="0.0.0.0:9090"
+export PGTRICKLE_RELAY_LOG_FORMAT="json"
+export PGTRICKLE_RELAY_GROUP_ID="prod-relay"
+
+pg-tide
+```
 
 ---
 
-## TOML Config File
+## TOML Configuration File
+
+For complex setups, use a TOML file:
 
 ```toml
-# pg-tide relay configuration
-postgres_url = "postgres://user:pass@localhost:5432/mydb"
+# relay.toml
+postgres_url = "${ENV:DATABASE_URL}"
 metrics_addr = "0.0.0.0:9090"
 log_format = "json"
 log_level = "info"
@@ -26,71 +47,179 @@ relay_group_id = "production"
 sink_max_inflight = 1000
 ```
 
-Pass the config file path via:
-
 ```bash
-pg-tide --config /etc/pg-tide/relay.toml
+pg-tide --config relay.toml
 ```
 
 ---
 
-## Configuration Options
+## Configuration Reference
 
-| Option | CLI Flag | Env Variable | Default | Description |
-|--------|----------|-------------|---------|-------------|
-| `postgres_url` | `--postgres-url` | `PGTRICKLE_RELAY_POSTGRES_URL` | (required) | PostgreSQL connection string |
-| `metrics_addr` | `--metrics-addr` | `PGTRICKLE_RELAY_METRICS_ADDR` | `0.0.0.0:9090` | Metrics + health endpoint |
-| `log_format` | `--log-format` | `PGTRICKLE_RELAY_LOG_FORMAT` | `text` | `text` or `json` |
-| `log_level` | `--log-level` | `PGTRICKLE_RELAY_LOG_LEVEL` | `info` | `error`, `warn`, `info`, `debug`, `trace` |
-| `relay_group_id` | `--relay-group-id` | `PGTRICKLE_RELAY_GROUP_ID` | `default` | Unique ID for advisory lock namespacing |
+| Parameter | CLI Flag | Environment Variable | Default | Description |
+|-----------|----------|---------------------|---------|-------------|
+| `postgres_url` | `--postgres-url` | `PGTRICKLE_RELAY_POSTGRES_URL` | *(required)* | PostgreSQL connection URL |
+| `metrics_addr` | `--metrics-addr` | `PGTRICKLE_RELAY_METRICS_ADDR` | `0.0.0.0:9090` | Prometheus metrics + health endpoint bind address |
+| `log_format` | `--log-format` | `PGTRICKLE_RELAY_LOG_FORMAT` | `text` | Log output format: `text` or `json` |
+| `log_level` | `--log-level` | `PGTRICKLE_RELAY_LOG_LEVEL` | `info` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace` |
+| `relay_group_id` | `--relay-group-id` | `PGTRICKLE_RELAY_GROUP_ID` | `default` | Relay group identifier for advisory lock namespacing |
 | `discovery_interval_secs` | — | — | `30` | Seconds between pipeline discovery polls |
-| `default_batch_size` | — | — | `100` | Default batch size per pipeline |
-| `sink_max_inflight` | — | — | `1000` | Max in-flight messages before pausing (0 = unlimited) |
+| `default_batch_size` | — | — | `100` | Default messages per batch when not specified per-pipeline |
+| `sink_max_inflight` | — | — | `1000` | Maximum in-flight messages before upstream polling pauses. `0` = unlimited |
+| — | `--drain-timeout` | `PG_TIDE_DRAIN_TIMEOUT` | `30` | Seconds to wait for in-flight messages to drain on SIGTERM |
+| — | `--config` | `PGTRICKLE_RELAY_CONFIG` | — | Path to TOML config file |
 
 ---
 
 ## Environment Variable Substitution
 
-Connection strings support `${ENV:VAR_NAME}` placeholders:
+Connection strings in TOML files support `${ENV:VAR_NAME}` substitution:
 
 ```toml
-postgres_url = "postgres://${ENV:PG_USER}:${ENV:PG_PASSWORD}@${ENV:PG_HOST}:5432/mydb"
+postgres_url = "postgres://${ENV:DB_USER}:${ENV:DB_PASSWORD}@${ENV:DB_HOST}:5432/${ENV:DB_NAME}"
 ```
 
-Only process environment variables are read — no shell expansion or eval.
-
----
-
-## Pipeline Configuration
-
-Pipeline definitions are **not** in the TOML file. They live in PostgreSQL:
-
-```sql
--- Forward pipeline
-SELECT tide.relay_set_outbox('my-pipeline', 'my-outbox', 'nats',
-  '{"url": "nats://nats:4222", "subject": "events"}'::jsonb
-);
-
--- Reverse pipeline
-SELECT tide.relay_set_inbox('webhooks-in', 'incoming',
-  '{"port": 8080}'::jsonb,
-  p_source := 'webhook'
-);
-```
-
-This allows hot-reload: change pipeline config in the database, and the relay picks it up via LISTEN/NOTIFY without restart.
+This resolves at relay startup time using the process environment. Unknown variables are left as-is (the relay will report a connection error rather than silently using a broken URL).
 
 ---
 
 ## Relay Group ID
 
-The `relay_group_id` namespaces advisory locks. Multiple relay instances with the **same** group ID compete for pipeline ownership (HA failover). Instances with **different** group IDs can own the same pipeline simultaneously (use with caution).
+The `relay_group_id` parameter is critical for multi-deployment setups. It controls:
+
+1. **Advisory lock namespacing** — each relay instance acquires a PostgreSQL advisory lock scoped to its group ID + pipeline name. Only one relay per group can own a given pipeline.
+2. **Consumer group offset tracking** — progress is tracked per relay group, allowing multiple independent relay deployments to process the same outbox.
+
+**Single deployment (default):**
 
 ```bash
-# Production HA pair — same group, automatic failover
-pg-tide --relay-group-id production --postgres-url ...
-pg-tide --relay-group-id production --postgres-url ...
+pg-tide --relay-group-id "default"
+```
 
-# Separate staging relay — different group
-pg-tide --relay-group-id staging --postgres-url ...
+**Multi-region deployment:**
+
+```bash
+# US region — processes orders outbox → US NATS
+pg-tide --relay-group-id "us-east" --postgres-url "..."
+
+# EU region — processes same orders outbox → EU NATS
+pg-tide --relay-group-id "eu-west" --postgres-url "..."
+```
+
+Each group tracks its own offsets independently — the EU relay won't skip messages just because the US relay already processed them.
+
+---
+
+## Pipeline Configuration (in PostgreSQL)
+
+Pipelines are configured via SQL, not via the relay's TOML/CLI config. The relay discovers pipelines from two catalog tables:
+
+### Forward Pipelines (Outbox → Sink)
+
+```sql
+SELECT tide.relay_set_outbox(
+  p_name     := 'orders-nats',       -- Pipeline name (unique)
+  p_outbox   := 'orders',            -- Source outbox name
+  p_sink     := 'nats',              -- Sink type
+  p_config   := '{
+    "url": "nats://localhost:4222",
+    "subject": "orders.{event_type}"
+  }'::jsonb
+);
+```
+
+### Reverse Pipelines (Source → Inbox)
+
+```sql
+SELECT tide.relay_set_inbox(
+  p_name     := 'nats-orders-inbox',   -- Pipeline name (unique)
+  p_inbox    := 'order_events',        -- Target inbox name
+  p_source   := 'nats',               -- Source type
+  p_config   := '{
+    "url": "nats://localhost:4222",
+    "subject": "orders.>",
+    "consumer_name": "pg-tide-inbox"
+  }'::jsonb
+);
+```
+
+### Enabling / Disabling Pipelines
+
+```sql
+-- Disable a pipeline (relay will stop it on next discovery cycle)
+SELECT tide.relay_enable('orders-nats', false);
+
+-- Re-enable
+SELECT tide.relay_enable('orders-nats', true);
+```
+
+Pipeline changes are picked up via:
+1. **`LISTEN/NOTIFY`** — immediate reaction to config changes
+2. **Periodic polling** — every `discovery_interval_secs` as a fallback
+
+---
+
+## Hot Reload
+
+The relay watches for `NOTIFY` signals on the `tide_relay_config_changed` channel. When you modify a pipeline via `tide.relay_set_outbox()` or `tide.relay_set_inbox()`, the trigger fires a notification and the relay reloads within seconds — no restart required.
+
+If `LISTEN` is interrupted (connection blip), the periodic discovery poll acts as a safety net.
+
+---
+
+## High Availability
+
+Run multiple relay instances with the **same** `relay_group_id`:
+
+```bash
+# Instance 1
+pg-tide --relay-group-id "prod" --postgres-url "..."
+
+# Instance 2 (standby — takes over if instance 1 dies)
+pg-tide --relay-group-id "prod" --postgres-url "..."
+```
+
+Advisory locks ensure only one instance owns each pipeline at a time. If the owning instance dies, its locks are released and another instance acquires them on the next discovery cycle.
+
+---
+
+## Backpressure
+
+The `sink_max_inflight` parameter controls backpressure behavior:
+
+- When the number of in-flight (unacknowledged) messages reaches this limit, the relay pauses polling from the outbox
+- Once the sink acknowledges enough messages to drop below the threshold, polling resumes
+- Set to `0` to disable backpressure (not recommended for production)
+
+This prevents the relay from overwhelming a slow sink while still allowing high throughput for fast sinks.
+
+---
+
+## Graceful Shutdown
+
+On `SIGTERM`:
+
+1. The relay stops accepting new pipeline ownership
+2. Active pipelines finish their current batch
+3. If batches don't complete within `--drain-timeout` seconds (default: 30), the relay exits
+4. Unfinished messages will be redelivered when the relay restarts (at-least-once guarantee)
+
+---
+
+## Example: Production Configuration
+
+```toml
+# /etc/pg-tide/relay.toml
+postgres_url = "${ENV:DATABASE_URL}"
+metrics_addr = "0.0.0.0:9090"
+log_format = "json"
+log_level = "info"
+discovery_interval_secs = 10
+default_batch_size = 500
+relay_group_id = "production"
+sink_max_inflight = 5000
+```
+
+```bash
+# systemd unit or container entrypoint
+PG_TIDE_DRAIN_TIMEOUT=60 pg-tide --config /etc/pg-tide/relay.toml
 ```
