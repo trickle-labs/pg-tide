@@ -170,4 +170,11 @@ jobs:
         run: cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
 
       - name: Run pgrx tests
-        run: cargo pgrx test pg18 --package pg-tide-ext
+        run: |
+          # cargo-pgrx installs the extension into the system PostgreSQL
+          # extension directory, which is owned by root. Grant write access
+          # to the runner user so pgrx install --test succeeds.
+          sudo chown -R "$(id -u):$(id -g)" \
+            /usr/share/postgresql/18/extension \
+            /usr/lib/postgresql/18/lib
+          cargo pgrx test pg18 --package pg-tide-ext
