@@ -318,8 +318,8 @@ async fn worker_inner(
     let mut sink = build_sink(&pipeline, Arc::clone(&db)).await?;
 
     let direction_label = match pipeline.direction {
-        PipelineDirection::Forward => "forward",
-        PipelineDirection::Reverse => "reverse",
+        PipelineDirection::Forward => "forward".to_string(),
+        PipelineDirection::Reverse => "reverse".to_string(),
     };
 
     tracing::info!(
@@ -372,7 +372,7 @@ async fn worker_inner(
                 }
                 metrics
                     .messages_published
-                    .with_label_values(&[&pipeline.name, direction_label])
+                    .with_label_values(&[&pipeline.name, &direction_label])
                     .inc_by(batch.len() as u64);
             }
             Err(e) => {
@@ -383,7 +383,7 @@ async fn worker_inner(
                 );
                 metrics
                     .publish_errors
-                    .with_label_values(&[&pipeline.name, direction_label])
+                    .with_label_values(&[&pipeline.name, &direction_label])
                     .inc();
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
