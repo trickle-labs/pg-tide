@@ -20,7 +20,11 @@ RUN rustup target add "$(cat /rust_target)"
 WORKDIR /src
 COPY . .
 
-RUN cargo build --package pg-tide-relay --release --target "$(cat /rust_target)" \
+# On Alpine, gcc is the native musl gcc.  cc-rs (used by ring's build.rs) defaults to
+# looking for "<triple>-gcc" even on native musl targets, so we must point it at plain gcc.
+RUN CC_x86_64_unknown_linux_musl=gcc \
+    CC_aarch64_unknown_linux_musl=gcc \
+    cargo build --package pg-tide-relay --release --target "$(cat /rust_target)" \
     && strip "target/$(cat /rust_target)/release/pg-tide" \
     && cp "target/$(cat /rust_target)/release/pg-tide" /pg-tide
 
