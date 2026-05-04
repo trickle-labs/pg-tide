@@ -8,6 +8,7 @@ description = "pg_tide PostgreSQL extension — transactional outbox, idempotent
 
 [lib]
 crate-type = ["cdylib"]
+name = "pg_tide"
 
 [features]
 default = ["pg18"]

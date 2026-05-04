@@ -1,0 +1,363 @@
+# Message Guarantees
+
+pg_tide provides end-to-end exactly-once delivery semantics by combining three mechanisms that work together as a unified system: the transactional outbox ensures no messages are lost at the source, the relay delivers them reliably to downstream systems, and the idempotent inbox catches any duplicates at the destination. This page explains all three mechanisms in depth, how they interact, and what guarantees you can rely on in production.
+
+---
+
+## The Fundamental Problem: Dual Writes
+
+Imagine you're building an e-commerce platform. When a customer places an order, your application needs to do two things: save the order to your PostgreSQL database, and notify the warehouse service that a new order is ready to ship. The naive approach looks straightforward:
+
+```
+Application ──INSERT──▶ PostgreSQL  ✓  (order saved)
+            ──publish──▶ Kafka      ✗  (network timeout!)
+```
+
+The database has the order. Kafka does not. The warehouse never learns about the order. The customer waits indefinitely for a shipment that nobody knows to send.
+
+This is the **dual-write problem**. Any time your application writes to two separate systems — a database and a message broker — there's a window where one write can succeed and the other can fail. No amount of application-level retry logic can fully close this window, because your application itself might crash between the two writes.
+
+The consequences are severe and insidious:
+
+- **Silent data loss** — downstream consumers never see the event
+- **Inconsistent state** — the database says one thing, the event stream says another
+- **Difficult detection** — unless you actively reconcile both systems, you won't know events were lost
+- **Impossible recovery** — once the transaction is committed without the event, you can't retroactively publish it without complex compensating logic
+
+### Why retry logic isn't enough
+
+You might think: "I'll just retry the Kafka publish until it succeeds." But consider what happens if the publish succeeds, then your application crashes before recording that success. On restart, it retries — and now the event is published twice. You've traded message loss for message duplication.
+
+What about the reverse order — publish first, then commit? If the database commit fails after a successful publish, you've sent an event about something that never happened.
+
+There is no safe ordering of two independent writes that guarantees exactly-once semantics. The only solution is to eliminate the dual write entirely.
+
+---
+
+## The Solution: The Transactional Outbox Pattern
+
+The transactional outbox pattern eliminates dual writes by reducing two writes to one. Instead of writing to your database *and* a message broker, you write to your database *only* — and the message goes into a special outbox table within the same transaction as your business data:
+
+```sql
+BEGIN;
+  -- Your business logic: save the order
+  INSERT INTO orders (id, customer_id, total, status)
+  VALUES (42, 'cust-123', 99.99, 'confirmed');
+
+  -- Event publishing: same transaction, same database
+  SELECT tide.outbox_publish('orders',
+    '{"order_id": 42, "customer_id": "cust-123", "total": 99.99, "status": "confirmed"}'::jsonb,
+    '{"event_type": "order.confirmed", "correlation_id": "req-abc-789"}'::jsonb
+  );
+COMMIT;
+```
+
+Both the order insert and the message insert succeed or fail together — they're part of the same PostgreSQL transaction. There is no window where one succeeds without the other. If the transaction commits, the message is guaranteed to exist. If it rolls back (for any reason — constraint violation, application crash, network disconnect), the message disappears along with the business data.
+
+A separate **relay process** then reads committed messages from the outbox table and delivers them to whatever downstream system you've configured (Kafka, NATS, webhooks, etc.). The relay runs independently of your application and can retry indefinitely — the message is safely persisted in PostgreSQL until delivery succeeds.
+
+This separation of concerns gives you the best of both worlds:
+
+- **Transactional safety** — your application only writes to one system
+- **Guaranteed delivery** — the relay keeps trying until the downstream system acknowledges
+- **Decoupled systems** — your application doesn't need to know about broker availability
+- **Simple application code** — publishing an event is just a SQL function call
+
+### How pg_tide implements the outbox
+
+When you call `tide.outbox_publish(name, payload, headers)`, pg_tide:
+
+1. **Inserts a row** into `tide.tide_outbox_messages` with your payload and headers
+2. **Fires `pg_notify`** (`'tide_outbox_new'`, outbox name) to wake the relay immediately
+
+The outbox messages table stores all messages from all named outboxes in a single table, discriminated by `outbox_name`:
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | BIGINT (auto-increment) | Monotonically increasing offset — the relay uses this to track progress |
+| `outbox_name` | TEXT | Routes messages to the correct pipeline |
+| `payload` | JSONB | Your event data — whatever you want downstream consumers to see |
+| `headers` | JSONB | Metadata: event type, correlation ID, schema version, etc. |
+| `created_at` | TIMESTAMPTZ | When the message was published |
+| `consumed_at` | TIMESTAMPTZ | When the relay successfully delivered it (NULL means pending) |
+| `consumer_group` | TEXT | Which consumer group processed this message |
+
+The auto-incrementing `id` column is crucial: it provides a total ordering of messages within an outbox, which the relay uses to guarantee in-order delivery and to track its position.
+
+### The relay loop
+
+The pg-tide relay binary continuously:
+
+1. **Polls** for pending messages (`WHERE consumed_at IS NULL AND id > last_committed_offset`)
+2. **Delivers** each batch to the configured sink (NATS, Kafka, Redis, webhooks, etc.)
+3. **Commits the offset** — records how far it's read, so it can resume from this position after a restart
+4. **Marks messages consumed** — sets `consumed_at` so they're excluded from future polls
+5. **Respects retention** — messages older than `retention_hours` are eligible for cleanup
+
+If the relay crashes at any point in this loop, it restarts from the last committed offset and re-delivers any messages that weren't confirmed. This is why the relay provides **at-least-once delivery** — it never skips a message, but it might deliver one twice.
+
+### Retention and cleanup
+
+Each outbox has a configurable retention window. After messages have been consumed and their retention period has elapsed, they can be cleaned up to prevent unbounded table growth:
+
+```sql
+-- Create an outbox with 48-hour retention
+SELECT tide.outbox_create('orders', p_retention_hours := 48);
+```
+
+The `inline_threshold` parameter provides backpressure: if the number of pending (unconsumed) messages exceeds this threshold, subsequent publishes will pause, preventing your outbox from growing unboundedly if the relay is down.
+
+---
+
+## The Idempotent Inbox: Catching Duplicates at the Destination
+
+The transactional outbox guarantees that every committed event will be delivered at least once. But "at least once" means duplicates are possible. Consider this scenario:
+
+1. The relay polls the outbox and gets message #42
+2. The relay delivers message #42 to the downstream system — success
+3. The relay crashes *before* committing offset 42
+4. The relay restarts, reads from its last committed offset (41), and delivers message #42 *again*
+
+Without protection at the receiving end, the downstream system processes the same event twice. For an "order confirmed" event, this might trigger two shipments. For a "payment processed" event, it might charge the customer twice.
+
+The **idempotent inbox** solves this. It's a PostgreSQL table with a `UNIQUE` constraint on an event identifier. When a message arrives:
+
+1. The relay attempts an `INSERT` with the event's dedup key as the `event_id`
+2. If the key already exists (duplicate delivery), the insert is silently skipped via `ON CONFLICT DO NOTHING`
+3. Your application only sees each event once, regardless of how many times it was delivered
+
+### How the inbox works in practice
+
+Each named inbox gets its own message table with this structure:
+
+```sql
+CREATE TABLE tide."payment-events_inbox" (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_id       TEXT NOT NULL,
+    source         TEXT,
+    payload        JSONB,
+    headers        JSONB,
+    received_at    TIMESTAMPTZ DEFAULT now(),
+    processed_at   TIMESTAMPTZ,
+    retry_count    INT DEFAULT 0,
+    last_error     TEXT,
+    CONSTRAINT uq_payment_events_event_id UNIQUE (event_id)
+);
+```
+
+The `UNIQUE(event_id)` constraint is the deduplication mechanism. It's simple, reliable, and leverages PostgreSQL's proven concurrency guarantees.
+
+### Creating an inbox
+
+```sql
+SELECT tide.inbox_create('payment-events',
+  p_max_retries := 5,
+  p_processed_retention_hours := 72,
+  p_dlq_retention_hours := 168
+);
+```
+
+| Parameter | Default | What it controls |
+|-----------|---------|-----------------|
+| `p_schema` | `'tide'` | Schema where the inbox table lives |
+| `p_max_retries` | `3` | How many times processing can fail before the message is considered dead |
+| `p_processed_retention_hours` | `72` | How long successfully processed messages are kept (for auditing) |
+| `p_dlq_retention_hours` | `0` | How long dead-letter messages are kept (0 = forever) |
+
+### Processing inbox messages
+
+Your application reads from the inbox table and marks messages as processed after handling them:
+
+```sql
+-- Read the next batch of pending messages
+SELECT id, event_id, payload, headers
+FROM tide."payment-events_inbox"
+WHERE processed_at IS NULL
+  AND retry_count < 5
+ORDER BY id
+LIMIT 10;
+
+-- After successfully processing a message
+SELECT tide.inbox_mark_processed('payment-events', 'evt-001');
+
+-- If processing fails (e.g., external API timeout)
+SELECT tide.inbox_mark_failed('payment-events', 'evt-003',
+  'Stripe API timeout after 30s');
+```
+
+When you call `inbox_mark_failed`, the `retry_count` is incremented and the `last_error` is recorded. Your application can retry later. After `max_retries` failures, the message is effectively in the dead-letter queue — it won't be picked up by normal processing loops.
+
+### The dead-letter queue
+
+Messages that exhaust their retry budget aren't deleted — they remain in the inbox table for investigation. You can query them, examine the error history, and replay them once you've fixed the underlying issue:
+
+```sql
+-- Find all dead-letter messages
+SELECT event_id, payload, last_error, retry_count
+FROM tide."payment-events_inbox"
+WHERE processed_at IS NULL
+  AND retry_count >= 5;
+
+-- Replay specific messages after fixing the issue
+SELECT tide.replay_inbox_messages('payment-events',
+  ARRAY['evt-003', 'evt-007', 'evt-012']);
+```
+
+Replaying resets the `retry_count` to zero, making the messages eligible for processing again.
+
+### Choosing dedup keys
+
+The `event_id` should be deterministic and unique per logical event. The goal is that the same logical event always produces the same dedup key, regardless of how many times it's delivered:
+
+| Source | Recommended dedup key | Why |
+|--------|----------------------|-----|
+| pg_tide outbox | `{outbox_name}:{message_id}` | Automatic — the relay generates this |
+| Kafka | `{topic}:{partition}:{offset}` | Uniquely identifies a Kafka record |
+| NATS JetStream | Message sequence number | Assigned by NATS |
+| HTTP webhook | `X-Request-ID` header | Sender-assigned idempotency key |
+| Custom sources | Any stable unique identifier | Domain-specific (e.g., `order-42:confirmed`) |
+
+The relay automatically generates appropriate dedup keys based on the source type when operating in reverse mode (external source → inbox).
+
+---
+
+## End-to-End Exactly-Once: The Three Pillars Combined
+
+When you combine the transactional outbox, the relay's offset tracking, and the idempotent inbox, you get **effectively exactly-once** delivery semantics end-to-end. Here's how the complete flow works:
+
+```
+1. Application:  BEGIN; INSERT business_data; outbox_publish(); COMMIT;
+       ↓
+2. Relay:        Polls outbox → gets messages where id > last_committed_offset
+       ↓
+3. Relay:        Delivers to sink (e.g., INSERT into inbox with dedup key)
+       ↓
+4. Relay:        On sink acknowledgment → commit_offset(last_delivered_id)
+       ↓
+5. Relay:        Marks outbox messages as consumed
+```
+
+Each stage is protected:
+
+| Stage | What could go wrong | Protection mechanism |
+|-------|--------------------|--------------------|
+| Publish | Transaction rolls back | Message disappears with the business data — correct behavior |
+| Relay poll | Relay crashes mid-poll | Restarts from last committed offset — no messages skipped |
+| Delivery | Sink temporarily down | Relay retries with exponential backoff — message stays pending |
+| Delivery | Relay crashes after delivery but before offset commit | Relay re-delivers on restart; inbox dedup key prevents duplicate processing |
+| Offset commit | Database connection lost | Relay reconnects and re-commits — idempotent operation |
+
+### Edge cases handled
+
+**Relay crash after delivery, before offset commit:** This is the most important edge case. The relay successfully delivered message #42 to the inbox, then crashed before recording offset 42. On restart, it re-delivers #42. The inbox's UNIQUE constraint on `event_id` catches the duplicate, and the insert is silently skipped. The application sees message #42 exactly once.
+
+**PostgreSQL failover:** If the primary PostgreSQL instance fails over to a replica, the relay's advisory locks are automatically released (they're tied to the session). Another relay instance can acquire the locks and resume from the last committed offset. In-flight messages that weren't committed are re-delivered, and the inbox dedup catches any duplicates.
+
+**Sink temporarily unavailable:** The relay retries with exponential backoff (100ms → 30s with jitter). Messages remain pending in the outbox — they're never lost. Once the sink recovers, delivery resumes automatically.
+
+**Duplicate outbox_publish calls:** If your application accidentally publishes the same logical event twice (due to a retry at the application level), you can include a deterministic `event_id` in the headers. The inbox dedup key will catch duplicates at the receiving end. Alternatively, design your consumers to be naturally idempotent.
+
+### Guarantees summary
+
+| Component | Guarantee | Mechanism |
+|-----------|-----------|-----------|
+| Outbox publish | Exactly-once write | Same PostgreSQL transaction as business data |
+| Relay delivery | At-least-once | Retries until sink acknowledges, resumes from last offset |
+| Inbox receive | Exactly-once processing | UNIQUE constraint on event_id |
+| **End-to-end** | **Effectively exactly-once** | All three mechanisms combined |
+
+### Limitations and honest caveats
+
+pg_tide's exactly-once guarantee is strong, but it's important to understand the boundaries:
+
+- **Cross-sink atomicity:** If you configure a single outbox to fan out to multiple sinks (e.g., Kafka *and* a webhook), and one delivery succeeds while the other fails, you'll have partial delivery. Use separate pipelines per sink for independent exactly-once guarantees per destination.
+
+- **External sink semantics:** Exactly-once delivery into pg_tide inboxes is guaranteed because the inbox uses PostgreSQL's UNIQUE constraint. For external sinks (Kafka, NATS, Redis), the guarantee depends on the sink's acknowledgment semantics. If a sink acknowledges delivery but then loses the message internally, pg_tide cannot detect that. Choose sinks with strong durability guarantees for critical workloads.
+
+- **Clock skew and retention:** Retention cleanup uses `created_at` timestamps. Extreme clock skew between PostgreSQL nodes could cause premature cleanup of messages that haven't been consumed yet. Always use NTP-synchronized hosts.
+
+- **"Effectively" vs. "truly" exactly-once:** In distributed systems theory, true exactly-once delivery across system boundaries is provably impossible without two-phase commit. pg_tide achieves *effectively* exactly-once by combining at-least-once delivery with idempotent reception — the outcome is the same (each event is processed exactly once), but the mechanism involves potential redelivery that's silently deduplicated.
+
+---
+
+## Comparison with Other Approaches
+
+To understand why the transactional outbox pattern is valuable, it helps to see how it compares with alternatives:
+
+### Two-Phase Commit (2PC)
+
+2PC coordinates writes across multiple systems using a prepare/commit protocol. It provides true atomicity but at severe cost: high latency, reduced availability (any participant failure blocks the entire transaction), and complexity. pg_tide avoids 2PC entirely — you write to one system, and the relay handles the rest asynchronously.
+
+### Change Data Capture (CDC) via Debezium
+
+Debezium captures row-level changes from PostgreSQL's WAL (write-ahead log) and publishes them to Kafka. It doesn't require application changes, but you lose control over event format (events mirror table schemas, not business semantics) and require significant infrastructure (Kafka Connect, Kafka cluster, JVM). pg_tide gives you explicit control over what you publish.
+
+### Application-Level Retry with Compensation
+
+Some systems retry failed broker publishes and compensate for duplicates on the consumer side. This "best effort" approach is fragile: it requires every consumer to implement idempotency, provides no centralized dedup mechanism, and becomes increasingly complex as the number of consumers grows. pg_tide centralizes deduplication in the inbox.
+
+### Direct Broker Writes (Accept the Risk)
+
+For non-critical events (telemetry, analytics pings, real-time notifications), some teams accept the dual-write risk and publish directly to a broker. This is valid when message loss is acceptable. pg_tide is for when it isn't.
+
+---
+
+## Practical Patterns
+
+### Publishing multiple events in one transaction
+
+You can publish multiple events atomically:
+
+```sql
+BEGIN;
+  UPDATE orders SET status = 'shipped' WHERE id = 42;
+  UPDATE inventory SET quantity = quantity - 1 WHERE product_id = 'SKU-001';
+
+  -- Both events are published atomically
+  SELECT tide.outbox_publish('orders',
+    '{"order_id": 42, "status": "shipped"}'::jsonb,
+    '{"event_type": "order.shipped"}'::jsonb
+  );
+
+  SELECT tide.outbox_publish('inventory',
+    '{"product_id": "SKU-001", "quantity_change": -1}'::jsonb,
+    '{"event_type": "inventory.decremented"}'::jsonb
+  );
+COMMIT;
+```
+
+### Conditional publishing
+
+Only publish when certain conditions are met:
+
+```sql
+BEGIN;
+  UPDATE orders SET status = 'confirmed'
+  WHERE id = 42 AND status = 'pending'
+  RETURNING id INTO affected_id;
+
+  -- Only publish if the update actually changed something
+  IF affected_id IS NOT NULL THEN
+    PERFORM tide.outbox_publish('orders',
+      format('{"order_id": %s, "status": "confirmed"}', affected_id)::jsonb,
+      '{"event_type": "order.confirmed"}'::jsonb
+    );
+  END IF;
+COMMIT;
+```
+
+### Including correlation IDs for tracing
+
+Pass request or trace IDs through the headers so downstream systems can correlate events:
+
+```sql
+SELECT tide.outbox_publish('orders',
+  '{"order_id": 42}'::jsonb,
+  jsonb_build_object(
+    'event_type', 'order.created',
+    'correlation_id', 'req-abc-123',
+    'trace_id', 'trace-xyz-456',
+    'schema_version', '1.0'
+  )
+);
+```
