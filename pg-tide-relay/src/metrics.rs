@@ -1,7 +1,7 @@
 /// Prometheus metrics + health endpoint (RELAY-9).
 use prometheus::{
-    IntCounterVec, IntGaugeVec, Registry, TextEncoder, register_int_counter_vec,
-    register_int_gauge_vec,
+    HistogramVec, IntCounterVec, IntGaugeVec, Registry, TextEncoder, register_histogram_vec,
+    register_int_counter_vec, register_int_gauge_vec,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -13,6 +13,10 @@ pub struct RelayMetrics {
     pub publish_errors: IntCounterVec,
     pub dedup_skipped: IntCounterVec,
     pub pipeline_healthy: IntGaugeVec,
+    /// Pending messages in the outbox that haven't been consumed yet.
+    pub consumer_lag: IntGaugeVec,
+    /// End-to-end delivery latency in seconds (outbox publish → sink ack).
+    pub delivery_latency_seconds: HistogramVec,
     registry: Registry,
 }
 
@@ -57,11 +61,30 @@ impl RelayMetrics {
             &["pipeline"]
         )?;
 
+        let consumer_lag = register_int_gauge_vec!(
+            prometheus::opts!(
+                "pg_tide_relay_consumer_lag",
+                "Pending messages in the outbox not yet consumed by the relay"
+            ),
+            &["pipeline"]
+        )?;
+
+        let delivery_latency_seconds = register_histogram_vec!(
+            prometheus::HistogramOpts::new(
+                "pg_tide_relay_delivery_latency_seconds",
+                "End-to-end latency from outbox publish to sink acknowledgement",
+            )
+            .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0]),
+            &["pipeline"]
+        )?;
+
         registry.register(Box::new(messages_published.clone()))?;
         registry.register(Box::new(messages_consumed.clone()))?;
         registry.register(Box::new(publish_errors.clone()))?;
         registry.register(Box::new(dedup_skipped.clone()))?;
         registry.register(Box::new(pipeline_healthy.clone()))?;
+        registry.register(Box::new(consumer_lag.clone()))?;
+        registry.register(Box::new(delivery_latency_seconds.clone()))?;
 
         Ok(Arc::new(Self {
             messages_published,
@@ -69,6 +92,8 @@ impl RelayMetrics {
             publish_errors,
             dedup_skipped,
             pipeline_healthy,
+            consumer_lag,
+            delivery_latency_seconds,
             registry,
         }))
     }
