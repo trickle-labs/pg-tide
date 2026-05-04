@@ -103,6 +103,23 @@ impl Coordinator {
         }
         Ok(())
     }
+
+    /// Signal all owned pipelines to stop and wait for them to finish their
+    /// current batch.  Called during graceful shutdown before `release_all_locks`.
+    pub async fn drain(&self) {
+        // Send the stop signal to every owned pipeline.
+        for (pipeline_id, tx) in &self.owned {
+            if tx.send(true).is_err() {
+                tracing::debug!(pipeline = %pipeline_id, "pipeline already stopped");
+            }
+        }
+
+        // Wait until every pipeline's receiver is closed (i.e. the task exited).
+        for (pipeline_id, tx) in &self.owned {
+            tx.closed().await;
+            tracing::debug!(pipeline = %pipeline_id, "pipeline drained");
+        }
+    }
 }
 
 #[cfg(test)]

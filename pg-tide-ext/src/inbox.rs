@@ -280,3 +280,140 @@ fn replay_inbox_messages_impl(name: &str, event_ids: Vec<String>) -> Result<i64,
     }
     Ok(replayed)
 }
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(any(test, feature = "pg_test"))]
+#[pgrx::pg_schema]
+mod tests {
+    use pgrx::prelude::*;
+
+    // Helper: create a fresh outbox so inbox tests that need one have it.
+    fn ensure_outbox(name: &str) {
+        let exists: bool = Spi::get_one_with_args::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM tide.tide_outbox_config WHERE outbox_name = $1)",
+            &[name.into()],
+        )
+        .unwrap()
+        .unwrap_or(false);
+        if !exists {
+            crate::outbox::outbox_create(name, 24, 10_000);
+        }
+    }
+
+    // ── inbox_create / inbox_drop ──────────────────────────────────────────
+
+    #[pg_test]
+    fn test_inbox_create_and_table_exists() {
+        crate::inbox::inbox_create("smoke-inbox", "tide", 3, 72, 0);
+        let exists: bool = Spi::get_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.tide_inbox_config WHERE inbox_name = 'smoke-inbox')",
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(exists, "inbox config row must exist after inbox_create");
+    }
+
+    #[pg_test]
+    fn test_inbox_create_duplicate_errors() {
+        crate::inbox::inbox_create("dup-inbox", "tide", 3, 72, 0);
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.tide_inbox_config WHERE inbox_name = 'dup-inbox'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+        assert_eq!(count, 1, "duplicate inbox should not insert a second row");
+    }
+
+    #[pg_test]
+    fn test_inbox_drop_removes_config() {
+        crate::inbox::inbox_create("drop-inbox", "tide", 3, 72, 0);
+        crate::inbox::inbox_drop("drop-inbox", false);
+        let exists: bool = Spi::get_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.tide_inbox_config WHERE inbox_name = 'drop-inbox')",
+        )
+        .unwrap()
+        .unwrap_or(true);
+        assert!(!exists, "inbox config row must be removed after inbox_drop");
+    }
+
+    #[pg_test]
+    fn test_inbox_drop_if_exists_is_noop() {
+        crate::inbox::inbox_drop("never-existed-inbox", true);
+    }
+
+    // ── inbox_mark_processed ──────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_inbox_mark_processed_sets_timestamp() {
+        crate::inbox::inbox_create("proc-inbox", "tide", 3, 72, 0);
+
+        // Directly insert a pending message into the inbox table.
+        Spi::run(
+            r#"INSERT INTO tide."proc-inbox_inbox" (event_id, source, payload, headers)
+               VALUES ('evt-001', 'test', '{}', '{}')"#,
+        )
+        .unwrap();
+
+        crate::inbox::inbox_mark_processed("proc-inbox", "evt-001");
+
+        let processed: bool = Spi::get_one(
+            r#"SELECT processed_at IS NOT NULL FROM tide."proc-inbox_inbox" WHERE event_id = 'evt-001'"#,
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(processed, "processed_at must be set after mark_processed");
+    }
+
+    // ── inbox_mark_failed ─────────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_inbox_mark_failed_sets_error() {
+        crate::inbox::inbox_create("fail-inbox", "tide", 3, 72, 0);
+
+        Spi::run(
+            r#"INSERT INTO tide."fail-inbox_inbox" (event_id, source, payload, headers)
+               VALUES ('evt-fail-001', 'test', '{}', '{}')"#,
+        )
+        .unwrap();
+
+        crate::inbox::inbox_mark_failed("fail-inbox", "evt-fail-001", "downstream timeout");
+
+        let error: String = Spi::get_one(
+            r#"SELECT last_error FROM tide."fail-inbox_inbox" WHERE event_id = 'evt-fail-001'"#,
+        )
+        .unwrap()
+        .unwrap_or_default();
+        assert_eq!(error, "downstream timeout");
+    }
+
+    // ── inbox_status ──────────────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_inbox_status_returns_json() {
+        crate::inbox::inbox_create("stat-inbox", "tide", 3, 72, 0);
+        let status = crate::inbox::inbox_status(Some("stat-inbox"));
+        let arr = status.0.as_array().expect("status must be JSON array");
+        assert!(!arr.is_empty(), "status should include the created inbox");
+        let first = &arr[0];
+        assert_eq!(first["inbox_name"], "stat-inbox");
+    }
+
+    // ── idempotent delivery ───────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_inbox_deduplicates_event_id() {
+        crate::inbox::inbox_create("dedup-inbox", "tide", 3, 72, 0);
+
+        let insert = r#"INSERT INTO tide."dedup-inbox_inbox" (event_id, source, payload, headers)
+                        VALUES ('dedup-evt', 'test', '{}', '{}')
+                        ON CONFLICT (event_id) DO NOTHING"#;
+        Spi::run(insert).unwrap();
+        Spi::run(insert).unwrap();
+
+        let count: i64 = Spi::get_one(r#"SELECT COUNT(*)::bigint FROM tide."dedup-inbox_inbox""#)
+            .unwrap()
+            .unwrap_or(0);
+        assert_eq!(count, 1, "duplicate event_id must be silently ignored");
+    }
+}

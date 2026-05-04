@@ -197,3 +197,230 @@ JOIN tide.tide_consumer_offsets o USING (group_name);
 
 COMMENT ON VIEW tide.consumer_lag IS
     'TIDE-B2 (v0.1.0): Per-consumer lag relative to the latest outbox message.';
+
+-- ── Security: Row-Level Security ──────────────────────────────────────────
+--
+-- RLS ensures that each role can only manage its own relay pipeline configs
+-- and outbox/inbox settings. Superusers and the extension owner bypass RLS.
+
+ALTER TABLE tide.tide_outbox_config  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tide.tide_inbox_config   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tide.relay_outbox_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tide.relay_inbox_config  ENABLE ROW LEVEL SECURITY;
+
+-- Add an owner column if not already present (idempotent via DO block).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'tide'
+          AND table_name   = 'tide_outbox_config'
+          AND column_name  = 'owner'
+    ) THEN
+        ALTER TABLE tide.tide_outbox_config  ADD COLUMN owner TEXT NOT NULL DEFAULT current_user;
+        ALTER TABLE tide.tide_inbox_config   ADD COLUMN owner TEXT NOT NULL DEFAULT current_user;
+        ALTER TABLE tide.relay_outbox_config ADD COLUMN owner TEXT NOT NULL DEFAULT current_user;
+        ALTER TABLE tide.relay_inbox_config  ADD COLUMN owner TEXT NOT NULL DEFAULT current_user;
+    END IF;
+END;
+$$;
+
+-- Owners can see and modify only their own configurations.
+DROP POLICY IF EXISTS tide_outbox_owner  ON tide.tide_outbox_config;
+DROP POLICY IF EXISTS tide_inbox_owner   ON tide.tide_inbox_config;
+DROP POLICY IF EXISTS relay_outbox_owner ON tide.relay_outbox_config;
+DROP POLICY IF EXISTS relay_inbox_owner  ON tide.relay_inbox_config;
+
+CREATE POLICY tide_outbox_owner  ON tide.tide_outbox_config
+    USING (owner = current_user)
+    WITH CHECK (owner = current_user);
+
+CREATE POLICY tide_inbox_owner   ON tide.tide_inbox_config
+    USING (owner = current_user)
+    WITH CHECK (owner = current_user);
+
+CREATE POLICY relay_outbox_owner ON tide.relay_outbox_config
+    USING (owner = current_user)
+    WITH CHECK (owner = current_user);
+
+CREATE POLICY relay_inbox_owner  ON tide.relay_inbox_config
+    USING (owner = current_user)
+    WITH CHECK (owner = current_user);
+
+COMMENT ON POLICY tide_outbox_owner  ON tide.tide_outbox_config IS
+    'TIDE-SEC-1 (v0.1.0): Owners can only access their own outbox configs.';
+COMMENT ON POLICY relay_outbox_owner ON tide.relay_outbox_config IS
+    'TIDE-SEC-1 (v0.1.0): Owners can only access their own relay outbox configs.';
+
+-- ── Security: GRANT / REVOKE Helpers ────────────────────────────────────--
+
+--- Grant a role the ability to publish to a named outbox.
+CREATE OR REPLACE FUNCTION tide.grant_publish(p_role TEXT, p_outbox TEXT)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM tide.tide_outbox_config WHERE outbox_name = p_outbox
+    ) THEN
+        RAISE EXCEPTION 'outbox "%" does not exist', p_outbox;
+    END IF;
+
+    EXECUTE format(
+        'GRANT INSERT ON tide.tide_outbox_messages TO %I',
+        p_role
+    );
+    -- Record the grant in the audit log.
+    INSERT INTO tide.tide_security_audit (action, target_role, target_object, performed_by)
+    VALUES ('GRANT_PUBLISH', p_role, p_outbox, current_user);
+END;
+$$;
+
+COMMENT ON FUNCTION tide.grant_publish(TEXT, TEXT) IS
+    'TIDE-SEC-2 (v0.1.0): Grant a role publish access to an outbox.';
+
+--- Revoke publish access from a role for a named outbox.
+CREATE OR REPLACE FUNCTION tide.revoke_publish(p_role TEXT, p_outbox TEXT)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    EXECUTE format(
+        'REVOKE INSERT ON tide.tide_outbox_messages FROM %I',
+        p_role
+    );
+    INSERT INTO tide.tide_security_audit (action, target_role, target_object, performed_by)
+    VALUES ('REVOKE_PUBLISH', p_role, p_outbox, current_user);
+END;
+$$;
+
+COMMENT ON FUNCTION tide.revoke_publish(TEXT, TEXT) IS
+    'TIDE-SEC-2 (v0.1.0): Revoke publish access from a role.';
+
+-- ── Security: Audit Log ──────────────────────────────────────────────────--
+
+CREATE TABLE IF NOT EXISTS tide.tide_security_audit (
+    id             BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    action         TEXT        NOT NULL,
+    target_role    TEXT,
+    target_object  TEXT,
+    performed_by   TEXT        NOT NULL DEFAULT current_user,
+    performed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE tide.tide_security_audit IS
+    'TIDE-SEC-3 (v0.1.0): Immutable audit log for security-sensitive operations.';
+
+-- Audit trigger for relay config changes.
+CREATE OR REPLACE FUNCTION tide.relay_config_audit()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO tide.tide_security_audit (action, target_role, target_object, performed_by)
+    VALUES (
+        'RELAY_CONFIG_' || TG_OP,
+        NULL,
+        COALESCE(NEW.name, OLD.name),
+        current_user
+    );
+    RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS relay_outbox_audit ON tide.relay_outbox_config;
+CREATE TRIGGER relay_outbox_audit
+    AFTER INSERT OR UPDATE OR DELETE ON tide.relay_outbox_config
+    FOR EACH ROW EXECUTE FUNCTION tide.relay_config_audit();
+
+DROP TRIGGER IF EXISTS relay_inbox_audit ON tide.relay_inbox_config;
+CREATE TRIGGER relay_inbox_audit
+    AFTER INSERT OR UPDATE OR DELETE ON tide.relay_inbox_config
+    FOR EACH ROW EXECUTE FUNCTION tide.relay_config_audit();
+
+-- ── Retention: outbox_truncate_delivered ────────────────────────────────--
+
+--- Delete all consumed outbox messages older than retention_hours.
+---
+--- Call this manually or via pg_cron / background worker to keep the outbox
+--- table from growing unboundedly.
+---
+---   SELECT tide.outbox_truncate_delivered();                 -- all outboxes
+---   SELECT tide.outbox_truncate_delivered('orders');         -- named outbox
+CREATE OR REPLACE FUNCTION tide.outbox_truncate_delivered(
+    p_outbox_name TEXT DEFAULT NULL
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_deleted BIGINT;
+BEGIN
+    WITH deleted AS (
+        DELETE FROM tide.tide_outbox_messages m
+        USING tide.tide_outbox_config c
+        WHERE m.outbox_name = c.outbox_name
+          AND m.consumed_at IS NOT NULL
+          AND m.created_at  < now() - make_interval(hours => c.retention_hours)
+          AND (p_outbox_name IS NULL OR m.outbox_name = p_outbox_name)
+        RETURNING m.id
+    )
+    SELECT COUNT(*) INTO v_deleted FROM deleted;
+
+    RETURN v_deleted;
+END;
+$$;
+
+COMMENT ON FUNCTION tide.outbox_truncate_delivered(TEXT) IS
+    'TIDE-4 (v0.1.0): Delete consumed outbox messages past their retention window. '
+    'Pass NULL to clean all outboxes, or a specific outbox name.';
+
+-- ── Retention: inbox cleanup ─────────────────────────────────────────────--
+
+--- Clean up processed inbox messages past their retention window.
+---
+--- Usage:
+---   SELECT tide.inbox_truncate_processed('orders');
+CREATE OR REPLACE FUNCTION tide.inbox_truncate_processed(
+    p_inbox_name TEXT
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_schema TEXT;
+    v_retention INT;
+    v_deleted BIGINT;
+BEGIN
+    SELECT inbox_schema, processed_retention_hours
+      INTO v_schema, v_retention
+      FROM tide.tide_inbox_config
+     WHERE inbox_name = p_inbox_name;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'inbox "%" does not exist', p_inbox_name;
+    END IF;
+
+    EXECUTE format(
+        $fmt$
+        WITH deleted AS (
+            DELETE FROM %I.%I
+            WHERE processed_at IS NOT NULL
+              AND processed_at < now() - make_interval(hours => %s)
+            RETURNING id
+        )
+        SELECT COUNT(*) FROM deleted
+        $fmt$,
+        v_schema,
+        p_inbox_name || '_inbox',
+        v_retention
+    ) INTO v_deleted;
+
+    RETURN v_deleted;
+END;
+$$;
+
+COMMENT ON FUNCTION tide.inbox_truncate_processed(TEXT) IS
+    'TIDE-4 (v0.1.0): Delete processed inbox messages past their retention window.';

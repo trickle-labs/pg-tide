@@ -1,0 +1,110 @@
+# Default values for the pg-tide relay Helm chart.
+# Override any of these in a values file or with --set.
+
+# Number of relay replicas.
+# Advisory locks ensure only one instance owns each pipeline at a time,
+# so it is safe to run more than one replica for high availability.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/trickle-labs/pg-tide
+  pullPolicy: IfNotPresent
+  # Overrides the image tag. Defaults to the chart's appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# PostgreSQL connection string.
+# Prefer providing this via an existing secret (see existingSecret below).
+postgres:
+  url: ""
+  # Name of an existing Secret that contains the connection string.
+  # The secret must have a key named POSTGRES_URL.
+  existingSecret: ""
+  existingSecretKey: "POSTGRES_URL"
+
+relay:
+  # Relay group ID — used for advisory lock namespacing.
+  # Set a unique value per deployment group.
+  groupId: "default"
+  # Address for the Prometheus /metrics and /health endpoints.
+  metricsAddr: "0.0.0.0:9090"
+  # Log format: text or json.
+  logFormat: "json"
+  # Log level: error, warn, info, debug, trace.
+  logLevel: "info"
+  # Seconds to wait for in-flight messages to drain before exiting.
+  drainTimeout: 30
+
+# Optional TOML configuration file.
+# Mount a ConfigMap containing relay.toml and set configFile to the path.
+configFile: ""
+
+service:
+  type: ClusterIP
+  port: 9090
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "64Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: metrics
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: metrics
+  initialDelaySeconds: 3
+  periodSeconds: 5
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra environment variables to inject into the relay container.
+extraEnv: []
+# - name: MY_VAR
+#   value: "my-value"
+
+# Extra volumes and mounts (e.g. for mounting a config file).
+extraVolumes: []
+extraVolumeMounts: []
