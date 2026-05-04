@@ -62,6 +62,7 @@
 - [Docker](operations/docker.md)
 - [Kubernetes](operations/kubernetes.md)
 - [Scaling](operations/scaling.md)
+- [Backup and Restore](operations/backup-and-restore.md)
 - [Upgrading](operations/upgrading.md)
 - [Troubleshooting](operations/troubleshooting.md)
 
@@ -71,7 +72,18 @@
 
 - [Outbox to Kafka](tutorials/outbox-to-kafka.md)
 - [Inbox from NATS](tutorials/inbox-from-nats.md)
+- [Bidirectional Sync](tutorials/bidirectional-sync.md)
 - [Fan-out Pattern](tutorials/fan-out-pattern.md)
+- [Dead-Letter Queue](tutorials/dead-letter-queue.md)
+
+---
+
+# Integrations
+
+- [pg-trickle](integration/pg-trickle.md)
+- [dbt](integration/dbt.md)
+- [CloudNativePG](integration/cloudnativepg.md)
+- [PgBouncer](integration/pgbouncer.md)
 
 ---
 

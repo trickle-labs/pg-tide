@@ -47,6 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "json" => LogFormat::Json,
         _ => LogFormat::Text,
     };
+    let drain_timeout = Duration::from_secs(cli.drain_timeout);
 
     // A30: Expand ${ENV:VAR_NAME} placeholders in connection strings.
     cfg = cfg.resolve_env_vars();
@@ -105,10 +106,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start LISTEN for config changes.
     db.execute("LISTEN tide_relay_config", &[]).await?;
 
-    // Wait for shutdown signal.
+    // Wait for shutdown signal, then drain in-flight work.
     wait_for_shutdown().await;
 
-    tracing::info!("pgtrickle-relay shutting down");
+    tracing::info!(
+        drain_timeout_secs = drain_timeout.as_secs(),
+        "pgtrickle-relay shutting down — draining in-flight messages"
+    );
+
+    // Give active pipelines time to finish their current batch.
+    if drain_timeout.as_secs() > 0 {
+        tokio::time::timeout(drain_timeout, coordinator.drain())
+            .await
+            .unwrap_or_else(|_| {
+                tracing::warn!(
+                    "drain timeout ({} s) exceeded — forcing shutdown",
+                    drain_timeout.as_secs()
+                );
+            });
+    }
+
     coordinator.release_all_locks().await?;
 
     Ok(())

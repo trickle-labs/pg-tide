@@ -285,3 +285,160 @@ pub fn relay_list_configs() -> pgrx::JsonB {
     let all: Vec<_> = outbox_rows.into_iter().chain(inbox_rows).collect();
     pgrx::JsonB(serde_json::Value::Array(all))
 }
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(any(test, feature = "pg_test"))]
+#[pgrx::pg_schema]
+mod tests {
+    use pgrx::prelude::*;
+
+    fn setup_outbox(name: &str) {
+        let exists: bool = Spi::get_one_with_args::<bool>(
+            "SELECT EXISTS(SELECT 1 FROM tide.tide_outbox_config WHERE outbox_name = $1)",
+            &[name.into()],
+        )
+        .unwrap()
+        .unwrap_or(false);
+        if !exists {
+            crate::outbox::outbox_create(name, 24, 10_000);
+        }
+    }
+
+    // ── relay_set_outbox / relay_set_inbox ─────────────────────────────────
+
+    #[pg_test]
+    fn test_relay_set_outbox_creates_config() {
+        setup_outbox("relay-src-outbox");
+        crate::relay::relay_set_outbox(
+            "my-pipeline",
+            "relay-src-outbox",
+            "nats",
+            pgrx::JsonB(serde_json::json!({"url": "nats://localhost:4222"})),
+            100,
+            true,
+        );
+        let exists: bool = Spi::get_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = 'my-pipeline')",
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(exists, "relay_set_outbox must create a config row");
+    }
+
+    #[pg_test]
+    fn test_relay_set_inbox_creates_config() {
+        crate::inbox::inbox_create("relay-dst-inbox", "tide", 3, 72, 0);
+        crate::relay::relay_set_inbox(
+            "my-reverse-pipeline",
+            "nats",
+            "relay-dst-inbox",
+            pgrx::JsonB(serde_json::json!({"url": "nats://localhost:4222"})),
+            100,
+            true,
+        );
+        let exists: bool = Spi::get_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.relay_inbox_config WHERE name = 'my-reverse-pipeline')",
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(exists, "relay_set_inbox must create a config row");
+    }
+
+    // ── relay_enable / relay_disable ───────────────────────────────────────
+
+    #[pg_test]
+    fn test_relay_enable_disable_roundtrip() {
+        setup_outbox("toggle-relay-outbox");
+        crate::relay::relay_set_outbox(
+            "toggle-pipeline",
+            "toggle-relay-outbox",
+            "stdout",
+            pgrx::JsonB(serde_json::json!({})),
+            100,
+            true,
+        );
+
+        crate::relay::relay_disable("toggle-pipeline");
+        let enabled: bool = Spi::get_one(
+            "SELECT enabled FROM tide.relay_outbox_config WHERE name = 'toggle-pipeline'",
+        )
+        .unwrap()
+        .unwrap_or(true);
+        assert!(!enabled, "pipeline should be disabled");
+
+        crate::relay::relay_enable("toggle-pipeline");
+        let enabled: bool = Spi::get_one(
+            "SELECT enabled FROM tide.relay_outbox_config WHERE name = 'toggle-pipeline'",
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(enabled, "pipeline should be re-enabled");
+    }
+
+    // ── relay_delete ───────────────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_relay_delete_removes_config() {
+        setup_outbox("del-relay-outbox");
+        crate::relay::relay_set_outbox(
+            "delete-me-pipeline",
+            "del-relay-outbox",
+            "stdout",
+            pgrx::JsonB(serde_json::json!({})),
+            100,
+            true,
+        );
+        crate::relay::relay_delete("delete-me-pipeline");
+        let exists: bool = Spi::get_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = 'delete-me-pipeline')",
+        )
+        .unwrap()
+        .unwrap_or(true);
+        assert!(!exists, "relay_delete must remove the config row");
+    }
+
+    // ── relay_get_config / relay_list_configs ─────────────────────────────
+
+    #[pg_test]
+    fn test_relay_get_config_returns_json() {
+        setup_outbox("cfg-relay-outbox");
+        crate::relay::relay_set_outbox(
+            "cfg-pipeline",
+            "cfg-relay-outbox",
+            "stdout",
+            pgrx::JsonB(serde_json::json!({"key": "value"})),
+            50,
+            true,
+        );
+        let cfg = crate::relay::relay_get_config("cfg-pipeline");
+        assert_eq!(cfg.0["name"], "cfg-pipeline");
+        assert_eq!(cfg.0["sink"], "stdout");
+    }
+
+    #[pg_test]
+    fn test_relay_list_configs_includes_pipeline() {
+        setup_outbox("list-relay-outbox");
+        crate::relay::relay_set_outbox(
+            "list-pipeline",
+            "list-relay-outbox",
+            "kafka",
+            pgrx::JsonB(serde_json::json!({})),
+            100,
+            true,
+        );
+        let list = crate::relay::relay_list_configs();
+        let arr = list.0.as_array().expect("must be array");
+        let found = arr.iter().any(|v| v["name"] == "list-pipeline");
+        assert!(found, "relay_list_configs must include 'list-pipeline'");
+    }
+
+    // ── error paths ────────────────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_relay_enable_unknown_pipeline_is_safe() {
+        // Enabling a non-existent pipeline with our implementation is a no-op
+        // (no rows updated). Verify the function does not panic.
+        crate::relay::relay_enable("does-not-exist");
+    }
+}

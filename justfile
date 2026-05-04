@@ -55,5 +55,9 @@ docs-serve:
 docker-build:
     docker build -t ghcr.io/trickle-labs/pg-tide:latest .
 
+# Run Criterion benchmarks
+bench:
+    cargo bench --package pg-tide-relay
+
 # Default: fmt + lint + test-unit
 all: fmt lint test-unit

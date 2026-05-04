@@ -1,0 +1,124 @@
+# CloudNativePG + pg_tide — Sidecar Pattern Example
+#
+# This manifest deploys a CloudNativePG Cluster with the pg_tide extension
+# pre-installed and a pg-tide relay sidecar running alongside each PostgreSQL pod.
+#
+# Prerequisites:
+#   - CloudNativePG operator installed (cnpg.io/v1)
+#   - pg_tide extension compiled and packaged in a custom PostgreSQL image
+#
+# Custom image (Dockerfile example):
+# ─────────────────────────────────
+#   FROM ghcr.io/cloudnative-pg/postgresql:18
+#   COPY pg_tide.so     /usr/lib/postgresql/18/lib/
+#   COPY pg_tide.control /usr/share/postgresql/18/extension/
+#   COPY sql/pg_tide--0.1.0.sql /usr/share/postgresql/18/extension/
+#
+# Build and push:
+#   docker build -t ghcr.io/your-org/postgres-pg-tide:18 .
+#   docker push ghcr.io/your-org/postgres-pg-tide:18
+#
+# Then update image.name below.
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-tide-cluster
+  namespace: default
+spec:
+  instances: 3
+
+  # Use a custom image that bundles the pg_tide extension.
+  imageName: ghcr.io/your-org/postgres-pg-tide:18
+
+  postgresql:
+    parameters:
+      shared_preload_libraries: ""   # pg_tide has no background workers
+    pg_hba:
+      - host all app 0.0.0.0/0 scram-sha-256
+
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+      postInitSQL:
+        - CREATE EXTENSION IF NOT EXISTS pg_tide;
+        # Create a relay role with minimal privileges.
+        - CREATE ROLE relay_user LOGIN PASSWORD 'change-me-in-production';
+        - GRANT USAGE ON SCHEMA tide TO relay_user;
+        - GRANT SELECT ON ALL TABLES IN SCHEMA tide TO relay_user;
+        - GRANT INSERT ON tide.tide_outbox_messages TO relay_user;
+
+  storage:
+    size: 10Gi
+    storageClass: standard
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+  # Mount the relay sidecar next to the primary PostgreSQL container.
+  # The sidecar reads pipeline config from the tide schema and forwards
+  # outbox messages to the configured external sinks.
+  sidecars:
+    - name: pg-tide-relay
+      image: ghcr.io/trickle-labs/pg-tide:0.1.0
+      args:
+        - --log-format=json
+        - --log-level=info
+        - --metrics-addr=0.0.0.0:9090
+        - --relay-group-id=cnpg-primary
+        - --drain-timeout=30
+      env:
+        - name: PG_TIDE_RELAY_POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: pg-tide-cluster-app
+              key: uri
+      ports:
+        - name: relay-metrics
+          containerPort: 9090
+          protocol: TCP
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "64Mi"
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: relay-metrics
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: relay-metrics
+        initialDelaySeconds: 3
+        periodSeconds: 5
+
+---
+# ServiceMonitor for Prometheus scraping the relay metrics.
+# Requires the Prometheus Operator CRDs.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: pg-tide-relay-metrics
+  namespace: default
+  labels:
+    release: prometheus  # must match your Prometheus Operator selector
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: pg-tide-cluster
+  endpoints:
+    - port: relay-metrics
+      path: /metrics
+      interval: 30s

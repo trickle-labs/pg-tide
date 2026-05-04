@@ -67,4 +67,17 @@ pub struct Cli {
         help = "Path to TOML config file (optional)"
     )]
     pub config: Option<String>,
+
+    /// Maximum time in seconds to wait for in-flight messages to drain on shutdown.
+    ///
+    /// When a SIGTERM is received the relay stops accepting new work and waits
+    /// up to this many seconds for active pipelines to finish their current
+    /// batch before exiting. Set to 0 to exit immediately.
+    #[arg(
+        long,
+        default_value = "30",
+        env = "PG_TIDE_DRAIN_TIMEOUT",
+        help = "Seconds to wait for in-flight messages to drain on SIGTERM (default: 30)"
+    )]
+    pub drain_timeout: u64,
 }

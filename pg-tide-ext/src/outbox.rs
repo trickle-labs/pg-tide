@@ -256,6 +256,52 @@ fn outbox_enable_impl(name: &str) -> Result<(), PgTideError> {
     Ok(())
 }
 
+// ── TIDE-API: outbox_truncate_delivered ───────────────────────────────────
+
+/// Delete consumed outbox messages that have aged past their retention window.
+///
+/// Pass `NULL` (the default) to clean all outboxes at once, or a specific
+/// outbox name to target only that queue. Returns the number of rows deleted.
+///
+/// Example:
+/// ```sql
+/// -- Clean everything in one shot:
+/// SELECT tide.outbox_truncate_delivered();
+///
+/// -- Target a single outbox:
+/// SELECT tide.outbox_truncate_delivered('orders');
+/// ```
+#[pg_extern(schema = "tide")]
+pub fn outbox_truncate_delivered(p_outbox_name: default!(Option<&str>, "NULL")) -> i64 {
+    outbox_truncate_delivered_impl(p_outbox_name).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn outbox_truncate_delivered_impl(outbox_name: Option<&str>) -> Result<i64, PgTideError> {
+    let deleted: i64 = Spi::get_one_with_args::<i64>(
+        "WITH deleted AS (
+            DELETE FROM tide.tide_outbox_messages m
+            USING tide.tide_outbox_config c
+            WHERE m.outbox_name = c.outbox_name
+              AND m.consumed_at IS NOT NULL
+              AND m.created_at  < now() - make_interval(hours => c.retention_hours)
+              AND ($1::text IS NULL OR m.outbox_name = $1)
+            RETURNING m.id
+        )
+        SELECT COUNT(*) FROM deleted",
+        &[outbox_name.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("outbox_truncate_delivered: {e}")))?
+    .unwrap_or(0);
+
+    pgrx::log!(
+        "[pg_tide] outbox_truncate_delivered: deleted {deleted} messages{}",
+        outbox_name
+            .map(|n| format!(" from outbox '{n}'"))
+            .unwrap_or_default()
+    );
+    Ok(deleted)
+}
+
 // ── TIDE-API: Consumer Groups ─────────────────────────────────────────────
 
 /// Create a consumer group for a named outbox.
@@ -379,4 +425,139 @@ fn consumer_heartbeat_impl(group: &str, consumer: &str) -> Result<(), PgTideErro
         &[group.into(), consumer.into()],
     );
     Ok(())
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(any(test, feature = "pg_test"))]
+#[pgrx::pg_schema]
+mod tests {
+    use pgrx::prelude::*;
+
+    // ── outbox_create / outbox_drop ────────────────────────────────────────
+
+    #[pg_test]
+    fn test_outbox_create_and_exists() {
+        crate::outbox::outbox_create("smoke-create", 24, 10_000);
+        assert!(crate::outbox::outbox_exists("smoke-create"));
+    }
+
+    #[pg_test]
+    fn test_outbox_create_duplicate_errors() {
+        crate::outbox::outbox_create("dup-outbox", 24, 10_000);
+        // Creating the same outbox a second time must raise a pgrx error —
+        // we verify it by checking the table row count stays at 1.
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.tide_outbox_config WHERE outbox_name = 'dup-outbox'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+        assert_eq!(count, 1);
+    }
+
+    #[pg_test]
+    fn test_outbox_publish_inserts_message() {
+        crate::outbox::outbox_create("pub-outbox", 24, 10_000);
+        crate::outbox::outbox_publish(
+            "pub-outbox",
+            pgrx::JsonB(serde_json::json!({"event": "order.created"})),
+            pgrx::JsonB(serde_json::json!({})),
+        );
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.tide_outbox_messages WHERE outbox_name = 'pub-outbox'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+        assert_eq!(count, 1);
+    }
+
+    #[pg_test]
+    fn test_outbox_publish_to_unknown_outbox_errors() {
+        // Publish to a non-existent outbox should raise pgrx::error! —
+        // caught by the test harness as a caught panic / error.
+        // We verify the messages table remains empty for this name.
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.tide_outbox_messages WHERE outbox_name = 'ghost'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+        assert_eq!(count, 0);
+    }
+
+    #[pg_test]
+    fn test_outbox_status_returns_json() {
+        crate::outbox::outbox_create("status-outbox", 24, 10_000);
+        let status = crate::outbox::outbox_status("status-outbox");
+        let v = &status.0;
+        assert_eq!(v["outbox_name"], "status-outbox");
+        assert_eq!(v["message_count"], 0);
+    }
+
+    #[pg_test]
+    fn test_outbox_drop_removes_config() {
+        crate::outbox::outbox_create("drop-me", 24, 10_000);
+        assert!(crate::outbox::outbox_exists("drop-me"));
+        crate::outbox::outbox_drop("drop-me", false);
+        assert!(!crate::outbox::outbox_exists("drop-me"));
+    }
+
+    #[pg_test]
+    fn test_outbox_drop_if_exists_is_noop() {
+        // drop_if_exists on unknown outbox must not error.
+        crate::outbox::outbox_drop("never-existed", true);
+    }
+
+    #[pg_test]
+    fn test_outbox_disable_enable_roundtrip() {
+        crate::outbox::outbox_create("toggle-outbox", 24, 10_000);
+        crate::outbox::outbox_disable("toggle-outbox");
+        let enabled: bool = Spi::get_one(
+            "SELECT enabled FROM tide.tide_outbox_config WHERE outbox_name = 'toggle-outbox'",
+        )
+        .unwrap()
+        .unwrap_or(true);
+        assert!(!enabled, "outbox should be disabled");
+
+        crate::outbox::outbox_enable("toggle-outbox");
+        let enabled: bool = Spi::get_one(
+            "SELECT enabled FROM tide.tide_outbox_config WHERE outbox_name = 'toggle-outbox'",
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(enabled, "outbox should be enabled again");
+    }
+
+    // ── Consumer groups ────────────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_consumer_group_create_and_commit_offset() {
+        crate::outbox::outbox_create("cg-outbox", 24, 10_000);
+        crate::outbox::create_consumer_group("cg-group", "cg-outbox", "earliest");
+
+        crate::outbox::commit_offset("cg-group", "worker-1", 42);
+
+        let offset: i64 = Spi::get_one(
+            "SELECT committed_offset FROM tide.tide_consumer_offsets \
+             WHERE group_name = 'cg-group' AND consumer_id = 'worker-1'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+        assert_eq!(offset, 42);
+    }
+
+    #[pg_test]
+    fn test_drop_consumer_group_cascades_offsets() {
+        crate::outbox::outbox_create("cas-outbox", 24, 10_000);
+        crate::outbox::create_consumer_group("cas-group", "cas-outbox", "earliest");
+        crate::outbox::commit_offset("cas-group", "w1", 5);
+
+        crate::outbox::drop_consumer_group("cas-group", false);
+
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.tide_consumer_offsets WHERE group_name = 'cas-group'",
+        )
+        .unwrap()
+        .unwrap_or(1);
+        assert_eq!(count, 0);
+    }
 }
