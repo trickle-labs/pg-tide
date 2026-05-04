@@ -147,8 +147,8 @@ fn inbox_mark_processed_impl(name: &str, event_id: &str) -> Result<(), PgTideErr
     .unwrap_or_else(|| "tide".to_string());
 
     let sql = format!(
-        r#"UPDATE "{schema}"."{name}_inbox" \
-           SET processed_at = now() \
+        r#"UPDATE "{schema}"."{name}_inbox"
+           SET processed_at = now()
            WHERE event_id = $1 AND processed_at IS NULL"#
     );
     Spi::run_with_args(&sql, &[event_id.into()])
@@ -178,9 +178,9 @@ fn inbox_mark_failed_impl(name: &str, event_id: &str, error: &str) -> Result<(),
     .unwrap_or_else(|| "tide".to_string());
 
     let sql = format!(
-        r#"UPDATE "{schema}"."{name}_inbox" \
-           SET retry_count = retry_count + 1, \
-               last_error  = $2 \
+        r#"UPDATE "{schema}"."{name}_inbox"
+           SET retry_count = retry_count + 1,
+               last_error  = $2
            WHERE event_id = $1"#
     );
     Spi::run_with_args(&sql, &[event_id.into(), error.into()])
@@ -220,8 +220,8 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
 
         let dlq_count: i64 = Spi::get_one_with_args::<i64>(
             &format!(
-                r#"SELECT COUNT(*) FROM "{schema}"."{n}_inbox" \
-                   WHERE processed_at IS NULL \
+                r#"SELECT COUNT(*) FROM "{schema}"."{n}_inbox"
+                   WHERE processed_at IS NULL
                      AND retry_count >= (SELECT max_retries FROM tide.tide_inbox_config WHERE inbox_name = $1)"#
             ),
             &[n.into()],
@@ -265,9 +265,9 @@ fn replay_inbox_messages_impl(name: &str, event_ids: Vec<String>) -> Result<i64,
     let mut replayed: i64 = 0;
     for event_id in &event_ids {
         let sql = format!(
-            r#"UPDATE "{schema}"."{name}_inbox" \
-               SET retry_count = 0, last_error = NULL, processed_at = NULL \
-               WHERE event_id = $1 AND processed_at IS NULL \
+            r#"UPDATE "{schema}"."{name}_inbox"
+               SET retry_count = 0, last_error = NULL, processed_at = NULL
+               WHERE event_id = $1 AND processed_at IS NULL
                RETURNING 1"#
         );
         let count: i64 = Spi::get_one_with_args::<i64>(
