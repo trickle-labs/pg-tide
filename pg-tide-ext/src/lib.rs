@@ -16,6 +16,11 @@ mod relay;
 
 pgrx::pg_module_magic!();
 
+// Declare the `tide` schema so pgrx's SQL generator knows to emit
+// CREATE SCHEMA IF NOT EXISTS tide before defining extension functions.
+#[pgrx::pg_schema]
+pub mod tide {}
+
 // Install the full catalog schema (tables, indexes, views, triggers, etc.)
 // when `CREATE EXTENSION pg_tide` runs. The plpgsql utility functions
 // (grant_publish, inbox_truncate_processed, etc.) also come from this file.
