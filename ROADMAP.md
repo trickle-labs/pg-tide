@@ -11,7 +11,7 @@
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
 | v0.1.0 | The complete foundation — transactional outbox, idempotent inbox, relay catalog, and core relay binary extracted from pg_trickle | ✅ Released | Large | [CHANGELOG.md](CHANGELOG.md) |
-| v0.2.0 | Post-launch hardening — observability improvements, Docker enhancements, CI fixes, pgrx compatibility | 🚧 In Progress | Small | [CHANGELOG.md](CHANGELOG.md) |
+| v0.2.0 | Post-launch hardening — observability improvements, Docker enhancements, CI fixes, pgrx compatibility | ✅ Released | Small | [CHANGELOG.md](CHANGELOG.md) |
 
 ### Relay Binary — Forward & Reverse Modes (v0.3.x – v0.4.x)
 
