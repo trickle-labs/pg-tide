@@ -22,7 +22,7 @@ pgrx::pg_module_magic!();
 // outbox_truncate_delivered is implemented as a #[pg_extern] above and is
 // therefore NOT in the SQL file.
 pgrx::extension_sql_file!(
-    "../sql/pg_tide--0.1.0.sql",
+    "../../sql/pg_tide--0.1.0.sql",
     name = "pg_tide_tables",
     bootstrap
 );
