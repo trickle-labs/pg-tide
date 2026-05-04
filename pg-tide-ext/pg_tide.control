@@ -5,5 +5,4 @@ module_pathname = '$libdir/pg_tide_ext'
 relocatable = false
 requires = ''
 superuser = false
-trusted = true
 schema = 'tide'
