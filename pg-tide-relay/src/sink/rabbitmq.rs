@@ -5,7 +5,7 @@ use crate::error::RelayError;
 
 #[cfg(feature = "rabbitmq")]
 use lapin::{
-    BasicProperties, Channel, Connection, ConnectionProperties, options::BasicPublishOptions,
+    options::BasicPublishOptions, BasicProperties, Channel, Connection, ConnectionProperties,
 };
 
 #[cfg(feature = "rabbitmq")]

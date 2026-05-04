@@ -5,8 +5,8 @@ use crate::error::RelayError;
 
 #[cfg(feature = "kafka")]
 use rdkafka::{
-    ClientConfig, Message,
     consumer::{Consumer, StreamConsumer},
+    ClientConfig, Message,
 };
 
 #[cfg(feature = "kafka")]
