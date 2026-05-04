@@ -21,7 +21,6 @@ use futures_util::StreamExt;
 /// Verifies that messages published to an outbox can be forwarded to a NATS
 /// subject and that message ordering is preserved.
 #[tokio::test]
-#[ignore = "requires NATS container — run with just test-integration"]
 async fn test_nats_forward_sink_delivers_messages() {
     use testcontainers::runners::AsyncRunner;
 
@@ -88,7 +87,6 @@ async fn test_nats_forward_sink_delivers_messages() {
 /// Verifies that a NATS source can receive messages and they are written to
 /// the inbox without duplicates.
 #[tokio::test]
-#[ignore = "requires NATS container — run with just test-integration"]
 async fn test_nats_reverse_source_deduplicates() {
     use testcontainers::runners::AsyncRunner;
 

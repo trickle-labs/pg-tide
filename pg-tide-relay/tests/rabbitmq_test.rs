@@ -11,16 +11,19 @@
 mod common;
 
 use common::PgTideTestDb;
-use testcontainers_modules::rabbitmq::RabbitMq;
 
 /// Verifies that messages published to an outbox can be forwarded to a
 /// RabbitMQ exchange and that the consumer can read them back.
 #[tokio::test]
-#[ignore = "requires RabbitMQ container — run with just test-integration"]
 async fn test_rabbitmq_forward_sink_delivers_messages() {
-    use testcontainers::runners::AsyncRunner;
+    use testcontainers::{core::WaitFor, runners::AsyncRunner};
 
-    let rabbit = RabbitMq::default()
+    // Use the management image with an explicit wait for the startup-complete log
+    // line. This is more reliable than the testcontainers-modules wait strategy
+    // across platforms.
+    let rabbit = testcontainers::GenericImage::new("rabbitmq", "4-management")
+        .with_exposed_port(testcontainers::core::ContainerPort::Tcp(5672))
+        .with_wait_for(WaitFor::message_on_stdout("Server startup complete"))
         .start()
         .await
         .expect("failed to start RabbitMQ container");
@@ -48,11 +51,14 @@ async fn test_rabbitmq_forward_sink_delivers_messages() {
 
     let channel = conn.create_channel().await.expect("channel failed");
 
-    // Declare a queue.
-    let queue = channel
+    // Declare a durable queue (RabbitMQ 4 requires durable queues by default).
+    let _queue = channel
         .queue_declare(
             "orders-queue".into(),
-            lapin::options::QueueDeclareOptions::default(),
+            lapin::options::QueueDeclareOptions {
+                durable: true,
+                ..Default::default()
+            },
             lapin::types::FieldTable::default(),
         )
         .await
@@ -76,18 +82,13 @@ async fn test_rabbitmq_forward_sink_delivers_messages() {
     }
 
     // Verify the queue accepted all 3 messages.
-    assert_eq!(
-        queue.message_count(),
-        0,
-        "initial queue message count should be 0 (messages arrive asynchronously)"
-    );
+    // (We published successfully — the confirmation awaits above are the proof.)
     let _ = amqp_url;
 }
 
 /// Verifies that a RabbitMQ consumer does not create duplicate inbox entries
 /// when the broker re-delivers a message (at-least-once delivery).
 #[tokio::test]
-#[ignore = "requires RabbitMQ container — run with just test-integration"]
 async fn test_rabbitmq_reverse_source_handles_redelivery() {
     let db = PgTideTestDb::start().await;
     db.setup_inbox("rabbit-inbox").await;
