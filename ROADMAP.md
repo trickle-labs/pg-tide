@@ -38,8 +38,8 @@
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
 | v0.8.0 | Notification sinks: Slack, Discord, PagerDuty | 🔜 Planned | Medium | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
-| v0.9.0 | Analytics sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Apache Iceberg, Delta Lake, DuckLake | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
-| v0.10.0 | Connector ecosystems (foundation): Singer protocol adapter (Meltano Hub — ~500 taps/targets), Airbyte protocol adapter (~400 connectors), Fivetran HVR endpoint | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
+| v0.9.0 | Connector ecosystems (foundation): Singer protocol adapter (Meltano Hub — ~500 taps/targets), Airbyte protocol adapter (~400 connectors), Fivetran HVR endpoint | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
+| v0.10.0 | Analytics sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Apache Iceberg, Delta Lake, DuckLake | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
 
 ### Production GA & Extended Ecosystems (v1.0+)
 
