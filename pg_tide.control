@@ -5,4 +5,3 @@ module_pathname = '$libdir/pg_tide'
 relocatable = false
 requires = ''
 superuser = false
-schema = 'tide'
