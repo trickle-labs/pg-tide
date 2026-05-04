@@ -18,15 +18,19 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             binary: pg-tide
+            archive_ext: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             binary: pg-tide
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            binary: pg-tide
+            archive_ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: pg-tide.exe
+            archive_ext: zip
           - target: aarch64-apple-darwin
             os: macos-latest
             binary: pg-tide
+            archive_ext: tar.gz
     steps:
       - uses: actions/checkout@v4
 
@@ -46,16 +50,24 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: Package binary
+      - name: Package binary (tar.gz)
+        if: matrix.archive_ext == 'tar.gz'
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../pg-tide-${{ matrix.target }}.tar.gz ${{ matrix.binary }}
+
+      - name: Package binary (zip)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.binary }}" `
+            -DestinationPath "pg-tide-${{ matrix.target }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: pg-tide-${{ matrix.target }}
-          path: pg-tide-${{ matrix.target }}.tar.gz
+          path: pg-tide-${{ matrix.target }}.${{ matrix.archive_ext }}
 
   docker:
     name: Docker Image
@@ -105,6 +117,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
