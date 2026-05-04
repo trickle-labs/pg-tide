@@ -199,10 +199,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download all artifacts
+      - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: pg-tide-*
+          merge-multiple: false
 
       - name: Create release
         uses: softprops/action-gh-release@v2
