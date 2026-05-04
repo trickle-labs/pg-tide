@@ -79,7 +79,7 @@ fn inbox_create_impl(
             processed_at   TIMESTAMPTZ,
             retry_count    INT         NOT NULL DEFAULT 0,
             last_error     TEXT,
-            CONSTRAINT uq_{name}_event_id UNIQUE (event_id)
+            CONSTRAINT "uq_{name}_event_id" UNIQUE (event_id)
         )"#
     );
     Spi::run(&create_table)
