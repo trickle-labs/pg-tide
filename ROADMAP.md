@@ -39,7 +39,7 @@
 |---------|-------|--------|-------|--------------|
 | v0.8.0 | Analytics sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Apache Iceberg, Delta Lake, DuckLake | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
 | v0.9.0 | Connector ecosystems (foundation): Singer protocol adapter (Meltano Hub — ~500 taps/targets), Airbyte protocol adapter (~400 connectors), Fivetran HVR endpoint | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
-| v1.0.0 | Production GA: relay dashboard (ratatui TUI), encryption envelope with KMS integration | 🔜 Planned | Medium | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
+| v1.0.0 | Production GA: encryption envelope with KMS integration | 🔜 Planned | Small | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
 
 ### Extended Ecosystems & Plugin Support (v1.1.x – v1.2.x)
 
