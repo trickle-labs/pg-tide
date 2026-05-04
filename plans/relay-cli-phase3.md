@@ -22,6 +22,9 @@
   - [B.3 AMQP 1.0 (Azure Service Bus, Qpid)](#b3-amqp-10)
   - [B.4 MongoDB Sink](#b4-mongodb-sink)
   - [B.5 Snowflake / BigQuery Sink](#b5-snowflake--bigquery-sink)
+  - [B.6 Apache Iceberg Sink](#b6-apache-iceberg-sink)
+  - [B.7 Delta Lake Sink](#b7-delta-lake-sink)
+  - [B.8 DuckLake Sink](#b8-ducklake-sink)
 - [Part C — Advanced Features](#part-c--advanced-features)
   - [C.1 Relay Dashboard (ratatui)](#c1-relay-dashboard)
   - [C.2 Plugin System (WASM Backends)](#c2-plugin-system-wasm-backends)
@@ -651,6 +654,163 @@ on Snowflake or BigQuery. Uses bulk loading APIs for efficiency.
 ```
 
 **Effort:** 3d (1.5d each)
+
+### B.6 Apache Iceberg Sink
+
+Sink only. Writes pg-tide deltas to Apache Iceberg tables for modern data
+lake deployments. Iceberg adds ACID semantics, schema evolution, and time
+travel on top of object storage (S3, GCS, Azure Blob).
+
+**Crates:** `iceberg`, `iceberg_rust_apache`
+
+```json
+{
+  "sink_type": "iceberg",
+  "sink": {
+    "warehouse_path": "s3://my-datalake/iceberg",
+    "catalog_type": "hive",
+    "namespace": "pgtide",
+    "table_template": "{stream_table}",
+    "write_mode": "append",
+    "partition_spec": "event_date",
+    "format_version": 2
+  }
+}
+```
+
+**Features:**
+- ACID transactions via Iceberg's write isolation
+- Schema inference from pg_tide delta columns
+- Schema evolution handling (add/drop/rename columns)
+- Time travel queries (query historical table state)
+- Partition pruning for query efficiency
+- Operations mapping:
+  - `op = "insert"` → Iceberg `append`
+  - `op = "delete"` → Iceberg `delete` row (physical or logical)
+  - `is_full_refresh = true` → Full replace via `overwrite`
+
+**Integration with downstream tools:**
+Works seamlessly with Spark, Trino, dbt, DuckDB, and other Iceberg-aware engines.
+
+**Effort:** 3d
+
+### B.7 Delta Lake Sink
+
+Sink only. Writes pg-tide deltas to Delta Lake tables for Databricks,
+Apache Spark, and Polars workflows. Delta Lake provides ACID transactions
+and data versioning on object storage.
+
+**Crates:** `delta`, `datafusion` (for Delta reader integration)
+
+```json
+{
+  "sink_type": "delta",
+  "sink": {
+    "table_path": "s3://my-datalake/delta/pgtide_events",
+    "add_invariants": true,
+    "optimize": {
+      "enabled": true,
+      "interval_minutes": 60
+    },
+    "change_data_feed": true
+  }
+}
+```
+
+**Features:**
+- ACID transactions via Delta Lake's log-based protocol
+- Data versioning (query any historical version)
+- Change Data Feed (CDC) tracking — automatically tracks which rows changed
+- Unified batch + streaming writes
+- Constraints and invariants for data quality
+- Seamless integration with Databricks, Spark, Polars
+- Operations mapping:
+  - `op = "insert"` → Delta Lake append
+  - `op = "delete"` → Delta Lake delete (logical soft delete)
+  - `is_full_refresh = true` → Overwrite partition/table
+  - CDC enabled → Changes reflected in `_change_type` column
+
+**Databricks integration:**
+Delta Lake is the native table format for Databricks, making this sink
+especially powerful for organisations already committed to the Databricks ecosystem.
+
+**Effort:** 3d
+
+### B.8 DuckLake Sink
+
+Sink only. Writes pg-tide deltas to DuckLake, a lightweight open data lake
+format from the DuckDB team. DuckLake combines Parquet files (for storage)
+with a SQL database catalog, offering ACID transactions and time travel
+without the complexity of traditional lakehouses.
+
+**Crates:** `ducklake`, `parquet2`
+
+```json
+{
+  "sink_type": "ducklake",
+  "sink": {
+    "data_path": "s3://my-datalake/pgtide/",
+    "catalog_type": "postgresql",
+    "catalog_connection": "postgresql://localhost/pgtide_catalog",
+    "namespace": "pgtide",
+    "table_template": "{stream_table}",
+    "compression": "snappy",
+    "partitioning": {
+      "enabled": true,
+      "columns": ["event_date"]
+    }
+  }
+}
+```
+
+**Key advantages:**
+- **Catalog in PostgreSQL** — Metadata lives in the same database as pg-tide itself (no separate system)
+- **Lightweight format** — Simpler than Iceberg/Delta; fewer compacting/optimization steps
+- **ACID transactions** — Concurrent access with transactional guarantees
+- **Time travel** — Query historical versions of tables
+- **Schema evolution** — Handle new columns gracefully
+- **Parquet storage** — Works with S3, GCS, Azure Blob, or local disk
+- **DuckDB native** — First-class support in DuckDB with `INSTALL ducklake`
+
+**Operational flow:**
+```
+pg_tide deltas
+  ↓
+Write Parquet to S3
+  ↓
+Update catalog metadata in PostgreSQL
+  ↓
+Query via DuckDB:
+  INSTALL ducklake;
+  ATTACH 'ducklake:s3://...' AS my_lake;
+  SELECT * FROM my_lake.orders;
+```
+
+**Integration ecosystem:**
+- **dbt-duckdb** — Transformations via DuckDB
+- **DuckDB clients** — CLI, Python, Rust, Node.js
+- **BI tools** — Metabase, Superset (via DuckDB driver)
+- **Partitioned queries** — Automatic filter pushdown from Parquet statistics
+
+**Comparison with Iceberg/Delta:**
+
+| Feature | DuckLake | Iceberg | Delta |
+|---------|----------|---------|-------|
+| Catalog | PostgreSQL (integrated) | Hive/REST/Nessie | Proprietary (Databricks) |
+| Simplicity | Very high | Medium | Medium |
+| ACID | Yes | Yes | Yes |
+| Time travel | Yes | Yes | Yes |
+| Partitioning | Yes | Yes | Yes |
+| Compacting | None | Required | Required |
+| Maturity | Production (v1.0 / 2026) | Mature | Mature |
+| Vendor lock-in | None | None | Databricks |
+
+**Why DuckLake for pg-tide:**
+Philosophically perfect fit — both pg-tide and DuckLake prioritize open formats,
+no vendor lock-in, and PostgreSQL integration. Catalog in PostgreSQL eliminates
+extra infrastructure.
+
+**Effort:** 2.5d
 
 ---
 
