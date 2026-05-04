@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../README.md"
 description = "Bidirectional relay binary for pg_tide — bridges outboxes/inboxes with NATS, Kafka, HTTP webhooks, Redis, SQS, RabbitMQ, and more"
 keywords = ["postgresql", "streaming", "relay", "kafka", "nats"]
 categories = ["database", "command-line-utilities"]
