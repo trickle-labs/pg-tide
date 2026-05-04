@@ -25,7 +25,7 @@
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
 | v0.5.0 | Cloud provider parity: Google Cloud Pub/Sub, Amazon Kinesis Data Streams, Azure Service Bus, Elasticsearch / OpenSearch | 🔜 Planned | Large | [plans/relay-cli-phase2.md](plans/relay-cli-phase2.md) |
-| v0.6.0 | IoT, analytics, and data lake: MQTT v5, Azure Event Hubs, Object Storage (S3 / GCS / Azure Blob with JSONL + Parquet), ClickHouse, Singer protocol (Meltano Hub — ~500 taps and targets), webhook flavors (n8n / Zapier) | 🔜 Planned | Large | [plans/relay-cli-phase2.md](plans/relay-cli-phase2.md) |
+| v0.6.0 | IoT, analytics, and data lake: MQTT v5, Azure Event Hubs, Object Storage (S3 / GCS / Azure Blob with JSONL + Parquet), ClickHouse | 🔜 Planned | Large | [plans/relay-cli-phase2.md](plans/relay-cli-phase2.md) |
 
 ### Operational Excellence (v0.7.x)
 
@@ -33,10 +33,16 @@
 |---------|-------|--------|-------|--------------|
 | v0.7.0 | Production-grade relay operations: dead-letter queue, Confluent / Apicurio schema registry (Avro + Protobuf), JMESPath message transforms, content-based routing, rate limiting, circuit breaker, SIGHUP config reload, dry-run / replay mode, OpenTelemetry tracing, webhook signature verification (HMAC / GitHub / Stripe / Svix) | 🔜 Planned | Large | [plans/relay-cli-phase2.md](plans/relay-cli-phase2.md) |
 
-### Connector Ecosystems & Advanced Features (v0.8.x – v1.0)
+### Analytics Sinks & GA (v0.8.x – v1.0)
 
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
-| v0.8.0 | Connector ecosystem integration: Airbyte protocol adapter (~400 connectors), dlt integration (~100 sources), Redpanda Connect / Benthos (~200 inputs/outputs), Fivetran HVR endpoint | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
-| v0.9.0 | Additional streaming and analytics backends: Apache Pulsar, Apache Arrow Flight / gRPC, AMQP 1.0 (Azure Service Bus, Qpid), MongoDB sink, Snowflake and BigQuery sinks | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
-| v1.0.0 | Production GA: relay dashboard (ratatui TUI), WASM plugin system for custom backends, encryption envelope with KMS integration | 🔜 Planned | Medium | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
+| v0.8.0 | Additional analytics sinks: MongoDB sink, Snowflake and BigQuery sinks | 🔜 Planned | Medium | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
+| v1.0.0 | Production GA: relay dashboard (ratatui TUI), encryption envelope with KMS integration | 🔜 Planned | Medium | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
+
+### Extended Ecosystem & Plugin Support (v1.1.x – v1.2.x)
+
+| Version | Theme | Status | Scope | Full details |
+|---------|-------|--------|-------|--------------|
+| v1.1.0 | Extended connector ecosystems: Airbyte protocol adapter (~400 connectors), dlt integration (~100 sources), Redpanda Connect / Benthos (~200 inputs/outputs), Fivetran HVR endpoint, Apache Arrow Flight / gRPC, AMQP 1.0 (Azure Service Bus, Qpid), Singer protocol (Meltano Hub — ~500 taps and targets), webhook flavors (n8n / Zapier) | 🔜 Future | Large | — |
+| v1.2.0 | Plugin extensibility: WASM plugin system for custom backends | 🔜 Future | Large | — |
