@@ -114,15 +114,12 @@ async fn test_consumer_offsets_persist_across_sessions() {
     db.commit_offset("persist-group", "worker-a", 42).await;
 
     // Open a second connection — simulates a new relay process reading the offset.
-    let host_port = db
-        .client
-        .query_one("SELECT inet_server_port()", &[])
-        .await
-        .unwrap()
-        .get::<_, i32>(0);
-
-    let url =
-        format!("host=127.0.0.1 port={host_port} user=postgres password=postgres dbname=postgres");
+    // Use the container's mapped host port (not inet_server_port(), which returns
+    // the container-internal port 5432).
+    let url = format!(
+        "host=127.0.0.1 port={} user=postgres password=postgres dbname=postgres",
+        db.host_port
+    );
     let (client2, conn) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
         .await
         .expect("second connection failed");
