@@ -3,7 +3,7 @@
 > **Status:** Proposal (DRAFT)
 > **Created:** 2026-04-19
 > **Category:** Tooling — Relay CLI Extension
-> **Depends on:** [PLAN_RELAY_CLI.md](./PLAN_RELAY_CLI.md) (v0.25.0 Phase 1)
+> **Depends on:** [relay-cli-phase1.md](./relay-cli-phase1.md) (v0.25.0 Phase 1)
 
 ---
 
@@ -46,7 +46,7 @@
 
 ## Executive Summary
 
-Phase 2 of the `pgtrickle-relay` CLI extends the v0.25.0 foundation with
+Phase 2 of the `pg-tide` CLI extends the v0.25.0 foundation with
 additional backends for major cloud platforms and analytics systems, plus
 operational improvements that make the relay production-grade at scale.
 
@@ -71,11 +71,11 @@ plugin system, and payload encryption are deferred to Phase 3.
 > **Note:** Multi-pipeline support and database-driven hot-reload are already
 > part of Phase 1 (v0.25.0) — the relay natively runs multiple independent
 > pipelines via `relay_outbox_config` / `relay_inbox_config` SQL tables and
-> reloads on every `NOTIFY pgtrickle_relay_config` event.
+> reloads on every `NOTIFY tide_relay_config` event.
 >
 > **Configuration model:** The TOML-like blocks shown throughout Part A and
 > Part B are **examples of the `config` JSONB column format** stored in
-> `pgtrickle.relay_outbox_config` / `pgtrickle.relay_inbox_config`, displayed
+> `tide.relay_outbox_config` / `tide.relay_inbox_config`, displayed
 > in TOML syntax for readability. The relay binary has no config file — all
 > pipeline configuration is managed via SQL.
 
@@ -101,8 +101,8 @@ organisation needs this. Pub/Sub is Google's equivalent of SQS + SNS combined.
 ```toml
 [sink.gcp-pubsub]
 project_id = "my-project"
-topic = "pgtrickle-events"
-# topic_template = "pgtrickle.{stream_table}"
+topic = "pg-tide-events"
+# topic_template = "tide.{stream_table}"
 # ordering_key_template = "{outbox_id}"    # for ordered delivery
 # credentials_file = "/etc/gcp/sa.json"    # default: GOOGLE_APPLICATION_CREDENTIALS
 # endpoint = "pubsub.googleapis.com:443"   # for emulator: localhost:8085
@@ -121,7 +121,7 @@ Consumers implement dedup via Dataflow or Cloud Functions idempotency.
 ```toml
 [source.gcp-pubsub]
 project_id = "my-project"
-subscription = "pgtrickle-inbox-sub"
+subscription = "pg-tide-inbox-sub"
 # credentials_file = "/etc/gcp/sa.json"
 # max_messages = 100
 # ack_deadline_seconds = 30
@@ -149,7 +149,7 @@ longer retention (up to 365 days).
 
 ```toml
 [sink.kinesis]
-stream_name = "pgtrickle-events"
+stream_name = "pg-tide-events"
 # region = "us-east-1"
 # partition_key_template = "{stream_table}"
 # explicit_hash_key = ""                    # optional shard targeting
@@ -170,7 +170,7 @@ stream_name = "external-events"
 # region = "us-east-1"
 # iterator_type = "TRIM_HORIZON"           # TRIM_HORIZON | LATEST | AT_TIMESTAMP
 # at_timestamp = "2026-01-01T00:00:00Z"    # when iterator_type = AT_TIMESTAMP
-# checkpoint_table = "pgtrickle_kinesis_checkpoints"  # DynamoDB or PG table
+# checkpoint_table = "tide_kinesis_checkpoints"  # DynamoDB or PG table
 # poll_interval_ms = 1000
 ```
 
@@ -199,7 +199,7 @@ AMQP 1.0 implementation.
 connection_string = "Endpoint=sb://mybus.servicebus.windows.net/;SharedAccessKeyName=...;SharedAccessKey=..."
 # Or use managed identity:
 # namespace = "mybus.servicebus.windows.net"
-queue_or_topic = "pgtrickle-events"
+queue_or_topic = "pg-tide-events"
 # session_id = ""                           # for session-enabled queues
 # message_ttl_seconds = 86400              # 24 hours
 # schedule_enqueue_time = ""               # delayed delivery
@@ -215,7 +215,7 @@ supports native dedup on queues with `RequiresDuplicateDetection` enabled.
 [source.azure-servicebus]
 connection_string = "Endpoint=sb://..."
 queue_or_topic = "inbox-events"
-# subscription = "pgtrickle-relay"         # for topic subscriptions
+# subscription = "pg-tide"         # for topic subscriptions
 # receive_mode = "PeekLock"               # PeekLock | ReceiveAndDelete
 # max_messages = 10
 # max_wait_seconds = 30
@@ -240,7 +240,7 @@ natively, but also has its own SDK with better Azure integration.
 ```toml
 [sink.azure-eventhubs]
 connection_string = "Endpoint=sb://myhub.servicebus.windows.net/;SharedAccessKeyName=...;SharedAccessKey=..."
-event_hub_name = "pgtrickle-events"
+event_hub_name = "pg-tide-events"
 # partition_key_template = "{stream_table}"
 # batch_max_bytes = 1048576                # 1 MiB per batch
 # Or use Kafka protocol (reuse existing Kafka sink):
@@ -272,13 +272,13 @@ checkpointing. Checkpoints stored in PostgreSQL or Azure Blob Storage.
 
 ### A.5 Apache Pulsar
 
-> **Deferred to Phase 3.** Full design: [PLAN_RELAY_CLI_PHASE_3.md § B.1](./PLAN_RELAY_CLI_PHASE_3.md#b1-apache-pulsar)
+> **Deferred to Phase 3.** Full design: [relay-cli-phase3.md § B.1](./relay-cli-phase3.md#b1-apache-pulsar)
 
 ### A.6 MQTT (v5)
 
 **Why:** The dominant IoT messaging protocol. MQTT v5 is supported by
 Mosquitto, HiveMQ, EMQX, VerneMQ, and every cloud IoT platform (AWS IoT
-Core, Azure IoT Hub, GCP IoT Core). Enables pg-trickle to bridge device
+Core, Azure IoT Hub, GCP IoT Core). Enables pg-tide to bridge device
 telemetry into stream tables.
 
 **Crate:** `rumqttc`
@@ -291,8 +291,8 @@ telemetry into stream tables.
 [sink.mqtt]
 url = "mqtt://localhost:1883"
 # url = "mqtts://broker.hivemq.com:8883"   # TLS
-topic_template = "pgtrickle/{stream_table}/{op}"
-# client_id = "pgtrickle-relay"
+topic_template = "pg-tide/{stream_table}/{op}"
+# client_id = "pg-tide"
 # qos = 1                                  # 0 = at most once, 1 = at least once, 2 = exactly once
 # retain = false
 # username = "user"
@@ -319,7 +319,7 @@ topic_template = "pgtrickle/{stream_table}/{op}"
 [source.mqtt]
 url = "mqtt://localhost:1883"
 topic = "devices/+/telemetry"              # MQTT topic filter with wildcards
-# client_id = "pgtrickle-inbox"
+# client_id = "pg-tide-inbox"
 # qos = 1
 # clean_start = false                      # persistent session for offline buffering
 # username = "user"
@@ -331,14 +331,14 @@ processed as they arrive. With QoS 1+, the broker retransmits if the
 relay doesn't acknowledge within the keep-alive interval.
 
 **Use-cases:**
-- IoT device telemetry → pg-trickle inbox → stream table analytics
+- IoT device telemetry → pg-tide inbox → stream table analytics
 - Edge sensor data aggregation
 - Smart home / building automation event streams
 
 ### A.7 Elasticsearch / OpenSearch
 
 **Why:** Dominant search and analytics engine. Natural fit for CDC: every
-data change in pg-trickle can be indexed for full-text search and
+data change in pg-tide can be indexed for full-text search and
 real-time dashboards. Used by nearly every mid-to-large engineering team.
 
 **Crate:** `elasticsearch` (official) or `opensearch`
@@ -350,8 +350,8 @@ real-time dashboards. Used by nearly every mid-to-large engineering team.
 ```toml
 [sink.elasticsearch]
 url = "https://localhost:9200"
-index_template = "pgtrickle-{stream_table}"
-# index_date_pattern = "%Y.%m"             # monthly indices: pgtrickle-orders-2026.04
+index_template = "pg-tide-{stream_table}"
+# index_date_pattern = "%Y.%m"             # monthly indices: pg-tide-orders-2026.04
 # doc_id_template = "{dedup_key}"          # Elasticsearch _id for upserts
 # pipeline = "my-ingest-pipeline"          # ingest pipeline
 # username = "elastic"
@@ -393,7 +393,7 @@ flavor = "opensearch"                      # elasticsearch (default) | opensearc
 ### A.8 Object Storage (S3 / GCS / Azure Blob)
 
 **Why:** Data lake integration. Every modern data stack stores analytical
-data in object storage (S3, GCS, Azure Blob). Enables pg-trickle deltas
+data in object storage (S3, GCS, Azure Blob). Enables pg-tide deltas
 to flow into Parquet/JSON files for consumption by Spark, dbt, Trino,
 DuckDB, and other analytics tools.
 
@@ -407,10 +407,10 @@ DuckDB, and other analytics tools.
 [sink.object-storage]
 provider = "s3"                            # s3 | gcs | azure-blob
 bucket = "my-data-lake"
-prefix = "pgtrickle/{stream_table}"
+prefix = "pg-tide/{stream_table}"
 # region = "us-east-1"                     # S3/GCS
 # account_name = "mystorageaccount"        # Azure Blob
-# container_name = "pgtrickle"             # Azure Blob (instead of bucket)
+# container_name = "pgtide"             # Azure Blob (instead of bucket)
 
 # Output format
 format = "jsonl"                           # jsonl | parquet | csv
@@ -420,7 +420,7 @@ format = "jsonl"                           # jsonl | parquet | csv
 # Partitioning
 partition_by = "date"                      # none | date | hour | custom
 # partition_template = "year={%Y}/month={%m}/day={%d}"
-# file_prefix = "pgtrickle"
+# file_prefix = "pgtide"
 # file_suffix_format = "{timestamp}_{batch_id}"
 
 # Batching (buffer locally, flush periodically)
@@ -452,7 +452,7 @@ accordingly.
 
 ### A.9 ClickHouse
 
-**Why:** Fastest-growing OLAP database. Ideal destination for pg-trickle
+**Why:** Fastest-growing OLAP database. Ideal destination for pg-tide
 change data — enables real-time analytics dashboards over streaming data.
 ClickHouse is deployed by Cloudflare, Uber, eBay, Spotify, and thousands
 of companies for real-time analytics.
@@ -467,8 +467,8 @@ of companies for real-time analytics.
 [sink.clickhouse]
 url = "http://localhost:8123"
 database = "default"
-table = "pgtrickle_events"
-# table_template = "pgtrickle_{stream_table}"
+table = "pg_tide_events"
+# table_template = "pg_tide_{stream_table}"
 # username = "default"
 # password = ""
 # insert_batch_size = 10000                # rows per INSERT
@@ -496,7 +496,7 @@ throughput. The relay supports this via the `async_insert` setting.
 
 ### A.10 Apache Arrow Flight / gRPC
 
-> **Deferred to Phase 3.** Full design: [PLAN_RELAY_CLI_PHASE_3.md § B.2](./PLAN_RELAY_CLI_PHASE_3.md#b2-apache-arrow-flight--grpc)
+> **Deferred to Phase 3.** Full design: [relay-cli-phase3.md § B.2](./relay-cli-phase3.md#b2-apache-arrow-flight--grpc)
 
 ### A.11 Singer Protocol (Meltano SDK)
 
@@ -516,7 +516,7 @@ over stdin/stdout.
 
 #### Sink Configuration (Forward: outbox → Singer Target)
 
-The relay spawns a Singer target subprocess and pipes pg-trickle delta
+The relay spawns a Singer target subprocess and pipes pg-tide delta
 envelopes as Singer RECORD messages to its stdin.
 
 ```json
@@ -526,7 +526,7 @@ envelopes as Singer RECORD messages to its stdin.
     "target_command": "target-bigquery",
     "target_config": {
       "project_id": "my-project",
-      "dataset_id": "pgtrickle"
+      "dataset_id": "pgtide"
     },
     "stream_name_template": "{stream_table}",
     "batch_size": 1000,
@@ -567,7 +567,7 @@ its stdout, converting each to an inbox row.
       "refresh_token": "..."
     },
     "tap_args": ["--config", "/etc/singer/tap-config.json", "--catalog", "/etc/singer/catalog.json"],
-    "state_file": "/var/lib/pgtrickle-relay/singer-state.json"
+    "state_file": "/var/lib/pg-tide-relay/singer-state.json"
   }
 }
 ```
@@ -581,7 +581,7 @@ its stdout, converting each to an inbox row.
    saved state is passed to the tap via `--state`.
 
 **State management:** STATE messages are stored in a
-`pgtrickle.relay_singer_state` table keyed by pipeline name. On crash
+`tide.relay_singer_state` table keyed by pipeline name. On crash
 recovery, the relay writes the last state to a temp file and passes
 it to the tap's `--state` argument.
 
@@ -679,15 +679,15 @@ effort.
 | **ClickHouse** | Sink | Analytics | ★★★★☆ | 1.5d | **P2** |
 | **Singer Protocol** | Source + Sink | Data Eng. | ★★★★★ | 2d | **P1** |
 | **Webhook Flavors (n8n/Zapier)** | Sink | Automation | ★★★★☆ | 1d | **P2** |
-| **Apache Pulsar** | Source + Sink | Streaming | ★★★☆☆ | 2d | **P3** — [Phase 3 § B.1](./PLAN_RELAY_CLI_PHASE_3.md#b1-apache-pulsar) |
-| **Arrow Flight / gRPC** | Source + Sink | Emerging | ★★☆☆☆ | 2.5d | **P3** — [Phase 3 § B.2](./PLAN_RELAY_CLI_PHASE_3.md#b2-apache-arrow-flight--grpc) |
+| **Apache Pulsar** | Source + Sink | Streaming | ★★★☆☆ | 2d | **P3** — [Phase 3 § B.1](./relay-cli-phase3.md#b1-apache-pulsar) |
+| **Arrow Flight / gRPC** | Source + Sink | Emerging | ★★☆☆☆ | 2.5d | **P3** — [Phase 3 § B.2](./relay-cli-phase3.md#b2-apache-arrow-flight--grpc) |
 
 **Priority key:**
 - **P1** — Must-have. Covers cloud platform parity (GCP, AWS streaming,
   Azure), the most-requested analytics use-case (Elasticsearch), and the
   widest connector ecosystem (Singer/Meltano).
 - **P2** — High-value. Covers IoT, data lake, and OLAP analytics.
-- **P3** — Deferred to Phase 3. Full designs in [PLAN_RELAY_CLI_PHASE_3.md](./PLAN_RELAY_CLI_PHASE_3.md).
+- **P3** — Deferred to Phase 3. Full designs in [relay-cli-phase3.md](./relay-cli-phase3.md).
 
 ---
 
@@ -703,7 +703,7 @@ context. Failed messages are moved to the DLQ instead of being silently
 skipped.
 
 ```sql
-CREATE TABLE pgtrickle.relay_dlq (
+CREATE TABLE tide.relay_dlq (
     id              BIGSERIAL PRIMARY KEY,
     relay_mode      TEXT NOT NULL,         -- 'forward' | 'reverse'
     source_name     TEXT NOT NULL,         -- e.g. 'outbox:order_events'
@@ -725,19 +725,19 @@ CREATE TABLE pgtrickle.relay_dlq (
 
 ```sql
 -- Inspect pending DLQ entries
-SELECT * FROM pgtrickle.relay_dlq_list();
+SELECT * FROM tide.relay_dlq_list();
 
 -- Retry a specific message by id
-SELECT pgtrickle.relay_dlq_retry(id := 42);
+SELECT tide.relay_dlq_retry(id := 42);
 
 -- Retry all pending messages
-SELECT pgtrickle.relay_dlq_retry_all();
+SELECT tide.relay_dlq_retry_all();
 
 -- Purge resolved entries older than N days
-SELECT pgtrickle.relay_dlq_purge(retention_days := 30);
+SELECT tide.relay_dlq_purge(retention_days := 30);
 
 -- Summary by error_kind
-SELECT * FROM pgtrickle.relay_dlq_stats();
+SELECT * FROM tide.relay_dlq_stats();
 ```
 
 **Pipeline config** (in the `config` column of `relay_outbox_config` / `relay_inbox_config`):
@@ -828,7 +828,7 @@ different subjects/topics.
 ```toml
 [routing]
 # Default template (Phase 1 — still supported)
-subject_template = "pgtrickle.{stream_table}"
+subject_template = "tide.{stream_table}"
 
 # Content-based routing rules (evaluated in order, first match wins)
 [[routing.rules]]
@@ -845,7 +845,7 @@ subject = "high-priority.{stream_table}"
 
 # Fallback if no rule matches
 [routing.default]
-subject = "pgtrickle.unmatched"
+subject = "tide.unmatched"
 ```
 
 **Expression language:** Reuses JMESPath (same dependency as B.3) for
@@ -916,14 +916,14 @@ to the DLQ (if enabled) rather than blocking the relay loop.
 > independent pipelines per process from day one. This section documents
 > the existing behaviour for completeness.
 
-Each row in `pgtrickle.relay_outbox_config` or `pgtrickle.relay_inbox_config`
+Each row in `tide.relay_outbox_config` or `tide.relay_inbox_config`
 with `enabled = true` spawns an independent tokio worker task with its own
 metrics labels (`pipeline=<name>`). PostgreSQL connections are pooled via
 `deadpool-postgres`. No per-pipeline process or config file is needed.
 
 ```sql
 -- Forward order_events to both Kafka and webhook simultaneously
-INSERT INTO pgtrickle.relay_outbox_config (name, config) VALUES
+INSERT INTO tide.relay_outbox_config (name, config) VALUES
   ('orders-to-kafka',
    '{"source_type": "outbox", "source": {"outbox": "order_events", "group": "orders-kafka"},
      "sink_type": "kafka", "sink": {"brokers": "localhost:9092", "topic": "orders"}}'),
@@ -932,7 +932,7 @@ INSERT INTO pgtrickle.relay_outbox_config (name, config) VALUES
      "sink_type": "webhook", "sink": {"url": "https://api.example.com/orders"}}');
 
 -- Reverse: MQTT device telemetry → inbox
-INSERT INTO pgtrickle.relay_inbox_config (name, config) VALUES
+INSERT INTO tide.relay_inbox_config (name, config) VALUES
   ('iot-to-inbox',
    '{"source_type": "mqtt", "source": {"url": "mqtt://broker:1883", "topic": "devices/+/telemetry"},
      "sink_type": "pg-inbox", "sink": {"inbox_table": "device_telemetry"}}');
@@ -942,7 +942,7 @@ Each pipeline runs as an independent tokio task. Enable or disable a pipeline
 at any time without restarting the relay:
 
 ```sql
-UPDATE pgtrickle.relay_outbox_config SET enabled = false WHERE name = 'orders-to-webhook';
+UPDATE tide.relay_outbox_config SET enabled = false WHERE name = 'orders-to-webhook';
 -- The relay picks up the change within milliseconds via LISTEN/NOTIFY.
 ```
 
@@ -953,7 +953,7 @@ UPDATE pgtrickle.relay_outbox_config SET enabled = false WHERE name = 'orders-to
 > **Database-driven hot-reload is already in Phase 1.** Every change to
 > `relay_outbox_config` or `relay_inbox_config` — including adding, removing,
 > enabling, disabling, or modifying any pipeline's `config` JSONB — triggers
-> a `NOTIFY pgtrickle_relay_config` event and is applied within milliseconds
+> a `NOTIFY tide_relay_config` event and is applied within milliseconds
 > without restarting the process. The relay has no config file.
 
 **What Phase 2 adds:** A `SIGHUP` handler so operators can force a full
@@ -962,7 +962,7 @@ conventions and simplifying runbooks.
 
 ```bash
 # Force reload without restarting the relay process
-kill -HUP $(pidof pgtrickle-relay)
+kill -HUP $(pidof pg-tide)
 # In Kubernetes:
 kubectl exec -it relay-pod -- kill -HUP 1
 ```
@@ -974,7 +974,7 @@ On receiving `SIGHUP`, the relay:
 4. Restarts tasks whose `config` JSONB has changed.
 
 **Not live-reloadable** (require full process restart):
-- `--postgres-url` / `PGTRICKLE_RELAY_POSTGRES_URL`
+- `--postgres-url` / `PG_TIDE_POSTGRES_URL`
 - `--metrics-addr`
 - `--log-format`
 
@@ -988,7 +988,7 @@ publishing messages. They also need to replay historical outbox entries
 
 **Design:** Both modes are configured as per-pipeline flags in the `config`
 JSONB column. There are no additional CLI arguments — the relay is always
-started with the same minimal command (`pgtrickle-relay --postgres-url ...`).
+started with the same minimal command (`pg-tide --postgres-url ...`).
 
 #### Dry-Run Mode
 
@@ -998,12 +998,12 @@ size) without sending anything to the sink.
 
 ```sql
 -- Enable dry-run for a pipeline
-UPDATE pgtrickle.relay_outbox_config
+UPDATE tide.relay_outbox_config
    SET config = config || '{"dry_run": true}'
  WHERE name = 'orders-to-kafka';
 
 -- Disable dry-run (return to live)
-UPDATE pgtrickle.relay_outbox_config
+UPDATE tide.relay_outbox_config
    SET config = config - 'dry_run'
  WHERE name = 'orders-to-kafka';
 ```
@@ -1020,7 +1020,7 @@ offsets, then automatically clears the replay config when complete.
 
 ```sql
 -- Replay outbox entries 1000–5000 for a pipeline
-UPDATE pgtrickle.relay_outbox_config
+UPDATE tide.relay_outbox_config
    SET config = config || '{"replay": {"from_offset": 1000, "to_offset": 5000}}'
  WHERE name = 'orders-to-kafka';
 -- The relay picks up the replay config, runs it, then removes the key.
@@ -1047,7 +1047,7 @@ crate ecosystem.
 enabled = true
 exporter = "otlp"                         # otlp | jaeger | stdout
 endpoint = "http://localhost:4317"        # OTLP gRPC endpoint
-# service_name = "pgtrickle-relay"
+# service_name = "pg-tide-relay"
 # sample_rate = 1.0                       # 1.0 = trace everything
 # propagation = "w3c"                     # w3c | b3 | jaeger
 ```
@@ -1068,15 +1068,15 @@ on Kafka records. For NATS, uses `traceparent` NATS header.
 
 ### B.11 Relay Dashboard
 
-> **Deferred to Phase 3.** Full design: [PLAN_RELAY_CLI_PHASE_3.md § C.1](./PLAN_RELAY_CLI_PHASE_3.md#c1-relay-dashboard)
+> **Deferred to Phase 3.** Full design: [relay-cli-phase3.md § C.1](./relay-cli-phase3.md#c1-relay-dashboard)
 
 ### B.12 Plugin System (Dynamic Backends)
 
-> **Deferred to Phase 3.** Full design: [PLAN_RELAY_CLI_PHASE_3.md § C.2](./PLAN_RELAY_CLI_PHASE_3.md#c2-plugin-system-wasm-backends)
+> **Deferred to Phase 3.** Full design: [relay-cli-phase3.md § C.2](./relay-cli-phase3.md#c2-plugin-system-wasm-backends)
 
 ### B.13 Encryption Envelope
 
-> **Deferred to Phase 3.** Full design: [PLAN_RELAY_CLI_PHASE_3.md § C.3](./PLAN_RELAY_CLI_PHASE_3.md#c3-encryption-envelope-kms)
+> **Deferred to Phase 3.** Full design: [relay-cli-phase3.md § C.3](./relay-cli-phase3.md#c3-encryption-envelope-kms)
 
 ### B.14 Webhook Signature Verification
 
@@ -1111,7 +1111,7 @@ header = "X-Webhook-Signature"            # header containing the signature
 
 ## Part E — Connector Ecosystem Integration (Phase 3)
 
-> **Full details:** See [PLAN_RELAY_CLI_PHASE_3.md](./PLAN_RELAY_CLI_PHASE_3.md)
+> **Full details:** See [relay-cli-phase3.md](./relay-cli-phase3.md)
 
 Phase 2 ships the **Singer protocol** adapter (A.11) because its low effort
 and massive ecosystem make it the highest-value connector integration. The
@@ -1120,7 +1120,7 @@ remaining connector ecosystems are planned for Phase 3:
 | Ecosystem | Protocol | Direction | Effort | Rationale |
 |-----------|----------|-----------|--------|-----------|
 | **Airbyte** | JSON-lines (AirbyteRecordMessage) | Source + Sink | 2.5d | ~95% overlap with Singer adapter; thin translation layer. Second-largest open-source EL ecosystem. |
-| **dlt** | Python streaming / REST API | Source + Sink | 2d | Fast-growing Python-first EL tool; strong dbt synergy (complements `dbt-pgtrickle`). |
+| **dlt** | Python streaming / REST API | Source + Sink | 2d | Fast-growing Python-first EL tool; strong dbt synergy (complements `dbt-pg-tide`). |
 | **Redpanda Connect (Benthos)** | YAML-config, NDJSON | Source + Sink | 1.5d | Hundreds of built-in connectors; relay emits/consumes Benthos-compatible NDJSON or HTTP input. |
 | **Fivetran** | HTTP sync API + HVR callbacks | Source (webhook) | 1d | Proprietary; webhook source can act as Fivetran connector endpoint. |
 
