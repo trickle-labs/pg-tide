@@ -3,8 +3,8 @@
 > **Status:** Implementation Plan (DESIGN REVIEW COMPLETE — 2026-04-19)
 > **Created:** 2026-04-18
 > **Category:** Tooling — Bidirectional Relay
-> **Related:** [PLAN_TRANSACTIONAL_OUTBOX_HELPER.md](../patterns/PLAN_TRANSACTIONAL_OUTBOX_HELPER.md) ·
-> [ROADMAP v0.25.0](../../ROADMAP.md#v0250--relay-cli-pgtrickle-relay)
+> **Related:** [README.md](../README.md) ·
+> [README.md](../README.md)
 
 ---
 
@@ -57,18 +57,18 @@
 
 ## Executive Summary
 
-`pgtrickle-relay` is a standalone Rust CLI binary that bridges pg-trickle
+`pg-tide` is a standalone Rust CLI binary that bridges pg-tide
 outboxes and inboxes with popular messaging systems and destinations. It
-ships as a separate crate in the pg-trickle workspace (`pgtrickle-relay/`).
+ships as a separate crate in the pg-tide workspace (`pg-tide-relay/`).
 
 The relay operates in two modes:
 
-- **Forward mode** (`relay forward`): Polls pg-trickle outbox tables and
+- **Forward mode** (`relay forward`): Polls pg-tide outbox tables and
   publishes deltas to external sinks (NATS, Kafka, webhooks, Redis, SQS,
   RabbitMQ, PostgreSQL inbox, stdout/file).
 - **Reverse mode** (`relay reverse`): Consumes messages from external sources
   (NATS, Kafka, webhooks, Redis, SQS, RabbitMQ, stdin/file) and writes them
-  into pg-trickle inbox tables.
+  into pg-tide inbox tables.
 
 Both directions share the same Source/Sink trait abstractions, config system,
 observability, shutdown logic, and error handling. Each backend implements
@@ -76,11 +76,11 @@ both the Source and Sink traits where it makes sense, so the same NATS/Kafka/
 Redis/etc. code serves both directions.
 
 **Primary use-cases:**
-1. Operators enable an outbox on a stream table, point `pgtrickle-relay
+1. Operators enable an outbox on a stream table, point `pg-tide
    forward` at it, and deltas flow to Kafka / NATS / webhooks / etc.
    without writing any relay code.
-2. Operators point `pgtrickle-relay reverse` at a Kafka topic (or NATS
-   subject, or Redis stream, etc.) and messages arrive in a pg-trickle
+2. Operators point `pg-tide reverse` at a Kafka topic (or NATS
+   subject, or Redis stream, etc.) and messages arrive in a pg-tide
    inbox table — ready for stream table processing — without writing any
    consumer code.
 
@@ -114,7 +114,7 @@ Redis/etc. code serves both directions.
   consume-and-write bridge.
 - **Exactly-once delivery is not guaranteed by the relay alone**. Exactly-once
   is achieved by composition (relay dedup keys + broker dedup + inbox
-  `ON CONFLICT DO NOTHING`), per the pg-trickle outbox design.
+  `ON CONFLICT DO NOTHING`), per the pg-tide outbox design.
 - **Complex routing / transformation / filtering** beyond subject/topic
   mapping is not in scope. Users needing ETL should compose the relay with
   downstream stream processors.
@@ -128,10 +128,10 @@ Redis/etc. code serves both directions.
 
 ```
                         ┌─────────────────────────────────────────┐
-                        │              pgtrickle-relay             │
+                        │              pg-tide             │
                         │                                         │
    ┌─────────────┐      │  ┌──────────┐       ┌──────────┐       │      ┌─────────────┐
-   │  pg-trickle │      │  │  Source   │       │   Sink   │       │      │  pg-trickle │
+   │  pg-tide │      │  │  Source   │       │   Sink   │       │      │  pg-tide │
    │   outbox    │─────▶│  │  trait    │──────▶│  trait   │──────▶│─────▶│   (ext.)    │
    │             │      │  └──────────┘       └──────────┘       │      │  Kafka/NATS │
    └─────────────┘      │                                         │      │  Redis/etc. │
@@ -140,7 +140,7 @@ Redis/etc. code serves both directions.
                         ├─────────────────────────────────────────┤
                         │                                         │
    ┌─────────────┐      │  ┌──────────┐       ┌──────────┐       │      ┌─────────────┐
-   │  Kafka/NATS │      │  │  Source   │       │   Sink   │       │      │  pg-trickle │
+   │  Kafka/NATS │      │  │  Source   │       │   Sink   │       │      │  pg-tide │
    │  Redis/SQS  │─────▶│  │  trait    │──────▶│  trait   │──────▶│─────▶│   inbox     │
    │  Webhooks   │      │  └──────────┘       └──────────┘       │      │             │
    └─────────────┘      │                                         │      └─────────────┘
@@ -179,10 +179,10 @@ ZooKeeper-style consensus.
 
 ### A.1 Crate Structure
 
-A new workspace member at `pgtrickle-relay/`:
+A new workspace member at `pg-tide-relay/`:
 
 ```
-pgtrickle-relay/
+pg-tide-relay/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs           # Entry point, CLI parsing, signal handling
@@ -194,7 +194,7 @@ pgtrickle-relay/
 │   ├── metrics.rs        # Prometheus metrics + health endpoint
 │   ├── source/
 │   │   ├── mod.rs        # Source trait definition
-│   │   ├── outbox.rs     # pg-trickle outbox poller (forward mode)
+│   │   ├── outbox.rs     # pg-tide outbox poller (forward mode)
 │   │   ├── nats.rs       # NATS JetStream consumer
 │   │   ├── webhook.rs    # HTTP webhook receiver (axum listener)
 │   │   ├── kafka.rs      # Apache Kafka consumer
@@ -204,7 +204,7 @@ pgtrickle-relay/
 │   │   └── rabbitmq.rs   # RabbitMQ AMQP consumer
 │   ├── sink/
 │   │   ├── mod.rs        # Sink trait definition
-│   │   ├── inbox.rs      # pg-trickle inbox writer (reverse mode)
+│   │   ├── inbox.rs      # pg-tide inbox writer (reverse mode)
 │   │   ├── nats.rs       # NATS JetStream publisher
 │   │   ├── webhook.rs    # HTTP webhook POST client
 │   │   ├── kafka.rs      # Apache Kafka producer
@@ -236,12 +236,12 @@ they need. A default feature set covers the most common backends.
 
 ```toml
 [package]
-name = "pgtrickle-relay"
+name = "pg-tide-relay"
 version = "0.25.0"
 edition = "2024"
 
 [[bin]]
-name = "pgtrickle-relay"
+name = "pg-tide"
 path = "src/main.rs"
 
 [features]
@@ -286,11 +286,11 @@ lapin = { version = "2", optional = true }
 ### A.2 CLI Interface
 
 ```
-pgtrickle-relay [OPTIONS]
+pg-tide [OPTIONS]
 
 OPTIONS:
       --postgres-url <URL>      PostgreSQL connection string (required)
-                                [env: PGTRICKLE_RELAY_POSTGRES_URL]
+                                [env: PG_TIDE_POSTGRES_URL]
       --metrics-addr <ADDR>     Prometheus metrics + health endpoint
                                 (default: 0.0.0.0:9090)
       --log-format <FMT>        Log format: text, json (default: text)
@@ -314,24 +314,24 @@ The only required input at startup is the PostgreSQL connection URL:
 > of the `config` JSONB column format** displayed in human-readable TOML
 > syntax for clarity. The relay binary does not read a TOML config file.
 > All pipeline configuration is stored in and read from the
-> `pgtrickle.relay_outbox_config` and `pgtrickle.relay_inbox_config`
+> `tide.relay_outbox_config` and `tide.relay_inbox_config`
 > database tables as plain JSON objects.
 
 ```bash
 # Minimal startup
-pgtrickle-relay --postgres-url postgres://relay:password@localhost/mydb
+pg-tide --postgres-url postgres://relay:password@localhost/mydb
 
 # Or via the single supported env var (bootstrap only)
-export PGTRICKLE_RELAY_POSTGRES_URL=postgres://relay:password@localhost/mydb
-pgtrickle-relay
+export PG_TIDE_POSTGRES_URL=postgres://relay:password@localhost/mydb
+pg-tide
 ```
 
 On startup the relay:
 1. Connects to PostgreSQL
-2. Queries `pgtrickle.relay_outbox_config` and `pgtrickle.relay_inbox_config`
+2. Queries `tide.relay_outbox_config` and `tide.relay_inbox_config`
    for all `enabled = true` rows
 3. Spawns one tokio task per pipeline
-4. Subscribes to `LISTEN pgtrickle_relay_config` for hot-reload
+4. Subscribes to `LISTEN tide_relay_config` for hot-reload
 
 If either table does not exist the relay exits with a clear error.
 
@@ -341,14 +341,14 @@ Pipelines are managed entirely via SQL:
 
 ```sql
 -- Forward: outbox → NATS
-INSERT INTO pgtrickle.relay_outbox_config (name, config) VALUES (
+INSERT INTO tide.relay_outbox_config (name, config) VALUES (
     'orders-to-nats',
     '{"source_type": "outbox", "source": {"outbox": "order_events", "group": "order-publisher"},
       "sink_type":   "nats",   "sink":   {"url": "nats://localhost:4222"}}'
 );
 
 -- Reverse: Kafka → inbox
-INSERT INTO pgtrickle.relay_inbox_config (name, config) VALUES (
+INSERT INTO tide.relay_inbox_config (name, config) VALUES (
     'kafka-to-orders',
     '{"source_type": "kafka",    "source": {"brokers": "localhost:9092", "topic": "orders"},
       "sink_type":   "pg-inbox", "sink":   {"inbox_table": "order_inbox"}}'
@@ -361,8 +361,8 @@ The relay has two primary modes that compose Sources and Sinks:
 
 | Mode | Source | Sink | Primary use-case |
 |------|--------|------|------------------|
-| **Forward** | pg-trickle outbox | NATS / Kafka / webhook / Redis / SQS / RabbitMQ / PG / stdout | Publish outbox deltas to external systems |
-| **Reverse** | NATS / Kafka / webhook / Redis / SQS / RabbitMQ / stdin | pg-trickle inbox | Consume external events into inbox for stream processing |
+| **Forward** | pg-tide outbox | NATS / Kafka / webhook / Redis / SQS / RabbitMQ / PG / stdout | Publish outbox deltas to external systems |
+| **Reverse** | NATS / Kafka / webhook / Redis / SQS / RabbitMQ / stdin | pg-tide inbox | Consume external events into inbox for stream processing |
 
 #### Process topology
 
@@ -377,7 +377,7 @@ Process (pod)
 │   ├── On lock acquired: read consumer_offsets, dispatch to worker pool
 │   ├── On lock lost (coordinator conn drop or another pod stole it):
 │   │   cancel the corresponding worker task
-│   └── LISTEN pgtrickle_relay_config for hot-reload (enable/disable/update)
+│   └── LISTEN tide_relay_config for hot-reload (enable/disable/update)
 │
 └── Worker pool (N tokio tasks, bounded channel from coordinator)
     ├── Worker 1 → pipeline A  (own PG conn for data reads + offset writes)
@@ -526,7 +526,7 @@ pub struct RelayMessage {
     /// Whether this batch is a full-refresh snapshot (forward only).
     pub is_full_refresh: bool,
 
-    /// pg-trickle outbox metadata (forward only, None in reverse).
+    /// pg-tide outbox metadata (forward only, None in reverse).
     pub outbox_id: Option<i64>,
     pub refresh_id: Option<Uuid>,
 
@@ -567,14 +567,14 @@ async fn poll_simple(
 ) -> Result<Vec<RelayMessage>, RelayError> {
     // Read durable offset — survives pod restarts and coordinator failover
     let last_offset: i64 = db.query_opt(
-        "SELECT last_change_id FROM pgtrickle.relay_consumer_offsets
+        "SELECT last_change_id FROM tide.relay_consumer_offsets
          WHERE relay_group_id = $1 AND pipeline_id = $2",
         &[&pipeline.group_id, &pipeline.id],
     ).await?.map(|r| r.get(0)).unwrap_or(0i64);
 
     let rows = db.query(
         &format!(
-            "SELECT id, payload FROM pgtrickle.{} WHERE id > $1 ORDER BY id LIMIT $2",
+            "SELECT id, payload FROM tide.{} WHERE id > $1 ORDER BY id LIMIT $2",
             pipeline.outbox_name  // validated at startup against catalog
         ),
         &[&last_offset, &batch_size],
@@ -601,7 +601,7 @@ async fn update_consumer_offset(
     last_id: i64,
 ) -> Result<(), RelayError> {
     db.execute(
-        "INSERT INTO pgtrickle.relay_consumer_offsets
+        "INSERT INTO tide.relay_consumer_offsets
              (relay_group_id, pipeline_id, last_change_id, worker_id, updated_at)
          VALUES ($1, $2, $3, $4, now())
          ON CONFLICT (relay_group_id, pipeline_id)
@@ -620,7 +620,7 @@ async fn update_consumer_offset(
 
 > **Simple mode vs. consumer group mode:** The relay supports two offset-tracking
 > strategies for forward mode. **Simple mode** (default) uses the relay's own
-> `pgtrickle.relay_consumer_offsets` table — a lightweight `(relay_group_id,
+> `tide.relay_consumer_offsets` table — a lightweight `(relay_group_id,
 > pipeline_id, last_change_id)` row updated atomically after each batch. This
 > is sufficient for single-relay deployments and requires no v0.24.0 consumer
 > group infrastructure; the extension's retention drain checks `relay_consumer_offsets`
@@ -633,7 +633,7 @@ async fn update_consumer_offset(
 > The pipeline's `config` JSONB controls which mode is used: include a `"group"`
 > key in the source config to activate consumer group mode.
 
-Used when `--group` is specified. Delegates coordination to pg-trickle's
+Used when `--group` is specified. Delegates coordination to pg-tide's
 built-in consumer group SQL functions.
 
 ```rust
@@ -646,14 +646,14 @@ async fn poll_group(
     visibility_seconds: i32,
 ) -> Result<Vec<RelayMessage>, RelayError> {
     let rows = db.query(
-        "SELECT * FROM pgtrickle.poll_outbox($1, $2, $3, $4)",
+        "SELECT * FROM tide.poll_outbox($1, $2, $3, $4)",
         &[&group, &consumer_id, &batch_size, &visibility_seconds],
     ).await?;
 
     if rows.is_empty() {
         // Heartbeat even when idle
         db.execute(
-            "SELECT pgtrickle.consumer_heartbeat($1, $2)",
+            "SELECT tide.consumer_heartbeat($1, $2)",
             &[&group, &consumer_id],
         ).await?;
         return Ok(vec![]);
@@ -707,7 +707,7 @@ struct OutboxBatch {
 async fn decode_payload(
     payload: &serde_json::Value,
     db: &Client,
-    stream_table_name: &str,   // pg_trickle stream table name (NOT the outbox table name)
+    stream_table_name: &str,   // pg_tide stream table name (NOT the outbox table name)
     outbox_id: i64,
 ) -> Result<OutboxBatch, RelayError> {
     let v = payload["v"].as_i64().unwrap_or(0);
@@ -733,7 +733,7 @@ async fn decode_payload(
         // Signal consumption complete.
         // outbox_rows_consumed() takes the STREAM TABLE name, not the outbox table name.
         db.execute(
-            "SELECT pgtrickle.outbox_rows_consumed($1, $2)",
+            "SELECT tide.outbox_rows_consumed($1, $2)",
             &[&stream_table_name, &outbox_id],
         ).await?;
 
@@ -765,7 +765,7 @@ async fn fetch_claim_check_rows(
     // regardless of claim-check delta size. This is the key memory-safety
     // guarantee of the claim-check path — never buffer the full delta in RAM.
     const FETCH_BATCH: i64 = 1000;
-    let delta_table = format!("pgtrickle.outbox_delta_rows_{}", outbox_name);
+    let delta_table = format!("tide.outbox_delta_rows_{}", outbox_name);
 
     let cursor_name = format!("relay_cc_{}_{}", outbox_id, uuid::Uuid::new_v4().simple());
     // Embed outbox_id as a literal — batch_execute does not support parameter
@@ -952,20 +952,20 @@ All retries use jittered exponential backoff to avoid thundering herds.
 
 ### A.14 Catalog Schema (Config Tables)
 
-Pipeline definitions live in two tables created by the pg-trickle extension
+Pipeline definitions live in two tables created by the pg-tide extension
 migration (same schema as other catalog tables). All backend-specific settings
 go in the `config` JSONB column; validation happens in Rust at load time.
 
 ```sql
 -- Forward pipelines: outbox → sink
-CREATE TABLE pgtrickle.relay_outbox_config (
+CREATE TABLE tide.relay_outbox_config (
     name     TEXT PRIMARY KEY,
     enabled  BOOLEAN NOT NULL DEFAULT true,
     config   JSONB NOT NULL  -- {source_type, source, sink_type, sink}
 );
 
 -- Reverse pipelines: source → inbox
-CREATE TABLE pgtrickle.relay_inbox_config (
+CREATE TABLE tide.relay_inbox_config (
     name     TEXT PRIMARY KEY,
     enabled  BOOLEAN NOT NULL DEFAULT true,
     config   JSONB NOT NULL  -- {source_type, source, sink_type, sink}
@@ -979,7 +979,7 @@ CREATE TABLE pgtrickle.relay_inbox_config (
 -- last_change_id  = last outbox row id successfully published (simple mode)
 --                   or last broker offset (reverse mode).
 -- worker_id       = "<pod-name>:<thread>" for operational diagnostics.
-CREATE TABLE pgtrickle.relay_consumer_offsets (
+CREATE TABLE tide.relay_consumer_offsets (
     relay_group_id  TEXT        NOT NULL,
     pipeline_id     TEXT        NOT NULL,
     last_change_id  BIGINT      NOT NULL DEFAULT 0,
@@ -989,11 +989,11 @@ CREATE TABLE pgtrickle.relay_consumer_offsets (
 );
 
 -- One shared trigger function; TG_TABLE_NAME identifies the direction
-CREATE OR REPLACE FUNCTION pgtrickle.relay_config_notify()
+CREATE OR REPLACE FUNCTION tide.relay_config_notify()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
     PERFORM pg_notify(
-        'pgtrickle_relay_config',
+        'tide_relay_config',
         json_build_object(
             'direction', TG_TABLE_NAME,
             'event',     TG_OP,
@@ -1006,15 +1006,15 @@ END;
 $$;
 
 CREATE TRIGGER relay_outbox_config_notify
-    AFTER INSERT OR UPDATE OR DELETE ON pgtrickle.relay_outbox_config
-    FOR EACH ROW EXECUTE FUNCTION pgtrickle.relay_config_notify();
+    AFTER INSERT OR UPDATE OR DELETE ON tide.relay_outbox_config
+    FOR EACH ROW EXECUTE FUNCTION tide.relay_config_notify();
 
 CREATE TRIGGER relay_inbox_config_notify
-    AFTER INSERT OR UPDATE OR DELETE ON pgtrickle.relay_inbox_config
-    FOR EACH ROW EXECUTE FUNCTION pgtrickle.relay_config_notify();
+    AFTER INSERT OR UPDATE OR DELETE ON tide.relay_inbox_config
+    FOR EACH ROW EXECUTE FUNCTION tide.relay_config_notify();
 ```
 
-The relay subscribes to `LISTEN pgtrickle_relay_config` after startup:
+The relay subscribes to `LISTEN tide_relay_config` after startup:
 - `INSERT` with `enabled = true` → start a new pipeline task
 - `UPDATE` → gracefully restart the named pipeline with the new config
 - `DELETE` or `UPDATE` with `enabled = false` → gracefully stop the pipeline
@@ -1027,7 +1027,7 @@ references (e.g. `{"password_env": "KAFKA_PASSWORD"}`) resolved at runtime.
 Seven PL/pgSQL wrapper functions provide a public API for managing relay
 pipelines without requiring direct table access.
 
-The pg-trickle side of each pipeline (the outbox name/consumer-group for
+The pg-tide side of each pipeline (the outbox name/consumer-group for
 forward pipelines; the inbox table for reverse pipelines) is a first-class
 typed parameter — not buried in JSONB. Only the external backend options live
 in the JSONB argument, keeping validation simple and making misconfigurations
@@ -1035,7 +1035,7 @@ visible at call time rather than at relay startup.
 
 These two functions follow the same "create + connect" ergonomic as
 RisingWave / Feldera `CREATE TABLE … WITH (connector = …)`: a single call
-creates the pg-trickle infrastructure and binds the relay pipeline. The
+creates the pg-tide infrastructure and binds the relay pipeline. The
 underlying objects (outbox table, inbox table) remain independently accessible
 for direct polling, replay, or monitoring — unlike the RisingWave model where
 the table and connector are inseparable.
@@ -1053,7 +1053,7 @@ the table and connector are inseparable.
 --   retention_hours — passed to enable_outbox() on first creation only;
 --                     ignored if the outbox already exists.
 -- enabled defaults to true; pass false to insert in disabled state.
-SELECT pgtrickle.set_relay_outbox(
+SELECT tide.set_relay_outbox(
     'orders-to-nats',
     outbox          => 'orders',
     group           => 'order-relay',
@@ -1061,7 +1061,7 @@ SELECT pgtrickle.set_relay_outbox(
     retention_hours => 24   -- optional, only applied on first outbox creation
 );
 
--- Upsert a reverse pipeline (external source → pg-trickle inbox).
+-- Upsert a reverse pipeline (external source → pg-tide inbox).
 --   inbox           — inbox name. The inbox table is created automatically
 --                     via create_inbox() if it does not already exist.
 --                     If the table exists but is not tracked, it is adopted
@@ -1074,7 +1074,7 @@ SELECT pgtrickle.set_relay_outbox(
 --   The remaining parameters are forwarded to create_inbox() on first
 --   creation only; they are ignored if the inbox already exists.
 -- enabled defaults to true; pass false to insert in disabled state.
-SELECT pgtrickle.set_relay_inbox(
+SELECT tide.set_relay_inbox(
     'kafka-to-orders',
     inbox           => 'order_inbox',
     source          => '{"type":"kafka","brokers":"localhost:9092","topic":"orders"}',
@@ -1085,18 +1085,18 @@ SELECT pgtrickle.set_relay_inbox(
 );
 
 -- Enable / disable a pipeline by name (searches both tables).
-SELECT pgtrickle.enable_relay('orders-to-nats');
-SELECT pgtrickle.disable_relay('kafka-to-orders');
+SELECT tide.enable_relay('orders-to-nats');
+SELECT tide.disable_relay('kafka-to-orders');
 
 -- Delete a pipeline by name (searches both tables).
-SELECT pgtrickle.delete_relay('orders-to-nats');
+SELECT tide.delete_relay('orders-to-nats');
 
 -- Fetch config for a single named pipeline.
-SELECT * FROM pgtrickle.get_relay_config('orders-to-nats');
+SELECT * FROM tide.get_relay_config('orders-to-nats');
 -- Returns: name TEXT, direction TEXT, enabled BOOLEAN, config JSONB
 
 -- List all pipelines (both directions).
-SELECT * FROM pgtrickle.list_relay_configs();
+SELECT * FROM tide.list_relay_configs();
 -- Returns rows for every entry in relay_outbox_config and relay_inbox_config.
 ```
 
@@ -1111,23 +1111,23 @@ The migration includes:
 
 ```sql
 -- Revoke direct table access from the relay role
-REVOKE ALL ON pgtrickle.relay_outbox_config    FROM pgtrickle_relay;
-REVOKE ALL ON pgtrickle.relay_inbox_config     FROM pgtrickle_relay;
-REVOKE ALL ON pgtrickle.relay_consumer_offsets FROM pgtrickle_relay;
+REVOKE ALL ON tide.relay_outbox_config    FROM pg_tide_relay;
+REVOKE ALL ON tide.relay_inbox_config     FROM pg_tide_relay;
+REVOKE ALL ON tide.relay_consumer_offsets FROM pg_tide_relay;
 
 -- Grant execute on the API functions only
-GRANT EXECUTE ON FUNCTION pgtrickle.set_relay_outbox(TEXT, TEXT, TEXT, JSONB, INT)  TO pgtrickle_relay;
-GRANT EXECUTE ON FUNCTION pgtrickle.set_relay_inbox(TEXT, TEXT, JSONB, INT, INTERVAL, BOOLEAN, INT)  TO pgtrickle_relay;
-GRANT EXECUTE ON FUNCTION pgtrickle.enable_relay(TEXT)                      TO pgtrickle_relay;
-GRANT EXECUTE ON FUNCTION pgtrickle.disable_relay(TEXT)                     TO pgtrickle_relay;
-GRANT EXECUTE ON FUNCTION pgtrickle.delete_relay(TEXT)                      TO pgtrickle_relay;
-GRANT EXECUTE ON FUNCTION pgtrickle.get_relay_config(TEXT)                  TO pgtrickle_relay;
-GRANT EXECUTE ON FUNCTION pgtrickle.list_relay_configs()                    TO pgtrickle_relay;
+GRANT EXECUTE ON FUNCTION tide.set_relay_outbox(TEXT, TEXT, TEXT, JSONB, INT)  TO pg_tide_relay;
+GRANT EXECUTE ON FUNCTION tide.set_relay_inbox(TEXT, TEXT, JSONB, INT, INTERVAL, BOOLEAN, INT)  TO pg_tide_relay;
+GRANT EXECUTE ON FUNCTION tide.enable_relay(TEXT)                      TO pg_tide_relay;
+GRANT EXECUTE ON FUNCTION tide.disable_relay(TEXT)                     TO pg_tide_relay;
+GRANT EXECUTE ON FUNCTION tide.delete_relay(TEXT)                      TO pg_tide_relay;
+GRANT EXECUTE ON FUNCTION tide.get_relay_config(TEXT)                  TO pg_tide_relay;
+GRANT EXECUTE ON FUNCTION tide.list_relay_configs()                    TO pg_tide_relay;
 ```
 
 The functions run with `SECURITY DEFINER` so they can access the underlying
 tables on behalf of any caller granted `EXECUTE`, without exposing the tables
-directly. Superusers and the `pgtrickle` role (extension owner) retain full
+directly. Superusers and the `pg_tide` role (extension owner) retain full
 table access for administrative purposes.
 
 ---
@@ -1205,7 +1205,7 @@ On process startup:
 
 To enable/disable a pipeline without restarting the pod:
 1. Update the config row: `UPDATE relay_outbox_config SET enabled = false ...`
-2. The database trigger fires `NOTIFY pgtrickle_relay_config`.
+2. The database trigger fires `NOTIFY tide_relay_config`.
 3. All pods' coordinators receive the notification and reload the config.
 4. Pods automatically stop or start workers as needed.
 
@@ -1244,9 +1244,9 @@ connection must **not** be pooled — it holds session-level advisory locks).
 ```yaml
 # Environment-variable tuning knobs for the relay process:
 env:
-  - name: PGTRICKLE_RELAY_MAX_WORKERS_PER_POD
+  - name: PG_TIDE_MAX_WORKERS_PER_POD
     value: "10"         # caps per-pod worker connections (default: 10)
-  - name: PGTRICKLE_RELAY_COORDINATOR_TICK_MS
+  - name: PG_TIDE_COORDINATOR_TICK_MS
     value: "500"        # advisory-lock retry interval (default: 500 ms)
 ```
 
@@ -1256,22 +1256,22 @@ env:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pgtrickle-relay
+  name: pg-tide
 spec:
   replicas: 3                           # horizontal scale
   selector:
     matchLabels:
-      app: pgtrickle-relay
+      app: pg-tide
   template:
     metadata:
       labels:
-        app: pgtrickle-relay
+        app: pg-tide
     spec:
       containers:
       - name: relay
-        image: grove/pgtrickle-relay:0.25.0
+        image: trickle-labs/pg-tide:0.1.0
         env:
-        - name: PGTRICKLE_RELAY_POSTGRES_URL
+        - name: PG_TIDE_POSTGRES_URL
           valueFrom:
             secretKeyRef:
               name: pg-credentials
@@ -1331,7 +1331,7 @@ the majority of real deployments without additional SDK dependencies.
 #### Example — no credentials in the database
 
 ```sql
-INSERT INTO pgtrickle.relay_outbox_config (name, config) VALUES (
+INSERT INTO tide.relay_outbox_config (name, config) VALUES (
     'orders-to-kafka',
     '{
         "source_type": "outbox",
@@ -1398,11 +1398,11 @@ resolved config object is ephemeral — held only in the worker's task memory.
 
 #### Hot-reload and credential rotation
 
-The coordinator already reloads on every `NOTIFY pgtrickle_relay_config` event.
+The coordinator already reloads on every `NOTIFY tide_relay_config` event.
 Secret resolution runs on every reload, so zero-downtime credential rotation is:
 
 1. Mount the new secret (update file, rotate env var in K8s Secret, etc.)
-2. Trigger a reload without changing credentials: `UPDATE pgtrickle.relay_outbox_config SET updated_at = now() WHERE name = 'orders-to-kafka';`
+2. Trigger a reload without changing credentials: `UPDATE tide.relay_outbox_config SET updated_at = now() WHERE name = 'orders-to-kafka';`
 3. The relay re-resolves `${file:/run/secrets/kafka_sasl_password}` and reconnects the sink with the new credential.
 
 No relay restart required.
@@ -1457,7 +1457,7 @@ composing arbitrary source → sink pipelines.
 url = "nats://localhost:4222"
 # credentials_file = "/etc/nats/creds"
 # tls_ca = "/etc/nats/ca.pem"
-subject_template = "pgtrickle.{stream_table}.{op}"
+subject_template = "tide.{stream_table}.{op}"
 # Publish options:
 # ack_timeout_ms = 5000
 # max_in_flight = 256          # concurrent unacked publishes
@@ -1466,7 +1466,7 @@ subject_template = "pgtrickle.{stream_table}.{op}"
 **Dedup:** Uses `Nats-Msg-Id` header set to `{dedup_key}`.
 JetStream deduplicates within the configured dedup window.
 
-**Full-refresh handling:** Publishes with header `Pgtrickle-Full-Refresh: true`
+**Full-refresh handling:** Publishes with header `PgTide-Full-Refresh: true`
 so consumers can detect snapshot events.
 
 ### B.2 HTTP Webhook
@@ -1493,7 +1493,7 @@ Slower but compatible with endpoints that expect single-event payloads.
 
 **Dedup:** Sends `Idempotency-Key` header with the dedup key.
 
-**Full-refresh handling:** Sends `X-Pgtrickle-Full-Refresh: true` header.
+**Full-refresh handling:** Sends `X-PgTide-Full-Refresh: true` header.
 
 ### B.3 Apache Kafka
 
@@ -1502,8 +1502,8 @@ Slower but compatible with endpoints that expect single-event payloads.
 ```toml
 [sink.kafka]
 brokers = "localhost:9092"
-topic = "pgtrickle-events"
-# topic_template = "pgtrickle.{stream_table}"
+topic = "pg-tide-events"
+# topic_template = "tide.{stream_table}"
 # key_template = "{op}:{outbox_id}"          # Kafka record key
 # acks = "all"                               # all | 1 | 0
 # compression = "lz4"                        # none | gzip | snappy | lz4 | zstd
@@ -1521,7 +1521,7 @@ topic = "pgtrickle-events"
 **Dedup:** Uses the dedup key as the Kafka record key + enables idempotent
 producer (`enable.idempotence = true`).
 
-**Full-refresh:** Sets Kafka header `pgtrickle-full-refresh: true`.
+**Full-refresh:** Sets Kafka header `pg-tide-full-refresh: true`.
 
 ### B.4 stdout / File
 
@@ -1546,7 +1546,7 @@ Useful for:
 ```toml
 [sink.redis]
 url = "redis://localhost:6379"
-stream_key = "pgtrickle:{stream_table}"
+stream_key = "pg-tide:{stream_table}"
 # maxlen = 100000             # MAXLEN ~ approximate trimming
 # password = "secret"
 # tls = false
@@ -1564,7 +1564,7 @@ exactly-once processing.
 [sink.sqs]
 queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/my-queue"
 # region = "us-east-1"       # default: from env/config
-# message_group_id = "pgtrickle"   # for FIFO queues
+# message_group_id = "pgtide"   # for FIFO queues
 # batch_send = true          # use SendMessageBatch (up to 10 per call)
 ```
 
@@ -1583,9 +1583,9 @@ inbox_table = "my_inbox"
 # on_conflict = "DO NOTHING"   # default: idempotent via event_id PK
 ```
 
-Inserts events into a pg-trickle inbox (or any table with compatible
+Inserts events into a pg-tide inbox (or any table with compatible
 schema) on a different PostgreSQL instance. Enables cross-database /
-cross-service event propagation using pg-trickle on both sides.
+cross-service event propagation using pg-tide on both sides.
 
 ```sql
 INSERT INTO my_inbox (event_id, event_type, payload, received_at)
@@ -1604,7 +1604,7 @@ plan) to reach Azure Service Bus, Apache Qpid, and other AMQP 1.0 brokers.
 ```toml
 [sink.rabbitmq]
 url = "amqp://guest:guest@localhost:5672"
-exchange = "pgtrickle"
+exchange = "pgtide"
 routing_key_template = "{stream_table}.{op}"
 # exchange_type = "topic"     # topic | direct | fanout
 # declare_exchange = true     # auto-declare on connect
@@ -1621,7 +1621,7 @@ dedup required (RabbitMQ does not deduplicate natively).
 
 These backends implement the `Source` trait and are used in reverse mode
 (external system → inbox). They consume messages from external brokers /
-transports and feed them into the relay loop for writing to a pg-trickle
+transports and feed them into the relay loop for writing to a pg-tide
 inbox table.
 
 ### C.1 NATS JetStream Source
@@ -1632,7 +1632,7 @@ inbox table.
 [source.nats]
 url = "nats://localhost:4222"
 subject = "external.events.>"       # NATS subject to subscribe to
-# durable_name = "pgtrickle-inbox"  # durable consumer for persistence
+# durable_name = "pg-tide-inbox"  # durable consumer for persistence
 # deliver_policy = "all"            # all | last | new | by_start_time
 # ack_wait_seconds = 30
 # max_deliver = 5                   # max redelivery attempts
@@ -1680,7 +1680,7 @@ generates a UUID v4.
 [source.kafka]
 brokers = "localhost:9092"
 topic = "external-events"
-group_id = "pgtrickle-inbox-writer"
+group_id = "pg-tide-inbox-writer"
 # auto_offset_reset = "earliest"    # earliest | latest
 # security_protocol = "SASL_SSL"
 # sasl_mechanism = "PLAIN"
@@ -1713,7 +1713,7 @@ format = "jsonl"            # jsonl (default) | json_pretty
 
 Useful for:
 - Replaying captured events into an inbox
-- Piping from other tools: `cat events.jsonl | pgtrickle-relay reverse --source stdin`
+- Piping from other tools: `cat events.jsonl | pg-tide reverse --source stdin`
 - Integration testing
 
 **Dedup key:** Uses `dedup_key` field from JSON payload if present;
@@ -1727,7 +1727,7 @@ otherwise generates a UUID v4.
 [source.redis]
 url = "redis://localhost:6379"
 stream_key = "external:events"
-group_name = "pgtrickle-inbox"
+group_name = "pg-tide-inbox"
 consumer_name = "relay-1"           # default: hostname
 # start_id = "0"                    # "0" for all history, "$" for new only
 # block_ms = 5000
@@ -1773,7 +1773,7 @@ for Azure Service Bus and other AMQP 1.0 brokers planned for Phase 2.
 [source.rabbitmq]
 url = "amqp://guest:guest@localhost:5672"
 queue = "inbox-events"
-# consumer_tag = "pgtrickle-relay"
+# consumer_tag = "pg-tide"
 # prefetch_count = 100
 # declare_queue = true               # auto-declare on connect
 # auto_ack = false                   # manual ack (default)
@@ -1792,7 +1792,7 @@ generates a UUID v4.
 ## Part D — PostgreSQL Inbox Sink (Reverse Mode)
 
 The inbox sink is the primary Sink for reverse mode. It writes messages
-into a pg-trickle inbox table via `tokio-postgres`.
+into a pg-tide inbox table via `tokio-postgres`.
 
 ```toml
 [reverse]
@@ -1938,7 +1938,7 @@ because results are environment-sensitive.
 
 | Document | Content |
 |----------|---------|
-| `pgtrickle-relay/README.md` | Quick start, installation, forward & reverse basic usage |
+| `pg-tide-relay/README.md` | Quick start, installation, forward & reverse basic usage |
 | `docs/RELAY.md` | Comprehensive guide: all backends, config reference, deployment patterns |
 | `docs/SQL_REFERENCE.md` | Updated with relay-related SQL functions |
 | `docs/PATTERNS.md` | "Relay" section with worked examples per backend (forward + reverse) |
@@ -1948,9 +1948,9 @@ because results are environment-sensitive.
 | Channel | Artifact |
 |---------|----------|
 | GitHub Releases | Pre-built binaries (Linux amd64/arm64, macOS amd64/arm64) |
-| Docker Hub | `grove/pgtrickle-relay:0.25.0` — minimal distroless image |
-| Cargo | `cargo install pgtrickle-relay` |
-| Homebrew | `brew install grove/tap/pgtrickle-relay` |
+| Docker Hub | `trickle-labs/pg-tide:0.1.0` — minimal distroless image |
+| Cargo | `cargo install pg-tide` |
+| Homebrew | `brew install grove/tap/pg-tide` |
 
 #### Docker Image
 
@@ -1958,19 +1958,19 @@ because results are environment-sensitive.
 FROM rust:1.85-bookworm AS builder
 WORKDIR /src
 COPY . .
-RUN cargo build --release --bin pgtrickle-relay \
+RUN cargo build --release --bin pg-tide \
     --features default
 
 FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=builder /src/target/release/pgtrickle-relay /usr/local/bin/
-ENTRYPOINT ["pgtrickle-relay"]
+COPY --from=builder /src/target/release/pg-tide /usr/local/bin/
+ENTRYPOINT ["pg-tide"]
 ```
 
 #### Kubernetes Sidecar Pattern (Forward)
 
 All pipeline definitions live in the database (see [A.14](#a14-catalog-schema-config-tables)).
-The only env var required at startup is `PGTRICKLE_RELAY_POSTGRES_URL`.
-Configure pipelines once via `pgtrickle-relay config set` or SQL;
+The only env var required at startup is `PG_TIDE_POSTGRES_URL`.
+Configure pipelines once via `pg-tide config set` or SQL;
 the running relay picks up changes automatically via `LISTEN/NOTIFY`.
 
 ```yaml
@@ -1978,9 +1978,9 @@ containers:
   - name: app
     image: myapp:latest
   - name: relay
-    image: grove/pgtrickle-relay:0.25.0
+    image: trickle-labs/pg-tide:0.1.0
     env:
-      - name: PGTRICKLE_RELAY_POSTGRES_URL
+      - name: PG_TIDE_POSTGRES_URL
         valueFrom:
           secretKeyRef:
             name: pg-credentials
@@ -2002,23 +2002,23 @@ Pipeline setup (run once, not per-pod):
 
 ```bash
 # Forward: outbox → NATS
-pgtrickle-relay config set outbox orders-to-nats \
+pg-tide config set outbox orders-to-nats \
   --config '{"source_type":"outbox","source":{"outbox":"order_events","group":"order-publisher"},"sink_type":"nats","sink":{"url":"nats://nats:4222"}}'
 ```
 
 #### Kubernetes Sidecar Pattern (Reverse)
 
-Same pattern — the single `PGTRICKLE_RELAY_POSTGRES_URL` env var is sufficient.
-All source/inbox config lives in `pgtrickle.relay_inbox_config`.
+Same pattern — the single `PG_TIDE_POSTGRES_URL` env var is sufficient.
+All source/inbox config lives in `tide.relay_inbox_config`.
 
 ```yaml
 containers:
   - name: app
     image: myapp:latest
   - name: relay
-    image: grove/pgtrickle-relay:0.25.0
+    image: trickle-labs/pg-tide:0.1.0
     env:
-      - name: PGTRICKLE_RELAY_POSTGRES_URL
+      - name: PG_TIDE_POSTGRES_URL
         valueFrom:
           secretKeyRef:
             name: pg-credentials
@@ -2036,7 +2036,7 @@ Pipeline setup (run once, not per-pod):
 
 ```bash
 # Reverse: Kafka → inbox
-pgtrickle-relay config set inbox kafka-to-orders \
+pg-tide config set inbox kafka-to-orders \
   --config '{"source_type":"kafka","source":{"brokers":"kafka:9092","topic":"orders"},"sink_type":"pg-inbox","sink":{"inbox_table":"order_inbox"}}'
 ```
 
@@ -2048,7 +2048,7 @@ pgtrickle-relay config set inbox kafka-to-orders \
 
 | Item | Description | Effort |
 |------|-------------|--------|
-| RELAY-CAT | **Catalog schema + SQL API + offset tracking.** `sql/pg_trickle--0.24.0--0.25.0.sql`: create `relay_outbox_config`, `relay_inbox_config`, and `relay_consumer_offsets` tables; shared `relay_config_notify()` trigger; 7 SQL wrapper functions. | 0.5d |
+| RELAY-CAT | **Catalog schema + SQL API + offset tracking.** `sql/pg_tide--0.24.0--0.25.0.sql`: create `relay_outbox_config`, `relay_inbox_config`, and `relay_consumer_offsets` tables; shared `relay_config_notify()` trigger; 7 SQL wrapper functions. | 0.5d |
 | RELAY-SEC | **Secret reference interpolation.** `src/secrets.rs`: `resolve_secret_refs()` JSONB walker; `${env:VAR}` and `${file:/path}` token types; `validate_env_var_name()` guard; per-pipeline failure isolation (bad secret disables only that pipeline); hot-reload re-resolution; security checklist items (no logging of resolved values, no metric label exposure). See [A.16](#a16-secret-reference-interpolation). | 0.5d |
 | RELAY-1 | Crate scaffold, CLI parsing (`--postgres-url`, `--metrics-addr`, `--log-format`, `--log-level`), DB bootstrap (load tables, LISTEN/NOTIFY), coordinator task setup, error types, RelayMessage envelope | 2d |
 | RELAY-2 | Source + Sink traits, coordinator loop (advisory locks), worker pool dispatch, cancellation token plumbing | 1.5d |
@@ -2074,7 +2074,7 @@ pgtrickle-relay config set inbox kafka-to-orders \
 
 | Item | Description | Effort |
 |------|-------------|--------|
-| RELAY-22 | Inbox sink (pg-trickle inbox writer with batch insert + ON CONFLICT dedup) | 1.5d |
+| RELAY-22 | Inbox sink (pg-tide inbox writer with batch insert + ON CONFLICT dedup) | 1.5d |
 | RELAY-23 | Source: NATS JetStream consumer (durable pull consumer, ack after inbox write) | 1d |
 | RELAY-24 | Source: Apache Kafka consumer (manual offset commit after inbox write) | 1.5d |
 | RELAY-25 | Source: HTTP webhook receiver (axum server, synchronous ack) | 1d |
@@ -2111,8 +2111,8 @@ pgtrickle-relay config set inbox kafka-to-orders \
 ### Dependencies
 
 - **Forward mode requires v0.24.0 outbox (Part A)** — the relay polls
-  `pgtrickle.outbox_<st>` and reads claim-check rows from
-  `pgtrickle.outbox_delta_rows_<st>`.
+  `tide.outbox_<st>` and reads claim-check rows from
+  `tide.outbox_delta_rows_<st>`.
 - **Forward consumer group mode requires v0.24.0 Part B** — `poll_outbox()`,
   `commit_offset()`, `consumer_heartbeat()`, `extend_lease()`.
 - **Reverse mode requires only an inbox table** — no dependency on outbox
@@ -2130,7 +2130,7 @@ pgtrickle-relay config set inbox kafka-to-orders \
 | 1 | Should the relay support multiple pipelines in one process? | (a) One pipeline per process (simpler), (b) Multi-pipeline coordinator (more throughput per pod) | **(b)** — one process runs a coordinator that manages all enabled pipelines via advisory locks. Multiple pods scale horizontally with zero external coordination. This is more resource-efficient and operationally simpler. See [A.15](#a15-horizontal-scaling--work-distribution). |
 | 2 | Should we support custom transforms (e.g. JMESPath, JSONata)? | (a) No transforms in v0.25.0, (b) JMESPath filter | **(a)** — out of scope. The stream table query itself is the transform layer. |
 | 3 | Dead-letter queue for the relay? | (a) Skip poison events + log, (b) DLQ table in PostgreSQL | **(a)** for v0.25.0. Log + metric is sufficient. DLQ can be added later. |
-| 4 | Should `pgtrickle-relay` be a workspace member or a separate repo? | (a) Workspace member (shared CI, version lock), (b) Separate repo | **(a)** — workspace member. Shared version, single release. |
+| 4 | Should `pg-tide` be a workspace member or a separate repo? | (a) Workspace member (shared CI, version lock), (b) Separate repo | **(a)** — workspace member. Shared version, single release. |
 | 5 | Should NATS Micro integration be included for service discovery? | (a) Yes, (b) No | **(b)** for initial release. Can be added if demand exists. |
 | 6 | Google Cloud Pub/Sub as a backend? | (a) v0.25.0, (b) Post-v0.25.0 | **(b)** — add post-launch based on demand. |
 | 7 | Azure Service Bus as a backend? | (a) v0.25.0, (b) Post-v0.25.0 | **(b)** — add post-launch based on demand. |

@@ -3,7 +3,7 @@
 > **Status:** Proposal (DRAFT)
 > **Created:** 2026-05-03
 > **Category:** Tooling — Relay CLI Extension
-> **Depends on:** [PLAN_RELAY_CLI_PHASE_2.md](./PLAN_RELAY_CLI_PHASE_2.md)
+> **Depends on:** [relay-cli-phase2.md](./relay-cli-phase2.md)
 
 ---
 
@@ -34,7 +34,7 @@
 
 ## Executive Summary
 
-Phase 3 of the `pgtrickle-relay` extends the relay into a universal connector
+Phase 3 of the `pg-tide` extends the relay into a universal connector
 hub by integrating with the major data engineering connector ecosystems:
 **Airbyte**, **dlt**, **Redpanda Connect (Benthos)**, and **Fivetran**.
 
@@ -105,11 +105,11 @@ Airbyte support is a thin translation layer.
     "destination_image": "airbyte/destination-bigquery:latest",
     "destination_config": {
       "project_id": "my-project",
-      "dataset_id": "pgtrickle",
+      "dataset_id": "pgtide",
       "credentials_json": "..."
     },
     "stream_name_template": "{stream_table}",
-    "namespace": "pgtrickle",
+    "namespace": "pgtide",
     "sync_mode": "append",
     "batch_size": 1000
   }
@@ -125,7 +125,7 @@ Airbyte support is a thin translation layer.
     "type": "RECORD",
     "record": {
       "stream": "orders_stream",
-      "namespace": "pgtrickle",
+      "namespace": "pgtide",
       "data": { /* delta columns */ },
       "emitted_at": 1714700000000
     }
@@ -179,7 +179,7 @@ sidecars), the relay also supports bare Airbyte Python connectors via
 2. Reads stdout for `AirbyteMessage` JSON lines.
 3. `CATALOG` → stored for schema validation.
 4. `RECORD` → converted to inbox rows, batch-inserted.
-5. `STATE` → checkpointed to `pgtrickle.relay_airbyte_state`.
+5. `STATE` → checkpointed to `tide.relay_airbyte_state`.
 6. `LOG` → forwarded to relay structured logging.
 7. `TRACE` → error traces logged; estimate traces used for progress metrics.
 
@@ -192,7 +192,7 @@ passed to the source on restart via `--state` (or mounted file for Docker).
 
 **Why:** [dlt](https://dlthub.com) is the fastest-growing Python-first EL
 tool in the modern data stack. It has strong synergy with dbt (which
-pg-trickle already supports via `dbt-pgtrickle`), a clean REST API source
+pg-tide already supports via `dbt-pg-tide`), a clean REST API source
 pattern, and ~100+ verified sources. Unlike Singer/Airbyte (subprocess
 protocols), dlt is best integrated via its REST API or as a library.
 
@@ -223,7 +223,7 @@ The dlt pipeline pushes data to the relay's HTTP endpoint:
 import dlt
 
 pipeline = dlt.pipeline(
-    pipeline_name="salesforce_to_pgtrickle",
+    pipeline_name="salesforce_to_pg_tide",
     destination=dlt.destinations.http(
         url="http://relay:8090/dlt/inbox",
         headers={"Authorization": "Bearer dlt_..."}
@@ -244,9 +244,9 @@ that a dlt pipeline can pick up for loading into any dlt destination.
   "sink_type": "dlt",
   "sink": {
     "mode": "file_export",
-    "output_dir": "/var/lib/pgtrickle-relay/dlt-export",
+    "output_dir": "/var/lib/pg-tide-relay/dlt-export",
     "format": "jsonl",
-    "schema_name": "pgtrickle",
+    "schema_name": "pgtide",
     "table_name_template": "{stream_table}",
     "include_dlt_metadata": true
   }
@@ -266,7 +266,7 @@ from dlt.sources.filesystem import filesystem
 
 pipeline = dlt.pipeline(destination="bigquery")
 pipeline.run(
-    filesystem(bucket_url="/var/lib/pgtrickle-relay/dlt-export")
+    filesystem(bucket_url="/var/lib/pg-tide-relay/dlt-export")
 )
 ```
 
@@ -277,7 +277,7 @@ pipeline.run(
 **Why:** [Redpanda Connect](https://www.redpanda.com/connect) (formerly
 Benthos) is a stream processing tool with ~200 built-in inputs, outputs,
 and processors. It's widely used as a data plumbing layer alongside Kafka
-and Redpanda. Integration allows pg-trickle deltas to flow through any
+and Redpanda. Integration allows pg-tide deltas to flow through any
 Benthos pipeline and vice versa.
 
 **Two integration modes:**
@@ -299,7 +299,7 @@ simplest integration — no special protocol, just NDJSON over HTTP.
     "batch_size": 1000,
     "headers": {
       "Content-Type": "application/x-ndjson",
-      "X-PgTrickle-Stream": "{stream_table}"
+      "X-PgTide-Stream": "{stream_table}"
     }
   }
 }
@@ -353,7 +353,7 @@ pipeline:
 output:
   aws_s3:
     bucket: my-data-lake
-    path: "pgtrickle/${!json("stream_table")}/${!count("files")}.jsonl"
+    path: "pgtide/${!json("stream_table")}/${!count("files")}.jsonl"
 ```
 
 This enables any Benthos processor (filtering, enrichment, branching) and
@@ -422,7 +422,7 @@ For pushing deltas to Fivetran-managed destinations, use Fivetran's
 
 **Note:** Fivetran's proprietary managed connectors are not directly
 callable — this integration covers the webhook/HVR bridge patterns.
-For full Fivetran connector access, users pair Fivetran with pg-trickle
+For full Fivetran connector access, users pair Fivetran with pg-tide
 via Fivetran's PostgreSQL connector (reads from stream tables directly).
 
 **Effort:** 1d
@@ -442,7 +442,7 @@ via Fivetran's PostgreSQL connector (reads from stream tables directly).
 - **Airbyte (P1)** — second-largest open-source EL ecosystem; ~95% code
   reuse from Singer adapter; the two together cover ~900 connectors.
 - **dlt (P1)** — fastest-growing EL tool; natural pairing with
-  `dbt-pgtrickle`; completes the modern analytics stack story.
+  `dbt-pg-tide`; completes the modern analytics stack story.
 - **Redpanda Connect (P2)** — useful for teams already using Benthos
   as streaming infrastructure; subprocess mode reuses Singer infra.
 - **Fivetran (P2)** — large user base but mostly managed; webhook
@@ -453,7 +453,7 @@ via Fivetran's PostgreSQL connector (reads from stream tables directly).
 ## Part B — Additional Backends
 
 > These backends were deferred from Phase 2 due to lower demand or higher
-> complexity. See [Phase 2](./PLAN_RELAY_CLI_PHASE_2.md) for full design
+> complexity. See [Phase 2](./relay-cli-phase2.md) for full design
 > details on Pulsar and Arrow Flight.
 
 ### B.1 Apache Pulsar
@@ -471,9 +471,9 @@ and Verizon Media. Offers both streaming and queuing semantics.
 ```toml
 [sink.pulsar]
 url = "pulsar://localhost:6650"
-topic = "persistent://public/default/pgtrickle-events"
-# topic_template = "persistent://public/default/pgtrickle.{stream_table}"
-# producer_name = "pgtrickle-relay"
+topic = "persistent://public/default/pg-tide-events"
+# topic_template = "persistent://public/default/tide.{stream_table}"
+# producer_name = "pg-tide-relay"
 # send_timeout_ms = 30000
 # batch_enabled = true
 # batch_max_messages = 1000
@@ -492,12 +492,12 @@ The dedup key is set as the `sequence_id` on the producer.
 [source.pulsar]
 url = "pulsar://localhost:6650"
 topic = "persistent://public/default/external-events"
-subscription = "pgtrickle-inbox"
+subscription = "pg-tide-inbox"
 # subscription_type = "Shared"             # Exclusive | Shared | Failover | Key_Shared
 # initial_position = "Earliest"            # Earliest | Latest
 # ack_timeout_ms = 30000
 # negative_ack_redelivery_delay_ms = 1000
-# dead_letter_topic = "persistent://public/default/pgtrickle-dlq"
+# dead_letter_topic = "persistent://public/default/pg-tide-dlq"
 # max_redeliver_count = 5
 ```
 
@@ -511,7 +511,7 @@ inbox write. Supports automatic DLQ routing.
 
 **Why:** Language-agnostic, high-performance columnar data exchange.
 Emerging standard for data movement between systems. Used by Dremio,
-Databricks, DuckDB, and Ballista. Enables pg-trickle to feed any
+Databricks, DuckDB, and Ballista. Enables pg-tide to feed any
 Arrow Flight-compatible consumer without serialisation overhead.
 
 **Crate:** `arrow-flight` + `tonic`
@@ -575,7 +575,7 @@ RabbitMQ's AMQP 0-9-1 implementation in Phase 1.
   "sink_type": "amqp1",
   "sink": {
     "url": "amqps://mybus.servicebus.windows.net",
-    "address": "pgtrickle-events",
+    "address": "pg-tide-events",
     "sasl_mechanism": "PLAIN",
     "username": "...",
     "password": "..."
@@ -587,7 +587,7 @@ RabbitMQ's AMQP 0-9-1 implementation in Phase 1.
 
 ### B.4 MongoDB Sink
 
-Sink only. Writes pg-trickle deltas as MongoDB documents. Useful for teams
+Sink only. Writes pg-tide deltas as MongoDB documents. Useful for teams
 using MongoDB as a read-optimised query store alongside PostgreSQL.
 
 **Crate:** `mongodb`
@@ -597,7 +597,7 @@ using MongoDB as a read-optimised query store alongside PostgreSQL.
   "sink_type": "mongodb",
   "sink": {
     "connection_string": "mongodb://localhost:27017",
-    "database": "pgtrickle",
+    "database": "pgtide",
     "collection_template": "{stream_table}",
     "doc_id_field": "dedup_key",
     "write_concern": "majority"
@@ -627,11 +627,11 @@ on Snowflake or BigQuery. Uses bulk loading APIs for efficiency.
   "sink": {
     "account": "myorg-myaccount",
     "database": "ANALYTICS",
-    "schema": "PGTRICKLE",
+    "schema": "PGTIDE",
     "table_template": "{stream_table}",
     "warehouse": "RELAY_WH",
     "role": "RELAY_ROLE",
-    "stage": "@PGTRICKLE_STAGE",
+    "stage": "@PGTIDE_STAGE",
     "private_key_file": "/etc/snowflake/rsa_key.p8"
   }
 }
@@ -642,7 +642,7 @@ on Snowflake or BigQuery. Uses bulk loading APIs for efficiency.
   "sink_type": "bigquery",
   "sink": {
     "project_id": "my-project",
-    "dataset_id": "pgtrickle",
+    "dataset_id": "pgtide",
     "table_template": "{stream_table}",
     "write_mode": "streaming",
     "credentials_file": "/etc/gcp/sa.json"
@@ -659,10 +659,10 @@ on Snowflake or BigQuery. Uses bulk loading APIs for efficiency.
 ### C.1 Relay Dashboard
 
 **Problem:** A dashboard for the relay would help operators monitor pipeline
-health, throughput, and errors in real-time. The `pgtrickle-tui` crate that
+health, throughput, and errors in real-time. The `pg-tide-tui` crate that
 previously provided a stream-table dashboard has been removed from the project.
 
-**Design:** Add a `pgtrickle-relay dashboard` subcommand backed by ratatui.
+**Design:** Add a `pg-tide dashboard` subcommand backed by ratatui.
 
 **Dashboard panels:**
 - Pipeline overview (mode, source, sink, status)
@@ -674,7 +674,7 @@ previously provided a stream-table dashboard has been removed from the project.
 - Circuit breaker state
 - Active connections health
 
-**Implementation:** Use the `ratatui` crate directly in `pgtrickle-relay`.
+**Implementation:** Use the `ratatui` crate directly in `pg-tide`.
 Read metrics from the relay's Prometheus endpoint (scrape `/metrics`).
 
 **Effort:** 2d
