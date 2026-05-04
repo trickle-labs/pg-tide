@@ -1,12 +1,12 @@
-/// CLI argument definitions for pgtrickle-relay.
+/// CLI argument definitions for pg-tide.
 use clap::Parser;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "pgtrickle-relay",
+    name = "pg-tide",
     version,
-    about = "Bidirectional relay for pg_trickle stream tables",
-    long_about = "pgtrickle-relay bridges pg_trickle outboxes and inboxes with external \
+    about = "Bidirectional relay for pg_tide outboxes and inboxes",
+    long_about = "pg-tide bridges pg_tide outboxes and inboxes with external \
                   messaging systems (NATS, Kafka, HTTP webhooks, Redis, SQS, RabbitMQ, \
                   stdout/file). All pipeline configuration lives in PostgreSQL — the only \
                   required startup parameter is --postgres-url.\n\n\
@@ -16,18 +16,14 @@ use clap::Parser;
 pub struct Cli {
     /// PostgreSQL connection string (required).
     /// Example: postgres://user:pass@localhost:5432/mydb
-    #[arg(
-        long,
-        env = "PGTRICKLE_RELAY_POSTGRES_URL",
-        help = "PostgreSQL connection URL"
-    )]
+    #[arg(long, env = "PG_TIDE_POSTGRES_URL", help = "PostgreSQL connection URL")]
     pub postgres_url: Option<String>,
 
     /// Prometheus metrics + health endpoint address.
     #[arg(
         long,
         default_value = "0.0.0.0:9090",
-        env = "PGTRICKLE_RELAY_METRICS_ADDR",
+        env = "PG_TIDE_METRICS_ADDR",
         help = "Prometheus metrics + health endpoint (default: 0.0.0.0:9090)"
     )]
     pub metrics_addr: String,
@@ -36,7 +32,7 @@ pub struct Cli {
     #[arg(
         long,
         default_value = "text",
-        env = "PGTRICKLE_RELAY_LOG_FORMAT",
+        env = "PG_TIDE_LOG_FORMAT",
         help = "Log format: text or json (default: text)"
     )]
     pub log_format: String,
@@ -45,7 +41,7 @@ pub struct Cli {
     #[arg(
         long,
         default_value = "info",
-        env = "PGTRICKLE_RELAY_LOG_LEVEL",
+        env = "PG_TIDE_LOG_LEVEL",
         help = "Log level: error, warn, info, debug, trace (default: info)"
     )]
     pub log_level: String,
@@ -55,7 +51,7 @@ pub struct Cli {
     #[arg(
         long,
         default_value = "default",
-        env = "PGTRICKLE_RELAY_GROUP_ID",
+        env = "PG_TIDE_RELAY_GROUP_ID",
         help = "Relay group ID for advisory locks (default: default)"
     )]
     pub relay_group_id: String,
@@ -63,7 +59,7 @@ pub struct Cli {
     /// Optional TOML config file path.
     #[arg(
         long,
-        env = "PGTRICKLE_RELAY_CONFIG",
+        env = "PG_TIDE_CONFIG",
         help = "Path to TOML config file (optional)"
     )]
     pub config: Option<String>,

@@ -70,6 +70,16 @@ pub enum RelayError {
     #[error("channel closed")]
     ChannelClosed,
 
+    // Secret resolution errors (RELAY-SEC)
+    #[error("secret token not found: {token}")]
+    SecretNotFound { token: String },
+
+    #[error("cannot read secret from file '{path}': {reason}")]
+    SecretReadError { path: String, reason: String },
+
+    #[error("invalid secret variable name: '{0}'")]
+    InvalidSecretToken(String),
+
     // Generic
     #[error("{0}")]
     Other(String),

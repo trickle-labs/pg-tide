@@ -2,21 +2,76 @@
 
 What's new in pg_tide — written for everyone, not just developers.
 
-For future plans and upcoming features, see [plans/bootstrapping.md](plans/bootstrapping.md).
+For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 
 ## Table of Contents
 
 <!-- TOC start -->
-- [0.2.0 — Post-0.1.0 Hardening & Observability](#020--2026-05-04--post-010-hardening--observability)
+- [0.3.0 — Relay Run Loop, Secret Interpolation & pg-tide Branding](#030--2026-05-04--relay-run-loop-secret-interpolation--pg-tide-branding)
+- [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
 
 ---
 
-## [0.2.0] — 2026-05-04 — Post-0.1.0 Hardening & Observability
+## [0.3.0] — 2026-05-04 — Relay Run Loop, Secret Interpolation & pg-tide Branding
 
-Post-launch hardening, observability improvements, Docker enhancements,
-CI fixes, and pgrx compatibility fixes.
+The relay binary is now fully operational. Previously it would start, load
+pipeline configuration from PostgreSQL, and then do nothing. This release
+implements the complete coordinator run loop and pipeline worker dispatch.
+
+### Relay — Coordinator Run Loop (RELAY-2)
+
+- **Multi-pipeline coordinator**: The relay now spawns a worker task for every
+  enabled pipeline it wins a PostgreSQL advisory lock for. Multiple relay pods
+  can run simultaneously; each pod automatically claims and runs the pipelines
+  not already owned by another pod.
+- **Hot-reload on NOTIFY**: A dedicated LISTEN connection watches for
+  `tide_relay_config` notifications. Any `INSERT`, `UPDATE`, or `DELETE` on
+  `tide.relay_outbox_config` / `tide.relay_inbox_config` triggers an
+  immediate pipeline reconciliation without restarting the process.
+- **Periodic re-discovery**: Every `discovery_interval_secs` seconds the
+  coordinator re-queries the catalog to pick up pipelines that may have
+  appeared while another pod held the lock, or to restart stopped workers.
+- **Graceful shutdown**: SIGTERM / Ctrl-C signals the coordinator to stop
+  accepting new work and waits up to `drain_timeout` seconds for all active
+  pipeline workers to finish their current batch before exiting.
+
+### Relay — Worker Pipeline Loop
+
+- **Poll → publish → acknowledge loop**: Each pipeline worker opens its own
+  PostgreSQL connection, creates the configured source and sink backends from
+  the pipeline's `config` JSONB, and runs the pull–push–ack cycle. An empty
+  poll sleeps for `poll_interval_ms` (default 1 000 ms) before retrying.
+- **Per-pipeline error isolation**: A publish or poll error logs a warning and
+  retries after `poll_interval_ms`. One broken pipeline never affects others.
+- **Source and sink factories**: All eight forward sinks (NATS JetStream,
+  Apache Kafka, HTTP webhook, Redis Streams, Amazon SQS, RabbitMQ, PostgreSQL
+  inbox, stdout/file) and all eight reverse sources are wired to the factory
+  based on `source_type` / `sink_type` in the pipeline config JSONB.
+
+### Relay — Secret Interpolation (RELAY-SEC)
+
+- **`${env:VAR}` tokens**: String values inside a pipeline's `config` JSONB
+  are now scanned for `${env:VAR_NAME}` tokens. At startup and on every
+  hot-reload the token is replaced with the value of the named environment
+  variable. Unknown variables return an error that disables only the affected
+  pipeline — all others continue running.
+- **`${file:/path}` tokens**: A token of the form `${file:/run/secrets/apikey}`
+  is replaced with the trimmed contents of the file at that path. Useful for
+  Docker/Kubernetes secret mounts.
+- **Validation**: Variable names are validated (ASCII alphanumeric + `_`
+  only) to prevent injection.
+- **No secret leakage**: Resolved values are never written to logs or
+  Prometheus metric labels.
+
+### Relay — Branding (pg-trickle → pg-tide)
+
+- Binary name, `--help` text, and all environment variable prefixes updated
+  from `PGTRICKLE_RELAY_*` to `PG_TIDE_*` (e.g. `PG_TIDE_POSTGRES_URL`,
+  `PG_TIDE_METRICS_ADDR`, `PG_TIDE_LOG_LEVEL`, `PG_TIDE_RELAY_GROUP_ID`,
+  `PG_TIDE_CONFIG`, `PG_TIDE_DRAIN_TIMEOUT`).
+
 
 ### Observability
 
