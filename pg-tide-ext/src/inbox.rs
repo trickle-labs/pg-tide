@@ -288,19 +288,6 @@ fn replay_inbox_messages_impl(name: &str, event_ids: Vec<String>) -> Result<i64,
 mod tests {
     use pgrx::prelude::*;
 
-    // Helper: create a fresh outbox so inbox tests that need one have it.
-    fn ensure_outbox(name: &str) {
-        let exists: bool = Spi::get_one_with_args::<bool>(
-            "SELECT EXISTS(SELECT 1 FROM tide.tide_outbox_config WHERE outbox_name = $1)",
-            &[name.into()],
-        )
-        .unwrap()
-        .unwrap_or(false);
-        if !exists {
-            crate::outbox::outbox_create(name, 24, 10_000);
-        }
-    }
-
     // ── inbox_create / inbox_drop ──────────────────────────────────────────
 
     #[pg_test]
@@ -393,10 +380,9 @@ mod tests {
     fn test_inbox_status_returns_json() {
         crate::inbox::inbox_create("stat-inbox", "tide", 3, 72, 0);
         let status = crate::inbox::inbox_status(Some("stat-inbox"));
-        let arr = status.0.as_array().expect("status must be JSON array");
-        assert!(!arr.is_empty(), "status should include the created inbox");
-        let first = &arr[0];
-        assert_eq!(first["inbox_name"], "stat-inbox");
+        let v = &status.0;
+        assert_eq!(v["inbox_name"], "stat-inbox");
+        assert_eq!(v["pending"], 0);
     }
 
     // ── idempotent delivery ───────────────────────────────────────────────

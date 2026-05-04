@@ -15,6 +15,8 @@ const SCHEMA_SQL: &str = include_str!("../../../sql/pg_tide--0.1.0.sql");
 /// A test database with the pg_tide schema pre-installed.
 pub struct PgTideTestDb {
     pub client: Client,
+    /// Mapped host port for the PostgreSQL container (use this for second connections).
+    pub host_port: u16,
     _container: ContainerAsync<Postgres>,
 }
 
@@ -51,6 +53,7 @@ impl PgTideTestDb {
 
         Self {
             client,
+            host_port,
             _container: container,
         }
     }
@@ -96,12 +99,11 @@ impl PgTideTestDb {
     /// Publish messages to an outbox.
     pub async fn publish_messages(&self, outbox: &str, payloads: &[serde_json::Value]) {
         for payload in payloads {
-            let payload_str = serde_json::to_string(payload).unwrap();
             self.client
                 .execute(
                     "INSERT INTO tide.tide_outbox_messages (outbox_name, payload, headers)
-                     VALUES ($1, $2::jsonb, '{}'::jsonb)",
-                    &[&outbox, &payload_str],
+                     VALUES ($1, $2, '{}'::jsonb)",
+                    &[&outbox, payload],
                 )
                 .await
                 .expect("failed to publish message");
@@ -144,7 +146,7 @@ impl PgTideTestDb {
                 processed_at   TIMESTAMPTZ,
                 retry_count    INT         NOT NULL DEFAULT 0,
                 last_error     TEXT,
-                CONSTRAINT uq_{name}_event_id UNIQUE (event_id)
+                CONSTRAINT "uq_{name}_event_id" UNIQUE (event_id)
             )"#
         );
         self.client
@@ -202,15 +204,14 @@ impl PgTideTestDb {
 
     /// Deliver a message to an inbox (simulates relay delivery).
     pub async fn deliver_to_inbox(&self, inbox: &str, event_id: &str, payload: &serde_json::Value) {
-        let payload_str = serde_json::to_string(payload).unwrap();
         self.client
             .execute(
                 &format!(
                     r#"INSERT INTO tide."{inbox}_inbox" (event_id, source, payload, headers)
-                       VALUES ($1, 'test', $2::jsonb, '{{}}'::jsonb)
+                       VALUES ($1, 'test', $2, '{{}}'::jsonb)
                        ON CONFLICT (event_id) DO NOTHING"#
                 ),
-                &[&event_id, &payload_str],
+                &[&event_id, payload],
             )
             .await
             .expect("failed to deliver to inbox");
