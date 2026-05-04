@@ -226,8 +226,7 @@ fn generate_sas_token(
     let mut mac = Hmac::<Sha256>::new_from_slice(&key_bytes)
         .map_err(|e| RelayError::config(format!("HMAC key error: {e}")))?;
     mac.update(string_to_sign.as_bytes());
-    let signature =
-        base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    let signature = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
 
     let sig_encoded = url_encode(&signature);
 

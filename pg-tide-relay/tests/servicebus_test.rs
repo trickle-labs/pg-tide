@@ -130,5 +130,8 @@ async fn test_servicebus_connection_string_and_sas_token() {
     // The connection string is a representative example.
     // The SAS token generation logic is exercised by the sink when
     // it processes the pipeline (not tested here without a live endpoint).
-    assert!(!cs.starts_with("invalid"), "connection string must start with Endpoint=");
+    assert!(
+        !cs.starts_with("invalid"),
+        "connection string must start with Endpoint="
+    );
 }
