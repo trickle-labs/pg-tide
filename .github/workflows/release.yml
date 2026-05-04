@@ -127,8 +127,6 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     needs: release
-    # Only publish when a CARGO_REGISTRY_TOKEN secret is configured.
-    if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -136,6 +134,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Publish pg-tide-relay
+        # Only publish when a CARGO_REGISTRY_TOKEN secret is configured.
+        if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
         run: cargo publish --package pg-tide-relay --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
