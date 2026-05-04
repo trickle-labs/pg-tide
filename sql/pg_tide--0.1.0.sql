@@ -6,6 +6,8 @@
 -- Schema: tide
 -- All pg_tide objects live in the 'tide' schema.
 
+CREATE SCHEMA IF NOT EXISTS tide;
+
 -- ── Outbox Catalog ─────────────────────────────────────────────────────────
 
 -- Named outbox configurations.
@@ -339,43 +341,6 @@ DROP TRIGGER IF EXISTS relay_inbox_audit ON tide.relay_inbox_config;
 CREATE TRIGGER relay_inbox_audit
     AFTER INSERT OR UPDATE OR DELETE ON tide.relay_inbox_config
     FOR EACH ROW EXECUTE FUNCTION tide.relay_config_audit();
-
--- ── Retention: outbox_truncate_delivered ────────────────────────────────--
-
---- Delete all consumed outbox messages older than retention_hours.
----
---- Call this manually or via pg_cron / background worker to keep the outbox
---- table from growing unboundedly.
----
----   SELECT tide.outbox_truncate_delivered();                 -- all outboxes
----   SELECT tide.outbox_truncate_delivered('orders');         -- named outbox
-CREATE OR REPLACE FUNCTION tide.outbox_truncate_delivered(
-    p_outbox_name TEXT DEFAULT NULL
-)
-RETURNS BIGINT
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_deleted BIGINT;
-BEGIN
-    WITH deleted AS (
-        DELETE FROM tide.tide_outbox_messages m
-        USING tide.tide_outbox_config c
-        WHERE m.outbox_name = c.outbox_name
-          AND m.consumed_at IS NOT NULL
-          AND m.created_at  < now() - make_interval(hours => c.retention_hours)
-          AND (p_outbox_name IS NULL OR m.outbox_name = p_outbox_name)
-        RETURNING m.id
-    )
-    SELECT COUNT(*) INTO v_deleted FROM deleted;
-
-    RETURN v_deleted;
-END;
-$$;
-
-COMMENT ON FUNCTION tide.outbox_truncate_delivered(TEXT) IS
-    'TIDE-4 (v0.1.0): Delete consumed outbox messages past their retention window. '
-    'Pass NULL to clean all outboxes, or a specific outbox name.';
 
 -- ── Retention: inbox cleanup ─────────────────────────────────────────────--
 

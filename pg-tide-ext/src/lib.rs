@@ -16,6 +16,17 @@ mod relay;
 
 pgrx::pg_module_magic!();
 
+// Install the full catalog schema (tables, indexes, views, triggers, etc.)
+// when `CREATE EXTENSION pg_tide` runs. The plpgsql utility functions
+// (grant_publish, inbox_truncate_processed, etc.) also come from this file.
+// outbox_truncate_delivered is implemented as a #[pg_extern] above and is
+// therefore NOT in the SQL file.
+pgrx::extension_sql!(
+    include_str!("../../sql/pg_tide--0.1.0.sql"),
+    name = "pg_tide_tables",
+    bootstrap,
+);
+
 /// Extension initialization — runs once when the extension is loaded.
 #[pg_guard]
 extern "C-unwind" fn _PG_init() {
