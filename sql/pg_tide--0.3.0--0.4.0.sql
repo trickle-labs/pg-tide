@@ -1,0 +1,12 @@
+-- pg_tide 0.3.0 → 0.4.0 upgrade script
+--
+-- To upgrade: ALTER EXTENSION pg_tide UPDATE TO '0.4.0';
+--
+-- 0.4.0 is a relay-completion release:
+--   - Forward Tier 2 sinks: Redis Streams, SQS, RabbitMQ, PostgreSQL inbox
+--   - Full reverse mode: all source backends → pg_tide inbox
+--   - Subject/topic routing templates
+--   - All integration tests enabled and passing
+--
+-- No schema changes — the relay schema added in 0.1.0 is sufficient.
+-- The compiled relay binary is updated; no DDL migrations are required.

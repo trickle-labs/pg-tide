@@ -16,7 +16,6 @@ use testcontainers_modules::redis::Redis;
 /// Verifies that messages can be forwarded from an outbox to a Redis stream
 /// and that stream entries are appended in order.
 #[tokio::test]
-#[ignore = "requires Redis container — run with just test-integration"]
 async fn test_redis_forward_sink_appends_to_stream() {
     use testcontainers::runners::AsyncRunner;
 
@@ -71,18 +70,7 @@ async fn test_redis_forward_sink_appends_to_stream() {
 /// Verifies that a Redis stream source delivers messages to the inbox without
 /// creating duplicate entries when the same message ID is processed twice.
 #[tokio::test]
-#[ignore = "requires Redis container — run with just test-integration"]
 async fn test_redis_reverse_source_deduplicates() {
-    use testcontainers::runners::AsyncRunner;
-
-    let redis = Redis::default()
-        .start()
-        .await
-        .expect("failed to start Redis container");
-
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    let _redis_url = format!("redis://127.0.0.1:{redis_port}");
-
     let db = PgTideTestDb::start().await;
     db.setup_inbox("redis-inbox").await;
 

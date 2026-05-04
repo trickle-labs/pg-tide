@@ -1,0 +1,6 @@
+-- pg_tide 0.2.0 → 0.3.0 upgrade script
+--
+-- To upgrade: ALTER EXTENSION pg_tide UPDATE TO '0.3.0';
+--
+-- 0.3.0 is a relay run-loop release: no schema changes.
+-- The compiled relay binary is updated; no DDL migrations are required.
