@@ -22,7 +22,7 @@ struct MockWebhook {
 impl MockWebhook {
     /// Start the mock server and return the handle.
     async fn start() -> Self {
-        use axum::{Router, extract::State, http::StatusCode, routing::post};
+        use axum::{extract::State, http::StatusCode, routing::post, Router};
 
         let bodies: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
         let state = Arc::clone(&bodies);

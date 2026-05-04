@@ -16,7 +16,7 @@ pub struct WebhookSource {
 #[cfg(feature = "webhook")]
 impl WebhookSource {
     pub async fn bind(addr: &str, event_type: impl Into<String>) -> Result<Self, RelayError> {
-        use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+        use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 
         let (tx, rx) = mpsc::channel::<RelayMessage>(1024);
         let tx = Arc::new(tx);

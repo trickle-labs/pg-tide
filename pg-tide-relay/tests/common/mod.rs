@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use std::time::Duration;
-use testcontainers::{ContainerAsync, runners::AsyncRunner};
+use testcontainers::{runners::AsyncRunner, ContainerAsync};
 use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::{Client, NoTls};
 

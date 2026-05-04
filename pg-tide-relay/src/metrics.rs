@@ -1,7 +1,7 @@
 /// Prometheus metrics + health endpoint (RELAY-9).
 use prometheus::{
-    HistogramVec, IntCounterVec, IntGaugeVec, Registry, TextEncoder, register_histogram_vec,
-    register_int_counter_vec, register_int_gauge_vec,
+    register_histogram_vec, register_int_counter_vec, register_int_gauge_vec, HistogramVec,
+    IntCounterVec, IntGaugeVec, Registry, TextEncoder,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -126,7 +126,7 @@ pub async fn start_metrics_server(
     metrics: Arc<RelayMetrics>,
     health: Arc<RwLock<HealthState>>,
 ) -> Result<(), crate::error::RelayError> {
-    use axum::{Router, extract::State, http::StatusCode, routing::get};
+    use axum::{extract::State, http::StatusCode, routing::get, Router};
 
     #[derive(Clone)]
     struct AppState {

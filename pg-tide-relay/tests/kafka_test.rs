@@ -25,7 +25,7 @@ use common::PgTideTestDb;
 #[tokio::test]
 #[ignore = "requires Kafka broker — run with just test-integration"]
 async fn test_kafka_forward_sink_delivers_and_commits_offset() {
-    use testcontainers::{ImageExt, runners::AsyncRunner};
+    use testcontainers::{runners::AsyncRunner, ImageExt};
 
     // Confluent Platform Kafka image with KRaft mode (no ZooKeeper).
     let kafka = testcontainers::GenericImage::new("confluentinc/cp-kafka", "7.6.1")

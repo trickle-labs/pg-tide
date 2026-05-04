@@ -24,7 +24,7 @@ const LOCALSTACK_PORT: u16 = 4566;
 #[tokio::test]
 #[ignore = "requires LocalStack — run with just test-integration"]
 async fn test_sqs_forward_sink_sends_messages() {
-    use testcontainers::{ImageExt, runners::AsyncRunner};
+    use testcontainers::{runners::AsyncRunner, ImageExt};
 
     let ls = testcontainers::GenericImage::new("localstack/localstack", "latest")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(LOCALSTACK_PORT))
