@@ -24,7 +24,7 @@
 
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
-| v0.5.0 | Cloud provider parity: Google Cloud Pub/Sub, Amazon Kinesis Data Streams, Azure Service Bus, Elasticsearch / OpenSearch | 🔜 Planned | Large | [plans/relay-cli-phase2.md](plans/relay-cli-phase2.md) |
+| v0.5.0 | Cloud provider parity: Google Cloud Pub/Sub, Amazon Kinesis Data Streams, Azure Service Bus, Elasticsearch / OpenSearch | ✅ Released | Large | [CHANGELOG.md](CHANGELOG.md) |
 | v0.6.0 | IoT and data lake: MQTT v5, Azure Event Hubs, Object Storage (S3 / GCS / Azure Blob with JSONL + Parquet) | 🔜 Planned | Large | [plans/relay-cli-phase2.md](plans/relay-cli-phase2.md) |
 
 ### Operational Excellence (v0.7.x)
