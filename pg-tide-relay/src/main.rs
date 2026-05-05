@@ -3,12 +3,19 @@
 // Dead code warnings are suppressed because many types are feature-gated or
 // used only at runtime via trait objects rather than direct construction.
 #![allow(dead_code, unused_imports)]
+mod circuit_breaker;
 mod cli;
 mod config;
 mod coordinator;
+mod dlq;
 mod envelope;
 mod error;
+mod jmespath_transform;
 mod metrics;
+mod otel;
+mod rate_limiter;
+mod routing;
+mod schema_registry;
 mod sink;
 mod source;
 mod transforms;
@@ -82,6 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // poll_message drives the connection I/O and surfaces Notification events;
     // spawning the connection as a background task would silently drop them.
     let (notif_tx, notif_rx) = mpsc::channel::<()>(32);
+    // Clone before the async move so the original `notif_tx` remains available
+    // for the SIGHUP handler registered further below.
+    let notif_tx_pg = notif_tx.clone();
     let notify_url = cfg.postgres_url.clone();
     tokio::spawn(async move {
         let pair = tokio_postgres::connect(&notify_url, tokio_postgres::NoTls).await;
@@ -104,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(msg) = stream.next().await {
             match msg {
                 Ok(tokio_postgres::AsyncMessage::Notification(_)) => {
-                    if notif_tx.send(()).await.is_err() {
+                    if notif_tx_pg.send(()).await.is_err() {
                         break; // coordinator stopped.
                     }
                 }
@@ -138,9 +148,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Shutdown watch channel: signal handler sends true when SIGTERM/Ctrl-C arrives.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    // SIGHUP channel: sends a reload notification to the coordinator.
+    let notif_tx_sighup = notif_tx.clone();
     tokio::spawn(async move {
         wait_for_shutdown().await;
         let _ = shutdown_tx.send(true);
+    });
+
+    // SIGHUP handler: force a full config reload from the database.
+    #[cfg(unix)]
+    tokio::spawn(async move {
+        let mut sighup = match signal::unix::signal(signal::unix::SignalKind::hangup()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("failed to install SIGHUP handler: {e}");
+                return;
+            }
+        };
+        loop {
+            sighup.recv().await;
+            tracing::info!("received SIGHUP — forcing config reload");
+            let _ = notif_tx_sighup.send(()).await;
+        }
     });
 
     // Run the coordinator discovery loop (blocks until shutdown).
