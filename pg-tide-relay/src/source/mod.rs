@@ -31,6 +31,13 @@ pub mod kinesis;
 #[cfg(feature = "servicebus")]
 pub mod servicebus;
 
+// v0.6.0: IoT and data lake backends
+#[cfg(feature = "mqtt")]
+pub mod mqtt;
+
+#[cfg(feature = "eventhubs")]
+pub mod eventhubs;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;

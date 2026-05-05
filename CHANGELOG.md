@@ -7,12 +7,68 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.6.0 — MQTT v5, Azure Event Hubs & Object Storage (JSONL + Parquet)](#060--2026-05-05--mqtt-v5-azure-event-hubs--object-storage-jsonl--parquet)
 - [0.5.0 — Cloud Provider Parity: Pub/Sub, Kinesis, Azure Service Bus & Elasticsearch](#050--2026-05-04--cloud-provider-parity-pubsub-kinesis-azure-service-bus--elasticsearch)
 - [0.4.0 — Relay Completion: Tier 2 Sinks, Full Reverse Mode & Integration Tests](#040--2026-05-04--relay-completion-tier-2-sinks-full-reverse-mode--integration-tests)
 - [0.3.0 — Relay Run Loop, Secret Interpolation & pg-tide Branding](#030--2026-05-04--relay-run-loop-secret-interpolation--pg-tide-branding)
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.6.0] — 2026-05-05 — MQTT v5, Azure Event Hubs & Object Storage (JSONL + Parquet)
+
+v0.6.0 adds three major backend families, completing the relay's IoT, Azure,
+and data-lake integration story. Every new backend ships with both forward-sink
+and reverse-source support where applicable, plus full integration tests.
+
+### MQTT v5 (RELAY-P3-1)
+
+- **Sink** (`sink_type: "mqtt"`): Publishes outbox messages to an MQTT broker
+  topic. Topic is rendered from `topic_template` supporting `{stream_table}`,
+  `{op}`, and `{outbox_id}` variables. QoS level is configurable
+  (`at-most-once`, `at-least-once`, `exactly-once`). Uses `rumqttc` 0.24 with
+  a background event-loop task for keep-alive and ack processing.
+- **Source** (`source_type: "mqtt"`): Subscribes to a topic filter and writes
+  incoming messages to the configured pg-tide inbox. Dedup key is derived from
+  the MQTT topic and a message counter; acks are handled internally by the
+  broker protocol.
+
+### Azure Event Hubs (RELAY-P3-2)
+
+- **Sink** (`sink_type: "eventhubs"`): Sends outbox messages to an Azure Event
+  Hubs namespace via the Event Hubs REST API with SAS token authentication.
+  Partition key is rendered from `partition_key_template`. Connection string
+  format: `Endpoint=sb://<ns>.servicebus.windows.net/;SharedAccessKeyName=...;SharedAccessKey=...`.
+- **Source** (`source_type: "eventhubs"`): Reads events from all partitions
+  using ReceiveAndDelete semantics via the REST API. Partitions are polled in
+  round-robin order. Dedup key encodes the namespace, event hub, consumer
+  group, partition id, and sequence number for exact-once delivery into the
+  inbox.
+
+### Object Storage — S3, GCS, Azure Blob (RELAY-P3-3)
+
+- **Sink** (`sink_type: "object-storage"`): Buffers outbox messages and flushes
+  them to cloud object storage as files in JSONL or Apache Parquet format.
+  - **Providers**: Amazon S3, Google Cloud Storage, Azure Blob Storage, and
+    local filesystem (useful for testing).
+  - **JSONL format**: One JSON object per line containing `dedup_key`,
+    `subject`, `op`, `outbox_id`, and `payload`.
+  - **Parquet format**: Typed columnar file with the same five columns.
+    `outbox_id` is INT64 (nullable), all others are BYTE_ARRAY strings.
+  - **Flush triggers**: Configurable via `buffer_max_rows`, `buffer_max_bytes`,
+    and `buffer_max_seconds`. Rows are held in memory until a threshold is hit.
+  - **Date partitioning**: With `partition_by_date: true`, objects are placed
+    under `{prefix}/year=YYYY/month=MM/day=DD/` — compatible with Hive
+    metastore, AWS Glue, BigQuery external tables, and similar.
+  - **Path pattern**: `{prefix}/pgtide_{uuid}.{jsonl|parquet}` (flat) or
+    `{prefix}/year=YYYY/month=MM/day=DD/pgtide_{uuid}.{ext}` (partitioned).
+
+### No Schema Changes
+
+v0.6.0 adds no DDL changes. All new backends are configured via the existing
+`tide.relay_outbox_config` and `tide.relay_inbox_config` catalog tables.
 
 ---
 

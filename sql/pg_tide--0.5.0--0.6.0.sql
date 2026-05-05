@@ -1,0 +1,5 @@
+-- pg_tide 0.5.0 → 0.6.0
+-- No schema changes in this release.
+-- v0.6.0 adds MQTT v5, Azure Event Hubs, and Object Storage backends
+-- to the relay binary (pg-tide). All configuration is handled via the
+-- existing tide.relay_outbox_config and tide.relay_inbox_config tables.
