@@ -37,7 +37,7 @@
 
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
-| v0.8.0 | Notification sinks: Slack, Discord, PagerDuty | 🔜 Planned | Medium | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
+| v0.8.0 | Notification sinks (Slack, Discord, PagerDuty), Apache Arrow Flight / gRPC | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
 | v0.9.0 | Connector ecosystems (foundation): Singer protocol adapter (Meltano Hub — ~500 taps/targets), Airbyte protocol adapter (~400 connectors), Fivetran HVR endpoint | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
 | v0.10.0 | Analytics sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Apache Iceberg, Delta Lake, DuckLake | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
 
@@ -46,5 +46,5 @@
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
 | v1.0.0 | Production GA: encryption envelope with KMS integration | 🔜 Planned | Small | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
-| v1.1.0 | Extended connector ecosystems: dlt integration (~100 sources), Redpanda Connect / Benthos (~200 inputs/outputs), Apache Arrow Flight / gRPC, AMQP 1.0 (Azure Service Bus, Qpid), webhook flavors (n8n / Zapier) | 🔜 Future | Large | — |
+| v1.1.0 | Extended connector ecosystems: dlt integration (~100 sources), Redpanda Connect / Benthos (~200 inputs/outputs), AMQP 1.0 (Azure Service Bus, Qpid), webhook flavors (n8n / Zapier) | 🔜 Future | Large | — |
 | v1.2.0 | Plugin extensibility: WASM plugin system for custom backends | 🔜 Future | Large | — |
