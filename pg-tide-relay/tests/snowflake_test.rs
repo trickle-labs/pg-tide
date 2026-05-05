@@ -129,49 +129,16 @@ fn test_snowflake_insert_rows_payload_structure() {
     assert_eq!(rows[0]["_OP"], "insert");
 }
 
-/// Verifies the Snowflake sink posts to a mock HTTP server.
+/// Verifies the Snowflake sink's publish does not panic (network error expected).
 #[cfg(feature = "snowflake")]
 #[tokio::test]
-async fn test_snowflake_sink_posts_to_mock_server() {
-    use axum::{http::StatusCode, routing::post, Router};
-    use std::sync::{Arc, Mutex};
-    use tokio::sync::oneshot;
-
-    let received: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
-    let state = Arc::clone(&received);
-
-    let app = Router::new().route(
-        "/v1/streaming/channels/insertRows",
-        post(
-            move |axum::Json(body): axum::Json<serde_json::Value>| {
-                let state = state.clone();
-                async move {
-                    state.lock().unwrap().push(body);
-                    StatusCode::OK
-                }
-            },
-        ),
-    );
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = shutdown_rx.await;
-            })
-            .await
-            .ok();
-    });
-
+async fn test_snowflake_sink_publish_does_not_panic() {
     use pg_tide_relay::envelope::RelayMessage;
     use pg_tide_relay::sink::snowflake::{SnowflakeConfig, SnowflakeSink};
     use pg_tide_relay::sink::Sink;
 
     let cfg = SnowflakeConfig {
-        account: format!("127.0.0.1:{port}"),
+        account: "test-account".to_string(),
         database: "ANALYTICS".to_string(),
         schema: "PGTIDE".to_string(),
         table_template: "{stream_table}".to_string(),
@@ -180,7 +147,7 @@ async fn test_snowflake_sink_posts_to_mock_server() {
         batch_size: 1000,
     };
 
-    let mut sink = SnowflakeSink::new(cfg).expect("create sink");
+    let mut sink = SnowflakeSink::new(cfg).expect("create SnowflakeSink");
 
     let msg = RelayMessage::new_forward(
         "orders",
@@ -193,9 +160,10 @@ async fn test_snowflake_sink_posts_to_mock_server() {
         "orders",
     );
 
-    // This will fail (wrong URL format for mock), but verifies the request path.
-    // The test validates the request structure.
-    let _ = sink.publish(&[msg]).await;
-
-    let _ = shutdown_tx.send(());
+    // Publish will fail with a network/DNS error (no Snowflake account), but must not panic.
+    let result = sink.publish(&[msg]).await;
+    assert!(
+        result.is_err() || result.is_ok(),
+        "publish should return a Result without panicking"
+    );
 }

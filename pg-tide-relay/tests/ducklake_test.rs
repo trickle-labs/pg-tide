@@ -154,7 +154,7 @@ async fn test_ducklake_multiple_snapshots_accumulate() {
     let row = db
         .client
         .query_one(
-            "SELECT COUNT(*) AS cnt, SUM(num_records) AS total
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(num_records), 0)::BIGINT AS total
              FROM tide.ducklake_snapshots
              WHERE table_name = 'events'",
             &[],

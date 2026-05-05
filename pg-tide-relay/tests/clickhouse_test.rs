@@ -159,27 +159,26 @@ async fn test_clickhouse_sink_posts_to_mock_server() {
     use tokio::sync::oneshot;
 
     let received: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
-    let state = Arc::clone(&received);
 
-    let app = Router::new()
-        .route(
+    let app = {
+        let state = Arc::clone(&received);
+        Router::new().route(
             "/",
             post(
-                |Query(params): Query<HashMap<String, String>>,
-                 body: axum::body::Bytes| async move {
-                    if let Some(arc) = {
-                        let _ = &params;
-                        Some(state.clone())
-                    } {
-                        arc.lock().unwrap().push((
+                move |Query(params): Query<HashMap<String, String>>,
+                      body: axum::body::Bytes| {
+                    let state = Arc::clone(&state);
+                    async move {
+                        state.lock().unwrap().push((
                             params.get("query").cloned().unwrap_or_default(),
                             String::from_utf8_lossy(&body).to_string(),
                         ));
+                        StatusCode::OK
                     }
-                    StatusCode::OK
                 },
             ),
-        );
+        )
+    };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
