@@ -20,3 +20,4 @@ pub mod schema_registry;
 pub mod sink;
 pub mod source;
 pub mod transforms;
+pub mod wire_format;
