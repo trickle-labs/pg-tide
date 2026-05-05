@@ -94,8 +94,14 @@ fn test_delta_config_log_entry_path_versions() {
     assert!(path_v1.ends_with(".json"), "v1 commit should be JSON");
     assert!(path_v2.ends_with(".json"), "v2 commit should be JSON");
     // Versions are zero-padded to 20 digits.
-    assert!(path_v1.contains("00000000000000000001"), "v1 should be padded");
-    assert!(path_v2.contains("00000000000000000002"), "v2 should be padded");
+    assert!(
+        path_v1.contains("00000000000000000001"),
+        "v1 should be padded"
+    );
+    assert!(
+        path_v2.contains("00000000000000000002"),
+        "v2 should be padded"
+    );
 }
 
 // ── Parquet encoding ──────────────────────────────────────────────────────────
@@ -117,8 +123,7 @@ fn test_delta_parquet_encoding_magic_bytes() {
         "orders",
     );
 
-    let bytes = DeltaSink::build_parquet_bytes(&[&msg], false)
-        .expect("build parquet bytes");
+    let bytes = DeltaSink::build_parquet_bytes(&[&msg], false).expect("build parquet bytes");
 
     assert!(!bytes.is_empty(), "Parquet output must not be empty");
     assert_eq!(&bytes[..4], b"PAR1", "should start with PAR1 magic");
@@ -130,7 +135,7 @@ fn test_delta_parquet_cdf_encoding() {
     use pg_tide_relay::envelope::RelayMessage;
     use pg_tide_relay::sink::delta::DeltaSink;
 
-    let msgs = vec![
+    let msgs = [
         RelayMessage::new_forward(
             "orders",
             1,
@@ -164,8 +169,7 @@ fn test_delta_parquet_cdf_encoding() {
     ];
 
     let refs: Vec<&RelayMessage> = msgs.iter().collect();
-    let bytes = DeltaSink::build_parquet_bytes(&refs, true)
-        .expect("build parquet bytes with CDF");
+    let bytes = DeltaSink::build_parquet_bytes(&refs, true).expect("build parquet bytes with CDF");
 
     assert!(!bytes.is_empty(), "CDF Parquet output must not be empty");
     assert_eq!(&bytes[..4], b"PAR1", "should start with PAR1 magic");
@@ -205,7 +209,11 @@ fn test_delta_protocol_commit_fields() {
     };
 
     let commits = cfg.build_init_commit();
-    assert_eq!(commits.len(), 2, "init commit must have 2 JSON lines (protocol + metaData)");
+    assert_eq!(
+        commits.len(),
+        2,
+        "init commit must have 2 JSON lines (protocol + metaData)"
+    );
 
     let protocol = &commits[0];
     let metadata = &commits[1];
@@ -218,8 +226,14 @@ fn test_delta_protocol_commit_fields() {
     // Metadata must have schema and configuration.
     let meta = &metadata["metaData"];
     assert!(meta.get("id").is_some(), "metadata must have ID");
-    assert!(meta.get("schemaString").is_some(), "metadata must have schemaString");
-    assert!(meta.get("configuration").is_some(), "metadata must have configuration");
+    assert!(
+        meta.get("schemaString").is_some(),
+        "metadata must have schemaString"
+    );
+    assert!(
+        meta.get("configuration").is_some(),
+        "metadata must have configuration"
+    );
 }
 
 #[test]

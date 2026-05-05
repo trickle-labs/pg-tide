@@ -91,7 +91,10 @@ fn test_snowflake_config_endpoint_url() {
         url.contains("myorg-myaccount.snowflakecomputing.com"),
         "endpoint should include account identifier"
     );
-    assert!(url.contains("insertRows"), "endpoint should target insertRows");
+    assert!(
+        url.contains("insertRows"),
+        "endpoint should target insertRows"
+    );
 }
 
 #[test]
@@ -122,10 +125,16 @@ fn test_snowflake_insert_rows_payload_structure() {
 
     let payload = cfg.build_insert_rows_payload("ANALYTICS.PGTIDE.orders", &[&msg]);
     assert!(payload.get("requestId").is_some(), "should have requestId");
-    assert!(payload.get("channelName").is_some(), "should have channelName");
+    assert!(
+        payload.get("channelName").is_some(),
+        "should have channelName"
+    );
     let rows = payload["rows"].as_array().expect("rows must be array");
     assert_eq!(rows.len(), 1);
-    assert!(rows[0].get("_DEDUP_KEY").is_some(), "row must have _DEDUP_KEY");
+    assert!(
+        rows[0].get("_DEDUP_KEY").is_some(),
+        "row must have _DEDUP_KEY"
+    );
     assert_eq!(rows[0]["_OP"], "insert");
 }
 

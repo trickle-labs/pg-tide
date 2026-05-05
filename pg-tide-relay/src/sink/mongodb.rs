@@ -60,11 +60,20 @@ impl MongoDbConfig {
         };
 
         let obj = doc.as_object_mut().ok_or("payload is not an object")?;
-        obj.insert("_dedup_key".to_string(), serde_json::Value::String(msg.dedup_key.clone()));
-        obj.insert("_subject".to_string(), serde_json::Value::String(msg.subject.clone()));
+        obj.insert(
+            "_dedup_key".to_string(),
+            serde_json::Value::String(msg.dedup_key.clone()),
+        );
+        obj.insert(
+            "_subject".to_string(),
+            serde_json::Value::String(msg.subject.clone()),
+        );
         obj.insert("_op".to_string(), serde_json::Value::String(msg.op.clone()));
         if let Some(id) = msg.outbox_id {
-            obj.insert("_outbox_id".to_string(), serde_json::Value::Number(id.into()));
+            obj.insert(
+                "_outbox_id".to_string(),
+                serde_json::Value::Number(id.into()),
+            );
         }
 
         Ok(doc)
@@ -86,8 +95,11 @@ impl MongoDbSink {
 
         // Apply write concern.
         if config.write_concern == "majority" {
-            client_options.write_concern =
-                Some(WriteConcern::builder().w(mongodb::options::Acknowledgment::Majority).build());
+            client_options.write_concern = Some(
+                WriteConcern::builder()
+                    .w(mongodb::options::Acknowledgment::Majority)
+                    .build(),
+            );
         }
 
         let client =
@@ -122,9 +134,13 @@ impl super::Sink for MongoDbSink {
                     .map_err(|e| RelayError::sink("mongodb", e))?;
             } else {
                 // Convert relay message payload to BSON document.
-                let json_doc = self.config.to_document(msg).map_err(|e| {
-                    RelayError::SinkPublish { sink: "mongodb".to_string(), source: e.into() }
-                })?;
+                let json_doc =
+                    self.config
+                        .to_document(msg)
+                        .map_err(|e| RelayError::SinkPublish {
+                            sink: "mongodb".to_string(),
+                            source: e.into(),
+                        })?;
                 let bson_doc = to_document(
                     &serde_json::from_value::<serde_json::Value>(json_doc)
                         .map_err(|e| RelayError::sink("mongodb", e))?,

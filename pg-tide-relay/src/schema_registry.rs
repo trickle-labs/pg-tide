@@ -31,6 +31,7 @@ pub enum SerializationFormat {
 }
 
 impl SerializationFormat {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             #[cfg(feature = "schema-registry")]
@@ -58,6 +59,7 @@ pub enum SubjectNameStrategy {
 }
 
 impl SubjectNameStrategy {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "record_name" | "RecordName" => Self::Record,

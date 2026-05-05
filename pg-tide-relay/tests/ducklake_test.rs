@@ -216,7 +216,11 @@ fn test_ducklake_parquet_encoding_magic_bytes() {
     assert!(!bytes.is_empty(), "Parquet output must not be empty");
     assert_eq!(&bytes[..4], b"PAR1", "should start with PAR1 magic");
     let n = bytes.len();
-    assert_eq!(&bytes[n - 4..], b"PAR1", "should end with PAR1 footer magic");
+    assert_eq!(
+        &bytes[n - 4..],
+        b"PAR1",
+        "should end with PAR1 footer magic"
+    );
 }
 
 #[cfg(feature = "ducklake")]

@@ -118,16 +118,16 @@ impl super::Sink for SnowflakeSink {
         let url = self.config.endpoint_url();
 
         for (table, batch) in &groups {
-            let channel = format!(
-                "{}.{}.{}",
-                self.config.database, self.config.schema, table
-            );
+            let channel = format!("{}.{}.{}", self.config.database, self.config.schema, table);
             let payload = self.config.build_insert_rows_payload(&channel, batch);
 
             let resp = self
                 .client
                 .post(&url)
-                .header("Authorization", format!("Bearer {}", self.config.auth_token))
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", self.config.auth_token),
+                )
                 .header("Content-Type", "application/json")
                 .json(&payload)
                 .send()

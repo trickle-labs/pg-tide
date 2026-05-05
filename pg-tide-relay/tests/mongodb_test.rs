@@ -90,7 +90,10 @@ fn test_mongodb_config_document_encoding_insert() {
     let doc = cfg.to_document(&msg).expect("encode document");
     let obj = doc.as_object().expect("document should be a JSON object");
     assert_eq!(obj["_op"], "insert");
-    assert!(obj.contains_key("_dedup_key"), "_dedup_key should be present");
+    assert!(
+        obj.contains_key("_dedup_key"),
+        "_dedup_key should be present"
+    );
     assert_eq!(obj["order_id"], 10);
     assert_eq!(obj["_outbox_id"], 10);
 }
@@ -113,10 +116,15 @@ fn test_mongodb_config_document_encoding_non_object_payload() {
         "events",
     );
 
-    let doc = cfg.to_document(&msg).expect("encode document with scalar payload");
+    let doc = cfg
+        .to_document(&msg)
+        .expect("encode document with scalar payload");
     let obj = doc.as_object().expect("should be object");
     // Non-object payloads wrapped under "data" key.
-    assert!(obj.contains_key("data"), "scalar payload wrapped under 'data'");
+    assert!(
+        obj.contains_key("data"),
+        "scalar payload wrapped under 'data'"
+    );
 }
 
 #[test]

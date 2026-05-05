@@ -12,11 +12,11 @@ use crate::envelope::RelayMessage;
 use crate::error::RelayError;
 
 #[cfg(feature = "delta")]
+use chrono::Utc;
+#[cfg(feature = "delta")]
 use object_store::{path::Path, ObjectStore};
 #[cfg(feature = "delta")]
 use std::sync::Arc;
-#[cfg(feature = "delta")]
-use chrono::Utc;
 
 /// Configuration for the Delta Lake sink.
 #[derive(Debug, Clone)]
@@ -134,11 +134,7 @@ impl DeltaSink {
             return Ok(());
         }
 
-        let init_path = Path::from(
-            self.config
-                .log_entry_path(0)
-                .trim_start_matches('/'),
-        );
+        let init_path = Path::from(self.config.log_entry_path(0).trim_start_matches('/'));
 
         // Check if already initialized.
         if self.store.head(&init_path).await.is_ok() {
@@ -157,14 +153,20 @@ impl DeltaSink {
         self.store
             .put(&init_path, content.into_bytes().into())
             .await
-            .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
+            .map_err(|e| RelayError::SinkPublish {
+                sink: "delta".to_string(),
+                source: Box::new(e),
+            })?;
 
         self.initialized = true;
         Ok(())
     }
 
     /// Build a Parquet file in memory from a batch of messages.
-    pub fn build_parquet_bytes(messages: &[&RelayMessage], include_cdf: bool) -> Result<Vec<u8>, RelayError> {
+    pub fn build_parquet_bytes(
+        messages: &[&RelayMessage],
+        include_cdf: bool,
+    ) -> Result<Vec<u8>, RelayError> {
         use parquet::basic::{LogicalType, Repetition, Type as PhysicalType};
         use parquet::data_type::{ByteArray, ByteArrayType, Int64Type};
         use parquet::file::properties::WriterProperties;
@@ -177,34 +179,49 @@ impl DeltaSink {
                     .with_logical_type(Some(LogicalType::String))
                     .with_repetition(Repetition::REQUIRED)
                     .build()
-                    .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?,
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "delta".to_string(),
+                        source: Box::new(e),
+                    })?,
             ),
             Arc::new(
                 Type::primitive_type_builder("_subject", PhysicalType::BYTE_ARRAY)
                     .with_logical_type(Some(LogicalType::String))
                     .with_repetition(Repetition::REQUIRED)
                     .build()
-                    .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?,
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "delta".to_string(),
+                        source: Box::new(e),
+                    })?,
             ),
             Arc::new(
                 Type::primitive_type_builder("_op", PhysicalType::BYTE_ARRAY)
                     .with_logical_type(Some(LogicalType::String))
                     .with_repetition(Repetition::REQUIRED)
                     .build()
-                    .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?,
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "delta".to_string(),
+                        source: Box::new(e),
+                    })?,
             ),
             Arc::new(
                 Type::primitive_type_builder("_outbox_id", PhysicalType::INT64)
                     .with_repetition(Repetition::OPTIONAL)
                     .build()
-                    .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?,
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "delta".to_string(),
+                        source: Box::new(e),
+                    })?,
             ),
             Arc::new(
                 Type::primitive_type_builder("data", PhysicalType::BYTE_ARRAY)
                     .with_logical_type(Some(LogicalType::String))
                     .with_repetition(Repetition::REQUIRED)
                     .build()
-                    .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?,
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "delta".to_string(),
+                        source: Box::new(e),
+                    })?,
             ),
         ];
 
@@ -214,7 +231,10 @@ impl DeltaSink {
                     .with_logical_type(Some(LogicalType::String))
                     .with_repetition(Repetition::REQUIRED)
                     .build()
-                    .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?,
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "delta".to_string(),
+                        source: Box::new(e),
+                    })?,
             ));
         }
 
@@ -222,14 +242,21 @@ impl DeltaSink {
             Type::group_type_builder("schema")
                 .with_fields(fields)
                 .build()
-                .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?,
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "delta".to_string(),
+                    source: Box::new(e),
+                })?,
         );
 
         let props = Arc::new(WriterProperties::builder().build());
         let mut buf: Vec<u8> = Vec::new();
         let cursor = std::io::Cursor::new(&mut buf);
-        let mut writer = SerializedFileWriter::new(cursor, schema, props)
-            .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
+        let mut writer = SerializedFileWriter::new(cursor, schema, props).map_err(|e| {
+            RelayError::SinkPublish {
+                sink: "delta".to_string(),
+                source: Box::new(e),
+            }
+        })?;
 
         let n = messages.len();
         let mut dedup_keys: Vec<ByteArray> = Vec::with_capacity(n);
@@ -251,7 +278,8 @@ impl DeltaSink {
                 outbox_ids.push(0);
                 outbox_def.push(0);
             }
-            let data_str = serde_json::to_string(&msg.payload).unwrap_or_else(|_| "null".to_string());
+            let data_str =
+                serde_json::to_string(&msg.payload).unwrap_or_else(|_| "null".to_string());
             data_vals.push(ByteArray::from(data_str.as_str()));
             if include_cdf {
                 let ct = match msg.op.as_str() {
@@ -263,15 +291,26 @@ impl DeltaSink {
             }
         }
 
-        let mut row_group = writer.next_row_group()
-            .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
+        let mut row_group = writer
+            .next_row_group()
+            .map_err(|e| RelayError::SinkPublish {
+                sink: "delta".to_string(),
+                source: Box::new(e),
+            })?;
 
         macro_rules! write_ba_col {
             ($vals:expr) => {{
                 let mut cw = row_group.next_column().unwrap().unwrap();
-                cw.typed::<ByteArrayType>().write_batch(&$vals, None, None)
-                    .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
-                cw.close().map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
+                cw.typed::<ByteArrayType>()
+                    .write_batch(&$vals, None, None)
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "delta".to_string(),
+                        source: Box::new(e),
+                    })?;
+                cw.close().map_err(|e| RelayError::SinkPublish {
+                    sink: "delta".to_string(),
+                    source: Box::new(e),
+                })?;
             }};
         }
 
@@ -283,8 +322,14 @@ impl DeltaSink {
             let mut cw = row_group.next_column().unwrap().unwrap();
             cw.typed::<Int64Type>()
                 .write_batch(&outbox_ids, Some(&outbox_def), None)
-                .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
-            cw.close().map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "delta".to_string(),
+                    source: Box::new(e),
+                })?;
+            cw.close().map_err(|e| RelayError::SinkPublish {
+                sink: "delta".to_string(),
+                source: Box::new(e),
+            })?;
         }
 
         write_ba_col!(data_vals);
@@ -292,10 +337,14 @@ impl DeltaSink {
             write_ba_col!(cdf_vals);
         }
 
-        row_group.close()
-            .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
-        writer.close()
-            .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
+        row_group.close().map_err(|e| RelayError::SinkPublish {
+            sink: "delta".to_string(),
+            source: Box::new(e),
+        })?;
+        writer.close().map_err(|e| RelayError::SinkPublish {
+            sink: "delta".to_string(),
+            source: Box::new(e),
+        })?;
 
         Ok(buf)
     }
@@ -335,22 +384,24 @@ impl super::Sink for DeltaSink {
         self.store
             .put(&parquet_obj_path, parquet_bytes.into())
             .await
-            .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
+            .map_err(|e| RelayError::SinkPublish {
+                sink: "delta".to_string(),
+                source: Box::new(e),
+            })?;
 
         // Write Delta Log entry.
         let add_action =
             self.config
                 .build_add_action(&file_name, messages.len() as i64, size_bytes);
         let commit_content = add_action.to_string();
-        let log_path = Path::from(
-            self.config
-                .log_entry_path(version)
-                .trim_start_matches('/'),
-        );
+        let log_path = Path::from(self.config.log_entry_path(version).trim_start_matches('/'));
         self.store
             .put(&log_path, commit_content.into_bytes().into())
             .await
-            .map_err(|e| RelayError::SinkPublish { sink: "delta".to_string(), source: Box::new(e) })?;
+            .map_err(|e| RelayError::SinkPublish {
+                sink: "delta".to_string(),
+                source: Box::new(e),
+            })?;
 
         Ok(())
     }

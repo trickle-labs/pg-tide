@@ -102,7 +102,10 @@ fn test_iceberg_config_metadata_file_path() {
 
     let path = cfg.metadata_path("orders");
     assert!(path.contains("orders"), "path should contain table name");
-    assert!(path.contains("metadata"), "path should be in metadata directory");
+    assert!(
+        path.contains("metadata"),
+        "path should be in metadata directory"
+    );
 }
 
 // ── Parquet encoding ──────────────────────────────────────────────────────────
@@ -124,8 +127,7 @@ fn test_iceberg_parquet_encoding_non_empty() {
         "orders",
     );
 
-    let bytes = IcebergSink::build_parquet_bytes(&[&msg])
-        .expect("build parquet bytes");
+    let bytes = IcebergSink::build_parquet_bytes(&[&msg]).expect("build parquet bytes");
 
     assert!(!bytes.is_empty(), "Parquet output must not be empty");
     // Parquet files start with PAR1 magic bytes.
@@ -159,7 +161,11 @@ fn test_iceberg_parquet_footer_magic() {
     // Parquet files end with PAR1 magic bytes too.
     let n = bytes.len();
     assert!(n >= 8, "Parquet file too small");
-    assert_eq!(&bytes[n - 4..], b"PAR1", "should end with PAR1 footer magic");
+    assert_eq!(
+        &bytes[n - 4..],
+        b"PAR1",
+        "should end with PAR1 footer magic"
+    );
 }
 
 // ── Metadata JSON structure ───────────────────────────────────────────────────

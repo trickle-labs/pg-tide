@@ -17,11 +17,11 @@ use crate::envelope::RelayMessage;
 use crate::error::RelayError;
 
 #[cfg(feature = "ducklake")]
+use chrono::Utc;
+#[cfg(feature = "ducklake")]
 use object_store::{path::Path, ObjectStore};
 #[cfg(feature = "ducklake")]
 use std::sync::Arc;
-#[cfg(feature = "ducklake")]
-use chrono::Utc;
 
 /// Configuration for the DuckLake sink.
 #[derive(Debug, Clone)]
@@ -79,7 +79,11 @@ pub struct DuckLakeSink {
 
 #[cfg(feature = "ducklake")]
 impl DuckLakeSink {
-    pub fn new(store: Arc<dyn ObjectStore>, db: Arc<tokio_postgres::Client>, config: DuckLakeConfig) -> Self {
+    pub fn new(
+        store: Arc<dyn ObjectStore>,
+        db: Arc<tokio_postgres::Client>,
+        config: DuckLakeConfig,
+    ) -> Self {
         Self {
             store,
             db,
@@ -120,7 +124,9 @@ impl DuckLakeSink {
         messages: &[&RelayMessage],
         compression: &DuckLakeCompression,
     ) -> Result<Vec<u8>, RelayError> {
-        use parquet::basic::{Compression as PqCompression, LogicalType, Repetition, Type as PhysicalType, ZstdLevel};
+        use parquet::basic::{
+            Compression as PqCompression, LogicalType, Repetition, Type as PhysicalType, ZstdLevel,
+        };
         use parquet::data_type::{ByteArray, ByteArrayType, Int64Type};
         use parquet::file::properties::WriterProperties;
         use parquet::file::writer::SerializedFileWriter;
@@ -134,38 +140,56 @@ impl DuckLakeSink {
                             .with_logical_type(Some(LogicalType::String))
                             .with_repetition(Repetition::REQUIRED)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "ducklake".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                     Arc::new(
                         Type::primitive_type_builder("_subject", PhysicalType::BYTE_ARRAY)
                             .with_logical_type(Some(LogicalType::String))
                             .with_repetition(Repetition::REQUIRED)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "ducklake".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                     Arc::new(
                         Type::primitive_type_builder("_op", PhysicalType::BYTE_ARRAY)
                             .with_logical_type(Some(LogicalType::String))
                             .with_repetition(Repetition::REQUIRED)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "ducklake".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                     Arc::new(
                         Type::primitive_type_builder("_outbox_id", PhysicalType::INT64)
                             .with_repetition(Repetition::OPTIONAL)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "ducklake".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                     Arc::new(
                         Type::primitive_type_builder("data", PhysicalType::BYTE_ARRAY)
                             .with_logical_type(Some(LogicalType::String))
                             .with_repetition(Repetition::REQUIRED)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "ducklake".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                 ])
                 .build()
-                .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?,
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "ducklake".to_string(),
+                    source: Box::new(e),
+                })?,
         );
 
         let pq_compression = match compression {
@@ -174,11 +198,19 @@ impl DuckLakeSink {
             DuckLakeCompression::None => PqCompression::UNCOMPRESSED,
         };
 
-        let props = Arc::new(WriterProperties::builder().set_compression(pq_compression).build());
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_compression(pq_compression)
+                .build(),
+        );
         let mut buf: Vec<u8> = Vec::new();
         let cursor = std::io::Cursor::new(&mut buf);
-        let mut writer = SerializedFileWriter::new(cursor, schema, props)
-            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
+        let mut writer = SerializedFileWriter::new(cursor, schema, props).map_err(|e| {
+            RelayError::SinkPublish {
+                sink: "ducklake".to_string(),
+                source: Box::new(e),
+            }
+        })?;
 
         let n = messages.len();
         let mut dedup_keys: Vec<ByteArray> = Vec::with_capacity(n);
@@ -199,19 +231,31 @@ impl DuckLakeSink {
                 outbox_ids.push(0);
                 outbox_def.push(0);
             }
-            let data_str = serde_json::to_string(&msg.payload).unwrap_or_else(|_| "null".to_string());
+            let data_str =
+                serde_json::to_string(&msg.payload).unwrap_or_else(|_| "null".to_string());
             data_vals.push(ByteArray::from(data_str.as_str()));
         }
 
-        let mut row_group = writer.next_row_group()
-            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
+        let mut row_group = writer
+            .next_row_group()
+            .map_err(|e| RelayError::SinkPublish {
+                sink: "ducklake".to_string(),
+                source: Box::new(e),
+            })?;
 
         macro_rules! write_ba_col {
             ($vals:expr) => {{
                 let mut cw = row_group.next_column().unwrap().unwrap();
-                cw.typed::<ByteArrayType>().write_batch(&$vals, None, None)
-                    .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
-                cw.close().map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
+                cw.typed::<ByteArrayType>()
+                    .write_batch(&$vals, None, None)
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "ducklake".to_string(),
+                        source: Box::new(e),
+                    })?;
+                cw.close().map_err(|e| RelayError::SinkPublish {
+                    sink: "ducklake".to_string(),
+                    source: Box::new(e),
+                })?;
             }};
         }
 
@@ -223,16 +267,26 @@ impl DuckLakeSink {
             let mut cw = row_group.next_column().unwrap().unwrap();
             cw.typed::<Int64Type>()
                 .write_batch(&outbox_ids, Some(&outbox_def), None)
-                .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
-            cw.close().map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "ducklake".to_string(),
+                    source: Box::new(e),
+                })?;
+            cw.close().map_err(|e| RelayError::SinkPublish {
+                sink: "ducklake".to_string(),
+                source: Box::new(e),
+            })?;
         }
 
         write_ba_col!(data_vals);
 
-        row_group.close()
-            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
-        writer.close()
-            .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
+        row_group.close().map_err(|e| RelayError::SinkPublish {
+            sink: "ducklake".to_string(),
+            source: Box::new(e),
+        })?;
+        writer.close().map_err(|e| RelayError::SinkPublish {
+            sink: "ducklake".to_string(),
+            source: Box::new(e),
+        })?;
 
         Ok(buf)
     }
@@ -273,7 +327,10 @@ impl super::Sink for DuckLakeSink {
             self.store
                 .put(&obj_path, parquet_bytes.into())
                 .await
-                .map_err(|e| RelayError::SinkPublish { sink: "ducklake".to_string(), source: Box::new(e) })?;
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "ducklake".to_string(),
+                    source: Box::new(e),
+                })?;
 
             // Record snapshot in PostgreSQL catalog.
             let schema_json = serde_json::json!({
@@ -307,10 +364,7 @@ impl super::Sink for DuckLakeSink {
     }
 
     async fn is_healthy(&mut self) -> bool {
-        self.db
-            .execute("SELECT 1", &[])
-            .await
-            .is_ok()
+        self.db.execute("SELECT 1", &[]).await.is_ok()
     }
 
     async fn close(&mut self) -> Result<(), RelayError> {

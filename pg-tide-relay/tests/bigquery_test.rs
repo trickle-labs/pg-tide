@@ -87,7 +87,10 @@ fn test_bigquery_insert_all_url_structure() {
     assert!(url.contains("test-project"), "URL must contain project ID");
     assert!(url.contains("pgtide"), "URL must contain dataset ID");
     assert!(url.contains("orders"), "URL must contain table name");
-    assert!(url.contains("insertAll"), "URL must target insertAll endpoint");
+    assert!(
+        url.contains("insertAll"),
+        "URL must target insertAll endpoint"
+    );
     assert!(
         url.starts_with("https://bigquery.googleapis.com"),
         "URL must use BigQuery API base"

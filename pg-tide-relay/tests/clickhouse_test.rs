@@ -88,7 +88,10 @@ fn test_clickhouse_config_insert_query() {
     assert!(query.contains("INSERT INTO"), "should be an INSERT query");
     assert!(query.contains("analytics"), "should reference the database");
     assert!(query.contains("orders"), "should reference the table");
-    assert!(query.contains("JSONEachRow"), "should use JSONEachRow format");
+    assert!(
+        query.contains("JSONEachRow"),
+        "should use JSONEachRow format"
+    );
 }
 
 #[cfg(feature = "clickhouse")]
@@ -109,7 +112,10 @@ fn test_clickhouse_jsonl_body_contains_required_fields() {
 
     let msgs: Vec<&RelayMessage> = vec![];
     let body = sink.build_jsonl_body(&msgs);
-    assert!(body.is_empty(), "empty input should produce empty NDJSON body");
+    assert!(
+        body.is_empty(),
+        "empty input should produce empty NDJSON body"
+    );
 }
 
 #[cfg(feature = "clickhouse")]
@@ -165,8 +171,7 @@ async fn test_clickhouse_sink_posts_to_mock_server() {
         Router::new().route(
             "/",
             post(
-                move |Query(params): Query<HashMap<String, String>>,
-                      body: axum::body::Bytes| {
+                move |Query(params): Query<HashMap<String, String>>, body: axum::body::Bytes| {
                     let state = Arc::clone(&state);
                     async move {
                         state.lock().unwrap().push((

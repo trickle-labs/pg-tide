@@ -14,11 +14,11 @@ use crate::envelope::RelayMessage;
 use crate::error::RelayError;
 
 #[cfg(feature = "iceberg")]
+use chrono::Utc;
+#[cfg(feature = "iceberg")]
 use object_store::{path::Path, ObjectStore};
 #[cfg(feature = "iceberg")]
 use std::sync::Arc;
-#[cfg(feature = "iceberg")]
-use chrono::Utc;
 
 /// Write mode for Iceberg tables.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +59,10 @@ impl IcebergConfig {
 
     /// Build the path for the table metadata directory.
     pub fn metadata_path(&self, table: &str) -> String {
-        format!("{}/{}/{}/metadata", self.warehouse_path, self.namespace, table)
+        format!(
+            "{}/{}/{}/metadata",
+            self.warehouse_path, self.namespace, table
+        )
     }
 
     /// Build a minimal Iceberg snapshot manifest entry as JSON (for metadata/v2.metadata.json).
@@ -156,45 +159,67 @@ impl IcebergSink {
                             .with_logical_type(Some(LogicalType::String))
                             .with_repetition(Repetition::REQUIRED)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "iceberg".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                     Arc::new(
                         Type::primitive_type_builder("_subject", PhysicalType::BYTE_ARRAY)
                             .with_logical_type(Some(LogicalType::String))
                             .with_repetition(Repetition::REQUIRED)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "iceberg".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                     Arc::new(
                         Type::primitive_type_builder("_op", PhysicalType::BYTE_ARRAY)
                             .with_logical_type(Some(LogicalType::String))
                             .with_repetition(Repetition::REQUIRED)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "iceberg".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                     Arc::new(
                         Type::primitive_type_builder("_outbox_id", PhysicalType::INT64)
                             .with_repetition(Repetition::OPTIONAL)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "iceberg".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                     Arc::new(
                         Type::primitive_type_builder("data", PhysicalType::BYTE_ARRAY)
                             .with_logical_type(Some(LogicalType::String))
                             .with_repetition(Repetition::REQUIRED)
                             .build()
-                            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?,
+                            .map_err(|e| RelayError::SinkPublish {
+                                sink: "iceberg".to_string(),
+                                source: Box::new(e),
+                            })?,
                     ),
                 ])
                 .build()
-                .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?,
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "iceberg".to_string(),
+                    source: Box::new(e),
+                })?,
         );
 
         let props = Arc::new(WriterProperties::builder().build());
         let mut buf: Vec<u8> = Vec::new();
         let cursor = std::io::Cursor::new(&mut buf);
-        let mut writer = SerializedFileWriter::new(cursor, schema, props)
-            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
+        let mut writer = SerializedFileWriter::new(cursor, schema, props).map_err(|e| {
+            RelayError::SinkPublish {
+                sink: "iceberg".to_string(),
+                source: Box::new(e),
+            }
+        })?;
 
         let n = messages.len();
         let mut dedup_keys: Vec<ByteArray> = Vec::with_capacity(n);
@@ -215,19 +240,31 @@ impl IcebergSink {
                 outbox_ids.push(0);
                 outbox_def.push(0);
             }
-            let data_str = serde_json::to_string(&msg.payload).unwrap_or_else(|_| "null".to_string());
+            let data_str =
+                serde_json::to_string(&msg.payload).unwrap_or_else(|_| "null".to_string());
             data_vals.push(ByteArray::from(data_str.as_str()));
         }
 
-        let mut row_group = writer.next_row_group()
-            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
+        let mut row_group = writer
+            .next_row_group()
+            .map_err(|e| RelayError::SinkPublish {
+                sink: "iceberg".to_string(),
+                source: Box::new(e),
+            })?;
 
         macro_rules! write_ba_col {
             ($vals:expr) => {{
                 let mut cw = row_group.next_column().unwrap().unwrap();
-                cw.typed::<ByteArrayType>().write_batch(&$vals, None, None)
-                    .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
-                cw.close().map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
+                cw.typed::<ByteArrayType>()
+                    .write_batch(&$vals, None, None)
+                    .map_err(|e| RelayError::SinkPublish {
+                        sink: "iceberg".to_string(),
+                        source: Box::new(e),
+                    })?;
+                cw.close().map_err(|e| RelayError::SinkPublish {
+                    sink: "iceberg".to_string(),
+                    source: Box::new(e),
+                })?;
             }};
         }
 
@@ -239,16 +276,26 @@ impl IcebergSink {
             let mut cw = row_group.next_column().unwrap().unwrap();
             cw.typed::<Int64Type>()
                 .write_batch(&outbox_ids, Some(&outbox_def), None)
-                .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
-            cw.close().map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "iceberg".to_string(),
+                    source: Box::new(e),
+                })?;
+            cw.close().map_err(|e| RelayError::SinkPublish {
+                sink: "iceberg".to_string(),
+                source: Box::new(e),
+            })?;
         }
 
         write_ba_col!(data_vals);
 
-        row_group.close()
-            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
-        writer.close()
-            .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
+        row_group.close().map_err(|e| RelayError::SinkPublish {
+            sink: "iceberg".to_string(),
+            source: Box::new(e),
+        })?;
+        writer.close().map_err(|e| RelayError::SinkPublish {
+            sink: "iceberg".to_string(),
+            source: Box::new(e),
+        })?;
 
         Ok(buf)
     }
@@ -286,7 +333,10 @@ impl super::Sink for IcebergSink {
             self.store
                 .put(&data_path, parquet_bytes.into())
                 .await
-                .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "iceberg".to_string(),
+                    source: Box::new(e),
+                })?;
 
             // Write Iceberg metadata JSON.
             let meta = self.config.build_snapshot_metadata(
@@ -304,12 +354,14 @@ impl super::Sink for IcebergSink {
                 )
                 .as_str(),
             );
-            let meta_bytes = serde_json::to_vec_pretty(&meta)
-                .map_err(RelayError::Json)?;
+            let meta_bytes = serde_json::to_vec_pretty(&meta).map_err(RelayError::Json)?;
             self.store
                 .put(&meta_path, meta_bytes.into())
                 .await
-                .map_err(|e| RelayError::SinkPublish { sink: "iceberg".to_string(), source: Box::new(e) })?;
+                .map_err(|e| RelayError::SinkPublish {
+                    sink: "iceberg".to_string(),
+                    source: Box::new(e),
+                })?;
         }
 
         Ok(())
