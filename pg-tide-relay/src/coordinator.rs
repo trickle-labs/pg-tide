@@ -584,6 +584,44 @@ async fn build_source(
             Ok(Box::new(src))
         }
 
+        #[cfg(feature = "mqtt")]
+        "mqtt" => {
+            let url = pipeline.require_str(&["source", "url"])?;
+            let topic = pipeline.require_str(&["source", "topic"])?;
+            let client_id = pipeline
+                .opt_str(&["source", "client_id"])
+                .unwrap_or("pg-tide-inbox");
+            let event_type = pipeline
+                .opt_str(&["source", "event_type"])
+                .unwrap_or("event");
+            let src =
+                crate::source::mqtt::MqttSource::new(url, topic, client_id, event_type).await?;
+            Ok(Box::new(src))
+        }
+
+        #[cfg(feature = "eventhubs")]
+        "eventhubs" => {
+            let connection_string = pipeline.require_str(&["source", "connection_string"])?;
+            let event_hub = pipeline.require_str(&["source", "event_hub"])?;
+            let consumer_group = pipeline
+                .opt_str(&["source", "consumer_group"])
+                .unwrap_or("$Default");
+            let partition_count = pipeline
+                .opt_i64(&["source", "partition_count"])
+                .unwrap_or(1) as usize;
+            let event_type = pipeline
+                .opt_str(&["source", "event_type"])
+                .unwrap_or("event");
+            let src = crate::source::eventhubs::EventHubsSource::new(
+                connection_string,
+                event_hub,
+                consumer_group,
+                partition_count,
+                event_type,
+            )?;
+            Ok(Box::new(src))
+        }
+
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
             reason: format!("unknown source_type: {other}"),
@@ -727,6 +765,111 @@ async fn build_sink(
             Ok(Box::new(crate::sink::servicebus::ServiceBusSink::new(
                 connection_string,
                 entity,
+            )?))
+        }
+
+        #[cfg(feature = "mqtt")]
+        "mqtt" => {
+            let url = pipeline.require_str(&["sink", "url"])?;
+            let client_id = pipeline
+                .opt_str(&["sink", "client_id"])
+                .unwrap_or("pg-tide");
+            let topic_template = pipeline
+                .opt_str(&["sink", "topic_template"])
+                .unwrap_or("pg-tide/{stream_table}/{op}");
+            let qos = pipeline.opt_i64(&["sink", "qos"]).unwrap_or(1) as u8;
+            Ok(Box::new(
+                crate::sink::mqtt::MqttSink::new(url, client_id, topic_template, qos).await?,
+            ))
+        }
+
+        #[cfg(feature = "eventhubs")]
+        "eventhubs" => {
+            let connection_string = pipeline.require_str(&["sink", "connection_string"])?;
+            let event_hub = pipeline.require_str(&["sink", "event_hub"])?;
+            let partition_key_template = pipeline
+                .opt_str(&["sink", "partition_key_template"])
+                .unwrap_or("{stream_table}");
+            Ok(Box::new(crate::sink::eventhubs::EventHubsSink::new(
+                connection_string,
+                event_hub,
+                partition_key_template,
+            )?))
+        }
+
+        #[cfg(feature = "object-storage")]
+        "object-storage" => {
+            use crate::sink::object_storage::{
+                ObjectStorageFormat, ObjectStorageProvider, ObjectStorageSink,
+            };
+
+            let provider_str = pipeline.require_str(&["sink", "provider"])?;
+            let prefix = pipeline.opt_str(&["sink", "prefix"]).unwrap_or("pg-tide");
+            let format_str = pipeline.opt_str(&["sink", "format"]).unwrap_or("jsonl");
+            let format = match format_str {
+                "parquet" => ObjectStorageFormat::Parquet,
+                _ => ObjectStorageFormat::Jsonl,
+            };
+            let buffer_max_rows = pipeline
+                .opt_i64(&["sink", "buffer_max_rows"])
+                .unwrap_or(100_000) as usize;
+            let buffer_max_bytes = pipeline
+                .opt_i64(&["sink", "buffer_max_bytes"])
+                .unwrap_or(268_435_456) as usize;
+            let buffer_max_seconds = pipeline
+                .opt_i64(&["sink", "buffer_max_seconds"])
+                .unwrap_or(300) as u64;
+            let partition_by_date = pipeline
+                .opt_bool(&["sink", "partition_by_date"])
+                .unwrap_or(true);
+
+            let provider = match provider_str {
+                "s3" => {
+                    let bucket = pipeline.require_str(&["sink", "bucket"])?;
+                    let region = pipeline.opt_str(&["sink", "region"]).map(String::from);
+                    let endpoint = pipeline.opt_str(&["sink", "endpoint"]).map(String::from);
+                    ObjectStorageProvider::S3 {
+                        bucket: bucket.to_string(),
+                        region,
+                        endpoint,
+                    }
+                }
+                "gcs" => {
+                    let bucket = pipeline.require_str(&["sink", "bucket"])?;
+                    ObjectStorageProvider::Gcs {
+                        bucket: bucket.to_string(),
+                    }
+                }
+                "azure-blob" => {
+                    let account = pipeline.require_str(&["sink", "account"])?;
+                    let container = pipeline.require_str(&["sink", "container"])?;
+                    ObjectStorageProvider::Azure {
+                        account: account.to_string(),
+                        container: container.to_string(),
+                    }
+                }
+                "local" => {
+                    let root = pipeline.require_str(&["sink", "root"])?;
+                    ObjectStorageProvider::Local {
+                        root: std::path::PathBuf::from(root),
+                    }
+                }
+                other => {
+                    return Err(RelayError::InvalidConfig {
+                        name: pipeline.name.clone(),
+                        reason: format!("unknown object-storage provider: {other}"),
+                    })
+                }
+            };
+
+            Ok(Box::new(ObjectStorageSink::new(
+                provider,
+                prefix,
+                format,
+                buffer_max_rows,
+                buffer_max_bytes,
+                buffer_max_seconds,
+                partition_by_date,
             )?))
         }
 

@@ -31,6 +31,10 @@ elasticsearch   = ["dep:reqwest", "dep:base64"]
 pubsub          = ["dep:reqwest", "dep:base64"]
 kinesis         = ["dep:aws-sdk-kinesis", "dep:aws-config"]
 servicebus      = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:base64"]
+# v0.6.0: IoT and data lake backends
+mqtt            = ["dep:rumqttc"]
+eventhubs       = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:base64"]
+object-storage  = ["dep:object_store", "dep:parquet"]
 
 [dependencies]
 # Core async runtime + CLI
@@ -71,6 +75,10 @@ aws-sdk-kinesis = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
 hmac = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
+# v0.6.0 optional backends
+rumqttc = { version = "0.24", optional = true }
+object_store = { version = "0.11", features = ["aws", "gcp", "azure"], optional = true }
+parquet = { version = "54", optional = true }
 
 [dev-dependencies]
 testcontainers = "0.27"
@@ -85,12 +93,16 @@ redis = { version = "1.2", features = ["tokio-comp"] }
 reqwest = { version = "0.12", features = ["json"], default-features = false }
 aws-sdk-sqs = "1.98"
 aws-sdk-kinesis = "1"
+aws-sdk-s3 = "1"
 aws-config = "1.8"
 axum = "0.8"
 bytes = "1"
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
+rumqttc = "0.24"
+object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
+parquet = "54"
 
 [[bench]]
 name = "throughput"
