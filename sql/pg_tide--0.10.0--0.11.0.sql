@@ -1,0 +1,8 @@
+-- pg_tide 0.10.0 → 0.11.0
+--
+-- v0.11.0 is a relay-binary-only release adding pluggable wire formats:
+--   Debezium (JSON, bidirectional), Maxwell (decode), Canal (decode),
+--   custom CDC JSON (both directions), and schema evolution detection.
+--
+-- No PostgreSQL catalog changes are required for this version.
+-- All wire format functionality lives in the relay binary (pg-tide).

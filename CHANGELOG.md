@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.11.0 — Pluggable Wire Formats: Debezium, Maxwell, Canal, Custom CDC JSON](#0110--2026-05-05--pluggable-wire-formats-debezium-maxwell-canal-custom-cdc-json)
 - [0.10.0 — Analytics Sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Iceberg, Delta Lake, DuckLake](#0100--2026-05-07--analytics-sinks-clickhouse-mongodb-snowflake-bigquery-iceberg-delta-lake-ducklake)
 - [0.9.0 — Connector Ecosystem Foundation (Singer, Airbyte, Fivetran)](#090--2026-05-06--connector-ecosystem-foundation-singer-airbyte-fivetran)
 - [0.8.0 — Notification Sinks & Apache Arrow Flight](#080--2026-05-05--notification-sinks--apache-arrow-flight)
@@ -18,6 +19,121 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.11.0] — 2026-05-05 — Pluggable Wire Formats: Debezium, Maxwell, Canal, Custom CDC JSON
+
+v0.11.0 introduces a symmetric `WireFormat` trait that decouples the relay's
+transport layer (Kafka, NATS, Redis, etc.) from the envelope format, enabling
+bidirectional Debezium support and other CDC wire formats without touching
+transport code.
+
+### WireFormat Trait (`wire_format` module)
+
+- New `WireFormat` trait with symmetric `decode` (reverse path) and `encode`
+  (forward path) methods, plus optional `observe_schema` and `register_schema`
+  hooks for schema evolution.
+- `RawMessage` type wrapping raw transport bytes (key, value, topic, headers).
+- `InboxRow` type for decoded messages ready for inbox insertion, carrying
+  `op`, `payload`, `old_payload`, `commit_ts`, and `source_position`.
+- `OutboxRow` type for outbox rows ready for encoding, carrying `op`,
+  `new_row`, `old_row`, `stream_table`, and pg LSN.
+- `EncodedBatch` type to handle multi-message outputs (e.g. DELETE + tombstone).
+- `WireError` enum with `Decode`, `Encode`, `SchemaIncompatible`,
+  `SchemaRegistry`, and `UnsupportedOperation` variants.
+- `wire_format::from_config(config)` factory: reads the `wire_format` and
+  `wire_config` fields from a pipeline config JSON and returns the appropriate
+  boxed `WireFormat` implementation.
+
+### Native pg_tide Envelope (`wire_format = "native"`)
+
+- `NativePgTideFormat` wraps the existing relay message behaviour behind the
+  `WireFormat` trait — no behaviour change for pipelines without `wire_format`.
+- Refactor is transparent: all existing forward and reverse pipelines continue
+  to work exactly as before.
+
+### Debezium Bidirectional Support (`wire_format = "debezium"`)
+
+- **Decode (reverse path):** Consumes Debezium JSON envelopes from any transport
+  (Kafka, NATS, etc.) and maps them to `InboxRow`.
+  - Supports all four Debezium ops: `c` (insert), `u` (update), `d` (delete),
+    `r` (snapshot read, configurable as insert or upsert).
+  - Extracts `payload.source.ts_ms` as `commit_ts` and `lsn`/`pos`/`change_lsn`
+    as `source_position`.
+  - Tombstone handling: `"delete"` (default) or `"drop"`.
+  - Snapshot op treatment: `"insert"` (default) or `"upsert"`.
+  - Heartbeats and schema-change topics are silently skipped.
+- **Encode (forward path):** Emits Debezium-shaped JSON from pg_tide outbox rows.
+  - INSERT → `op: "c"`, `before: null`, `after: <row>`.
+  - UPDATE → `op: "u"`, `before: <old_row>`, `after: <new_row>`.
+  - DELETE → `op: "d"`, `before: <old_row>`, `after: null` + optional tombstone.
+  - Configurable `server_name` emitted in the `source` block with
+    `connector: "pg_tide"`, `table`, `db`, `schema`, `lsn`, and `ts_ms`.
+  - Tombstone emission after DELETE (`emit_tombstones: true`, default `true`).
+  - Topic template: `{server}.{schema}.{stream_table}` (fully configurable).
+  - No `r` (snapshot) events — documented as a difference vs. real Debezium.
+
+### Schema Evolution Detection
+
+- `SchemaTracker` per-topic field-set tracker on the decode side.
+- `observe_schema()` is called before every inbound message; returns
+  `WireError::SchemaIncompatible` when a field is **removed** (incompatible
+  change), and silently accepts new fields (additive evolution).
+- On schema incompatibility the pipeline surfaces an alert via the relay's
+  existing error propagation path; the user resolves by updating the inbox table.
+
+### Maxwell Decoder (`wire_format = "maxwell"`, feature `maxwell`)
+
+- `MaxwellFormat` decodes Maxwell (https://maxwells-daemon.io) MySQL CDC JSON
+  envelopes into `InboxRow`.
+- Maps Maxwell types `insert`, `update`, `delete` → pg_tide ops.
+- `bootstrap-insert` events configurable: treat as `insert` (default) or skip.
+- Extracts `ts` (Unix epoch seconds) as `commit_ts` and `xid` as
+  `source_position`.
+- Decode-only: `encode()` returns `WireError::UnsupportedOperation`.
+- Feature flag: `--features maxwell`.
+
+### Canal Decoder (`wire_format = "canal"`, feature `canal`)
+
+- `CanalFormat` decodes Alibaba Canal MySQL CDC JSON envelopes into `InboxRow`.
+- Maps Canal types `INSERT`, `UPDATE`, `DELETE` → pg_tide ops (case-insensitive).
+- DDL events (`isDdl: true`) are skipped by default (`skip_ddl: true`).
+- Canal wraps data in arrays; the decoder takes the first element per event.
+- Extracts `es` / `ts` (ms) as `commit_ts` and `id` as `source_position`.
+- Decode-only: `encode()` returns `WireError::UnsupportedOperation`.
+- Feature flag: `--features canal`.
+
+### Custom CDC JSON (`wire_format = "cdc_json"`, feature `cdc-json`)
+
+- `CdcJsonFormat` maps any CDC-shaped JSON to `InboxRow` using user-supplied
+  dot-notation path expressions (`$.field.sub`).
+- Configurable paths for `op`, `payload`, `old_payload`, `event_id`,
+  `event_type`, `commit_ts`, and `source_position`.
+- `op_map` allows remapping arbitrary source values to pg_tide op strings.
+- `commit_ts_format`: `rfc3339` (default), `unix_seconds`, or `unix_millis`.
+- Bidirectional: `encode()` produces a simple JSON document with `op` and
+  `data` keys using the inverse op map.
+- Feature flag: `--features cdc-json`.
+
+### Tombstone Emission for Kafka Log-Compacted Topics
+
+- Debezium encoder emits a null-value tombstone after every DELETE when
+  `emit_tombstones: true` (the default).
+- The tombstone carries the same key as the DELETE event so Kafka can compact
+  the topic correctly.
+- Disable with `emit_tombstones: false` for non-compacted topics.
+
+### Upgrade Notes
+
+- No SQL catalog changes. The upgrade script (`pg_tide--0.10.0--0.11.0.sql`)
+  is a no-op.
+- Existing pipelines without a `wire_format` field use `"native"` automatically
+  — behaviour is identical to v0.10.0.
+- New cargo features: `debezium` (always on), `maxwell`, `canal`, `cdc-json`.
+  The default binary includes `debezium`; the others are opt-in.
+
+
 
 ---
 

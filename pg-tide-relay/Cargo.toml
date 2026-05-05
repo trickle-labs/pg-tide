@@ -54,6 +54,11 @@ bigquery        = ["dep:reqwest"]
 iceberg         = ["dep:object_store", "dep:parquet"]
 delta           = ["dep:object_store", "dep:parquet"]
 ducklake        = ["dep:object_store", "dep:parquet"]
+# v0.11.0: Pluggable wire formats
+debezium        = []
+maxwell         = []
+canal           = []
+cdc-json        = []
 
 [dependencies]
 # Core async runtime + CLI
