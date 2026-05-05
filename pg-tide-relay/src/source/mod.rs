@@ -38,6 +38,13 @@ pub mod mqtt;
 #[cfg(feature = "eventhubs")]
 pub mod eventhubs;
 
+// v0.9.0: Connector ecosystem sources
+#[cfg(feature = "singer")]
+pub mod singer;
+
+#[cfg(feature = "airbyte")]
+pub mod airbyte;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;

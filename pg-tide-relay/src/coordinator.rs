@@ -800,6 +800,102 @@ async fn build_source(
             Ok(Box::new(src))
         }
 
+        // v0.9.0: Singer protocol adapter (tap source)
+        #[cfg(feature = "singer")]
+        "singer" => {
+            let tap_command = pipeline.require_str(&["source", "tap_command"])?;
+            let tap_args: Vec<String> = pipeline
+                .config
+                .pointer("/source/tap_args")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let tap_name = pipeline
+                .opt_str(&["source", "tap_name"])
+                .unwrap_or(tap_command);
+            let on_schema_change = crate::sink::singer::OnSchemaChange::from_str(
+                pipeline
+                    .opt_str(&["source", "on_schema_change"])
+                    .unwrap_or("log"),
+            );
+            let src = crate::source::singer::SingerSource::new(
+                Arc::clone(&db),
+                &pipeline.name,
+                tap_command,
+                &tap_args,
+                tap_name,
+                on_schema_change,
+            )
+            .await?;
+            Ok(Box::new(src))
+        }
+
+        // v0.9.0: Airbyte protocol adapter (connector source)
+        #[cfg(feature = "airbyte")]
+        "airbyte" => {
+            let source_name;
+            let catalog = pipeline
+                .config
+                .pointer("/source/configured_catalog")
+                .cloned()
+                .unwrap_or(serde_json::json!({"streams": []}));
+
+            let src: Box<dyn crate::source::Source> =
+                if let Some(image) = pipeline.opt_str(&["source", "source_image"]) {
+                    let source_config = pipeline
+                        .config
+                        .pointer("/source/source_config")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({}));
+                    source_name = pipeline
+                        .opt_str(&["source", "source_name"])
+                        .unwrap_or(image)
+                        .to_string();
+                    Box::new(
+                        crate::source::airbyte::AirbyteSource::new_docker(
+                            Arc::clone(&db),
+                            &pipeline.name,
+                            image,
+                            &source_config,
+                            &catalog,
+                            &source_name,
+                        )
+                        .await?,
+                    )
+                } else {
+                    let cmd = pipeline.require_str(&["source", "source_command"])?;
+                    let args: Vec<String> = pipeline
+                        .config
+                        .pointer("/source/source_args")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    source_name = pipeline
+                        .opt_str(&["source", "source_name"])
+                        .unwrap_or(cmd)
+                        .to_string();
+                    Box::new(
+                        crate::source::airbyte::AirbyteSource::new_command(
+                            Arc::clone(&db),
+                            &pipeline.name,
+                            cmd,
+                            &args,
+                            &source_name,
+                        )
+                        .await?,
+                    )
+                };
+            Ok(src)
+        }
+
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
             reason: format!("unknown source_type: {other}"),
@@ -1109,6 +1205,98 @@ async fn build_sink(
                 auth_token,
                 descriptor_path,
             )))
+        }
+
+        // v0.9.0: Singer protocol adapter
+        #[cfg(feature = "singer")]
+        "singer" => {
+            let target_command = pipeline.require_str(&["sink", "target_command"])?;
+            let target_args: Vec<String> = pipeline
+                .config
+                .pointer("/sink/target_args")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let target_name = pipeline
+                .opt_str(&["sink", "target_name"])
+                .unwrap_or(target_command);
+            let stream_name_template = pipeline
+                .opt_str(&["sink", "stream_name_template"])
+                .unwrap_or("{stream_table}");
+            let on_schema_change = crate::sink::singer::OnSchemaChange::from_str(
+                pipeline
+                    .opt_str(&["sink", "on_schema_change"])
+                    .unwrap_or("log"),
+            );
+            Ok(Box::new(crate::sink::singer::SingerSink::new(
+                Arc::clone(&db),
+                &pipeline.name,
+                target_command,
+                &target_args,
+                target_name,
+                stream_name_template,
+                on_schema_change,
+            )?))
+        }
+
+        // v0.9.0: Airbyte protocol adapter
+        #[cfg(feature = "airbyte")]
+        "airbyte" => {
+            let stream_name_template = pipeline
+                .opt_str(&["sink", "stream_name_template"])
+                .unwrap_or("{stream_table}");
+            let namespace = pipeline.opt_str(&["sink", "namespace"]).unwrap_or("pgtide");
+            let destination_name;
+
+            if let Some(image) = pipeline.opt_str(&["sink", "destination_image"]) {
+                let destination_config = pipeline
+                    .config
+                    .pointer("/sink/destination_config")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                destination_name = pipeline
+                    .opt_str(&["sink", "destination_name"])
+                    .unwrap_or(image)
+                    .to_string();
+                Ok(Box::new(crate::sink::airbyte::AirbyteSink::new_docker(
+                    Arc::clone(&db),
+                    &pipeline.name,
+                    image,
+                    &destination_config,
+                    &destination_name,
+                    stream_name_template,
+                    namespace,
+                )?))
+            } else {
+                let cmd = pipeline.require_str(&["sink", "destination_command"])?;
+                let args: Vec<String> = pipeline
+                    .config
+                    .pointer("/sink/destination_args")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                destination_name = pipeline
+                    .opt_str(&["sink", "destination_name"])
+                    .unwrap_or(cmd)
+                    .to_string();
+                Ok(Box::new(crate::sink::airbyte::AirbyteSink::new_command(
+                    Arc::clone(&db),
+                    &pipeline.name,
+                    cmd,
+                    &args,
+                    &destination_name,
+                    stream_name_template,
+                    namespace,
+                )?))
+            }
         }
 
         other => Err(RelayError::InvalidConfig {

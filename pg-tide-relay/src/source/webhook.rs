@@ -1,7 +1,7 @@
 /// HTTP webhook receiver source (RELAY-25) with signature verification (RELAY-P2-21).
 ///
 /// Starts an axum HTTP server that accepts POST requests and converts them to RelayMessages.
-/// Supports HMAC-SHA256, GitHub, Stripe, and Svix signature verification schemes.
+/// Supports HMAC-SHA256, GitHub, Stripe, Svix, and Fivetran signature verification schemes.
 ///
 /// Feature-gated: only compiled with `--features webhook`.
 use std::sync::Arc;
@@ -27,6 +27,8 @@ pub enum SignatureScheme {
     },
     /// Svix webhook signature scheme (used by many SaaS platforms).
     Svix { secret: String },
+    /// Fivetran HVR webhook signature: `X-Fivetran-Signature` with `sha256=HMAC(secret, body)`.
+    Fivetran { secret: String },
 }
 
 impl SignatureScheme {
@@ -66,6 +68,7 @@ impl SignatureScheme {
                 }
             }
             "svix" => Self::Svix { secret },
+            "fivetran" => Self::Fivetran { secret },
             _ => Self::None,
         }
     }
@@ -87,6 +90,7 @@ impl SignatureScheme {
                 tolerance_seconds,
             } => verify_stripe(body, headers, secret, *tolerance_seconds),
             Self::Svix { secret } => verify_svix(body, headers, secret),
+            Self::Fivetran { secret } => verify_fivetran(body, headers, secret),
         }
     }
 }
@@ -313,6 +317,33 @@ fn simple_base64_decode(s: &str) -> Result<Vec<u8>, String> {
         i += 4;
     }
     Ok(out)
+}
+
+/// Verify a Fivetran HVR webhook signature.
+///
+/// Fivetran sends `X-Fivetran-Signature` with `sha256=<hex_hmac>`.
+/// Reference: https://fivetran.com/docs/getting-started/hybrid-deployment
+#[cfg(feature = "webhook")]
+fn verify_fivetran(
+    body: &[u8],
+    headers: &axum::http::HeaderMap,
+    secret: &str,
+) -> Result<(), String> {
+    let sig_header = headers
+        .get("X-Fivetran-Signature")
+        .ok_or("missing X-Fivetran-Signature header")?;
+    let sig_str = sig_header
+        .to_str()
+        .map_err(|_| "X-Fivetran-Signature is not valid UTF-8")?;
+
+    // Strip "sha256=" prefix if present.
+    let sig_hex = sig_str.strip_prefix("sha256=").unwrap_or(sig_str);
+
+    let expected = hmac_sha256_hex(secret, body);
+    if !constant_time_eq(expected.as_bytes(), sig_hex.as_bytes()) {
+        return Err("Fivetran webhook HMAC-SHA256 signature mismatch".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(feature = "webhook")]

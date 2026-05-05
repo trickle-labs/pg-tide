@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.9.0 — Connector Ecosystem Foundation (Singer, Airbyte, Fivetran)](#090--2026-05-06--connector-ecosystem-foundation-singer-airbyte-fivetran)
 - [0.8.0 — Notification Sinks & Apache Arrow Flight](#080--2026-05-05--notification-sinks--apache-arrow-flight)
 - [0.7.0 — Production-Grade Relay Operations](#070--2026-05-06--production-grade-relay-operations)
 - [0.6.0 — MQTT v5, Azure Event Hubs & Object Storage (JSONL + Parquet)](#060--2026-05-05--mqtt-v5-azure-event-hubs--object-storage-jsonl--parquet)
@@ -16,6 +17,64 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.9.0] — 2026-05-06 — Connector Ecosystem Foundation (Singer, Airbyte, Fivetran)
+
+v0.9.0 brings first-class support for the three dominant open connector
+ecosystems — Singer, Airbyte, and Fivetran — plus a Grafana/Perses relay
+health dashboard.
+
+### Singer Protocol Adapter (RELAY-P3-S1)
+
+- `source_type: "singer"` spawns a Singer tap subprocess and reads
+  `SCHEMA`, `RECORD`, and `STATE` messages from its stdout.
+- `sink_type: "singer"` spawns a Singer target subprocess and writes
+  messages to its stdin; STATE emitted by the target is captured and
+  persisted automatically.
+- STATE is stored in `tide.singer_state` (keyed by `pipeline_name`, `tap_name`)
+  and reloaded on relay restart, enabling incremental replication.
+- SCHEMA messages are logged to `tide.singer_schema_log` for drift detection;
+  new SQL function `tide.singer_schema_drift()` surfaces changed streams.
+- `on_schema_change` option: `log` (default), `emit_event`, or `error`.
+- Feature flag: `--features singer`.
+
+### Airbyte Protocol Adapter (RELAY-P3-A1)
+
+- `source_type: "airbyte"` spawns an Airbyte source connector (Docker image or
+  bare command) and reads `RECORD`, `STATE`, `CATALOG`, `LOG`, and `TRACE`
+  messages from its stdout.
+- `sink_type: "airbyte"` spawns an Airbyte destination connector and writes
+  messages to its stdin; STATE is captured and persisted automatically.
+- STATE is stored in `tide.relay_airbyte_state` (keyed by `pipeline_name`,
+  `source_name`) and reloaded on relay restart.
+- Both `image` (Docker) and `command` (bare executable) launch modes supported.
+- CDC soft-delete detection via `_ab_cdc_deleted_at` metadata field.
+- Feature flag: `--features airbyte`.
+
+### Fivetran HVR Webhook Flavor (RELAY-P3-F1)
+
+- `signature_scheme: "fivetran"` added to the webhook source.
+- Validates the `X-Fivetran-Signature` header using HMAC-SHA256 with
+  `sha256=<hex>` prefix format.
+- Handles Fivetran HVR batch payloads: `insert`, `update`, `delete`, and
+  `upsert` operation types.
+
+### Relay Health Dashboard (RELAY-P3-D1)
+
+- New Grafana/Perses dashboard at `pg-tide/dashboards/relay-health.json`.
+- Panels: messages forwarded/sec, inbox messages received/sec, error rate,
+  DLQ messages, outbox backlog depth, forward latency (p50/p95/p99),
+  circuit breaker state, retry attempts/sec, inbox lag.
+
+### SQL Migration
+
+- `sql/pg_tide--0.7.0--0.8.0.sql` — empty upgrade for v0.8.0 (relay-only
+  release, no SQL changes).
+- `sql/pg_tide--0.8.0--0.9.0.sql` — adds `tide.singer_state`,
+  `tide.singer_schema_log`, `tide.relay_airbyte_state` tables and the
+  `tide.singer_state_list()` and `tide.singer_schema_drift()` SQL functions.
 
 ---
 

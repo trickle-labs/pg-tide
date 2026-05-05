@@ -58,6 +58,13 @@ pub mod pagerduty;
 #[cfg(feature = "arrow-flight")]
 pub mod arrow_flight;
 
+// v0.9.0: Connector ecosystem sinks
+#[cfg(feature = "singer")]
+pub mod singer;
+
+#[cfg(feature = "airbyte")]
+pub mod airbyte;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;
