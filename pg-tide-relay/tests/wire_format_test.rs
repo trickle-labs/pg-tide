@@ -12,8 +12,8 @@ mod common;
 
 use common::PgTideTestDb;
 use pg_tide_relay::wire_format::{
-    self, DebeziumFormat, EncodedBatch, EncodeContext, InboxRow, NativePgTideFormat, OutboxRow,
-    RawMessage, WireFormat,
+    self, DebeziumFormat, EncodeContext, InboxRow, NativePgTideFormat, OutboxRow, RawMessage,
+    WireFormat,
 };
 use serde_json::{json, Value};
 
@@ -100,8 +100,7 @@ fn test_native_encode_roundtrip() {
     };
     let batch = fmt.encode(&outbox_row, &ctx).unwrap();
     assert_eq!(batch.messages.len(), 1);
-    let v: Value =
-        serde_json::from_slice(batch.messages[0].value.as_ref().unwrap()).unwrap();
+    let v: Value = serde_json::from_slice(batch.messages[0].value.as_ref().unwrap()).unwrap();
     assert_eq!(v["op"], "insert");
     assert_eq!(v["outbox_id"], 1);
 }
@@ -163,7 +162,8 @@ async fn test_debezium_decode_update_and_deliver_to_inbox() {
     assert!(row.old_payload.is_some());
 
     deliver_inbox_row(&db, "wire-debezium-update-inbox", &row).await;
-    db.assert_inbox_received("wire-debezium-update-inbox", 1).await;
+    db.assert_inbox_received("wire-debezium-update-inbox", 1)
+        .await;
 }
 
 #[tokio::test]
@@ -188,7 +188,8 @@ async fn test_debezium_decode_delete_and_deliver_to_inbox() {
     assert_eq!(row.payload["id"], 7);
 
     deliver_inbox_row(&db, "wire-debezium-delete-inbox", &row).await;
-    db.assert_inbox_received("wire-debezium-delete-inbox", 1).await;
+    db.assert_inbox_received("wire-debezium-delete-inbox", 1)
+        .await;
 }
 
 #[test]
@@ -213,8 +214,7 @@ fn test_debezium_encode_insert_no_tombstone() {
     };
     let batch = fmt.encode(&row, &ctx).unwrap();
     assert_eq!(batch.messages.len(), 1);
-    let v: Value =
-        serde_json::from_slice(batch.messages[0].value.as_ref().unwrap()).unwrap();
+    let v: Value = serde_json::from_slice(batch.messages[0].value.as_ref().unwrap()).unwrap();
     assert_eq!(v["payload"]["op"], "c");
     assert_eq!(v["payload"]["after"]["id"], 10);
     assert!(v["payload"]["before"].is_null());
@@ -400,12 +400,15 @@ mod cdc_json_tests {
             "event_type_path": "$.resource",
         }));
 
-        let raw = RawMessage::from_json("raw-topic", &json!({
-            "event_type": "created",
-            "id": "evt-abc",
-            "resource": "orders",
-            "data": {"order_id": 1, "total": 99},
-        }));
+        let raw = RawMessage::from_json(
+            "raw-topic",
+            &json!({
+                "event_type": "created",
+                "id": "evt-abc",
+                "resource": "orders",
+                "data": {"order_id": 1, "total": 99},
+            }),
+        );
 
         let row = fmt.decode(&raw).unwrap().unwrap();
         assert_eq!(row.op, "insert");
@@ -434,8 +437,7 @@ mod cdc_json_tests {
         };
         let batch = fmt.encode(&row, &ctx).unwrap();
         assert_eq!(batch.messages.len(), 1);
-        let v: Value =
-            serde_json::from_slice(batch.messages[0].value.as_ref().unwrap()).unwrap();
+        let v: Value = serde_json::from_slice(batch.messages[0].value.as_ref().unwrap()).unwrap();
         assert!(v.get("op").is_some());
     }
 }
