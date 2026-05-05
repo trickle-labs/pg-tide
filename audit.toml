@@ -1,0 +1,62 @@
+# cargo audit configuration
+# https://docs.rs/cargo-audit/latest/cargo_audit/config/index.html
+#
+# All ignored advisories are in OPTIONAL feature-gated dependencies.
+# The default build (nats + webhook + stdout) is not affected by any of these.
+# Re-evaluate whenever upstream crates release updates.
+
+[advisories]
+
+# hickory-proto 0.25.2 — CPU exhaustion O(n²) name compression
+# Pulled in by: mongodb (optional feature "mongodb")
+# Fix available: >=0.26.1, but mongodb 3.6.0 has not yet updated its dependency.
+# Risk: only affects deployments using the mongodb feature gate.
+ignore = [
+    # hickory-proto: CPU exhaustion during message encoding (O(n²) name compression)
+    # https://github.com/hickory-dns/hickory-dns/security/advisories/GHSA-q2qq-hmj6-3wpp
+    # Upstream fix: hickory-proto >=0.26.1; waiting on mongodb to update.
+    "RUSTSEC-2026-0119",
+
+    # hickory-proto: NSEC3 closest-encloser proof unbounded loop
+    # https://github.com/hickory-dns/hickory-dns/security/advisories/GHSA-3v94-mw7p-v465
+    # NO FIX AVAILABLE upstream as of 2026-05-05. Same mongodb chain.
+    "RUSTSEC-2026-0118",
+
+    # rustls-webpki 0.101.7 / 0.102.8 — reachable panic in CRL parsing
+    # https://rustsec.org/advisories/RUSTSEC-2026-0104
+    # Affects: AWS SDK chain (sqs/s3/kinesis feature) and rumqttc (mqtt feature).
+    # Fix (>=0.103.13) requires a semver-incompatible jump; upstream has not released
+    # new crates crossing that boundary yet. cargo update -p rustls-webpki locks 0 packages.
+    "RUSTSEC-2026-0104",
+
+    # rustls-webpki 0.101.7 / 0.102.8 — URI name-constraint bypass
+    # https://rustsec.org/advisories/RUSTSEC-2026-0098
+    # Same chain as above; same root cause (webpki 0.101/0.102 not updatable via Cargo).
+    "RUSTSEC-2026-0098",
+
+    # rustls-webpki 0.101.7 / 0.102.8 — wildcard name-constraint bypass
+    # https://rustsec.org/advisories/RUSTSEC-2026-0099
+    # Same chain as above.
+    "RUSTSEC-2026-0099",
+
+    # rustls-webpki 0.102.8 — CRLs not authoritative due to faulty matching logic
+    # https://rustsec.org/advisories/RUSTSEC-2026-0049
+    # Pulled in by rumqttc (mqtt feature). Same semver-jump problem as above.
+    "RUSTSEC-2026-0049",
+
+    # paste 1.0.15 — unmaintained
+    # https://rustsec.org/advisories/RUSTSEC-2024-0436
+    # Pulled in by parquet (iceberg/delta/ducklake features). No active exploit.
+    # Will resolve when parquet upgrades or replaces paste.
+    "RUSTSEC-2024-0436",
+
+    # rustls-pemfile 2.2.0 — unmaintained
+    # https://rustsec.org/advisories/RUSTSEC-2025-0134
+    # Pulled in by rumqttc and object_store (mqtt / object-storage features).
+    "RUSTSEC-2025-0134",
+
+    # serde_cbor 0.11.2 — unmaintained
+    # https://rustsec.org/advisories/RUSTSEC-2021-0127
+    # Pulled in by pgrx 0.18.0 (pinned). Nothing we can do until pgrx updates.
+    "RUSTSEC-2021-0127",
+]

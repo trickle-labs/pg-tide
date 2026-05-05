@@ -55,6 +55,20 @@ docs-serve:
 docker-build:
     docker build -t ghcr.io/trickle-labs/pg-tide:latest .
 
+# Run cargo audit (known-unfixable advisories in optional-feature deps are ignored;
+# see audit.toml for justification. All ignored advisories are optional-feature only.)
+audit:
+    cargo audit \
+        --ignore RUSTSEC-2026-0119 \
+        --ignore RUSTSEC-2026-0118 \
+        --ignore RUSTSEC-2026-0104 \
+        --ignore RUSTSEC-2026-0098 \
+        --ignore RUSTSEC-2026-0099 \
+        --ignore RUSTSEC-2026-0049 \
+        --ignore RUSTSEC-2024-0436 \
+        --ignore RUSTSEC-2025-0134 \
+        --ignore RUSTSEC-2021-0127
+
 # Run Criterion benchmarks
 bench:
     cargo bench --package pg-tide-relay
