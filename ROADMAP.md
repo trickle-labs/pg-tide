@@ -33,13 +33,19 @@
 |---------|-------|--------|-------|--------------|
 | v0.7.0 | Production-grade relay operations: dead-letter queue, Confluent / Apicurio schema registry (Avro + Protobuf), JMESPath message transforms, content-based routing, rate limiting, circuit breaker, SIGHUP config reload, dry-run / replay mode, OpenTelemetry tracing, webhook signature verification (HMAC / GitHub / Stripe / Svix) | 🔜 Planned | Large | [plans/relay-cli-phase2.md](plans/relay-cli-phase2.md) |
 
-### Notification & Analytics Sinks (v0.8.x – v0.10.x)
+### Notification & Analytics Sinks (v0.8.x – v0.11.x)
 
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
 | v0.8.0 | Notification sinks (Slack, Discord, PagerDuty), Apache Arrow Flight / gRPC | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
 | v0.9.0 | Connector ecosystems (foundation): Singer protocol adapter (Meltano Hub — ~500 taps/targets), Airbyte protocol adapter (~400 connectors), Fivetran HVR endpoint | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
 | v0.10.0 | Analytics sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Apache Iceberg, Delta Lake, DuckLake | 🔜 Planned | Large | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) |
+
+### Pluggable Wire Formats & CDC Ecosystem Parity (v0.11.x)
+
+| Version | Theme | Status | Scope | Full details |
+|---------|-------|--------|-------|--------------|
+| v0.11.0 | Pluggable wire formats: Debezium bidirectional support (JSON first, then Avro/Confluent Schema Registry, then Protobuf) unlocking long-tail CDC sources (Oracle, Db2, MongoDB, Cassandra, Vitess, Spanner) in reverse and making pg_tide a first-class CDC producer for Debezium-shaped sinks (Apache Iceberg, Pinot, Druid, StarRocks, ksqlDB, Flink CDC, Materialize); Maxwell and Canal decoders; custom CDC JSON with user-supplied path expressions; tombstone emission for Kafka log-compacted topics | 🔜 Future | Large | [plans/wire-formats.md](plans/wire-formats.md) |
 
 ### Production GA & Extended Ecosystems (v1.0+)
 
