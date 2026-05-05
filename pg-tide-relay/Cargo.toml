@@ -19,7 +19,7 @@ default = ["nats", "webhook", "stdout"]
 
 # Optional backends (each adds a Cargo dependency)
 nats            = ["dep:async-nats"]
-webhook         = ["dep:reqwest"]
+webhook         = ["dep:reqwest", "dep:hmac", "dep:sha2"]
 kafka           = ["dep:rdkafka"]
 stdout          = []
 redis           = ["dep:redis"]
@@ -35,6 +35,9 @@ servicebus      = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:base64"]
 mqtt            = ["dep:rumqttc"]
 eventhubs       = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:base64"]
 object-storage  = ["dep:object_store", "dep:parquet"]
+# v0.7.0: Operational excellence features
+schema-registry = ["dep:apache-avro"]
+otel            = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
 
 [dependencies]
 # Core async runtime + CLI
@@ -79,6 +82,15 @@ sha2 = { version = "0.10", optional = true }
 rumqttc = { version = "0.24", optional = true }
 object_store = { version = "0.11", features = ["aws", "gcp", "azure"], optional = true }
 parquet = { version = "54", optional = true }
+# v0.7.0 optional backends
+apache-avro = { version = "0.18", optional = true }
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "trace"], optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
+# v0.7.0 always-on: JMESPath transforms + rate limiting
+jmespath = "0.3"
+governor = { version = "0.7", features = ["std"] }
 
 [dev-dependencies]
 testcontainers = "0.27"

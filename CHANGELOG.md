@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.7.0 — Production-Grade Relay Operations](#070--2026-05-06--production-grade-relay-operations)
 - [0.6.0 — MQTT v5, Azure Event Hubs & Object Storage (JSONL + Parquet)](#060--2026-05-05--mqtt-v5-azure-event-hubs--object-storage-jsonl--parquet)
 - [0.5.0 — Cloud Provider Parity: Pub/Sub, Kinesis, Azure Service Bus & Elasticsearch](#050--2026-05-04--cloud-provider-parity-pubsub-kinesis-azure-service-bus--elasticsearch)
 - [0.4.0 — Relay Completion: Tier 2 Sinks, Full Reverse Mode & Integration Tests](#040--2026-05-04--relay-completion-tier-2-sinks-full-reverse-mode--integration-tests)
@@ -14,6 +15,75 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.7.0] — 2026-05-06 — Production-Grade Relay Operations
+
+v0.7.0 delivers the full suite of production-readiness features for the relay:
+dead-letter queue, JMESPath transforms, content-based routing, rate limiting,
+circuit breaker, Confluent Schema Registry integration, OpenTelemetry tracing,
+webhook signature verification, SIGHUP config reload, and dry-run/replay modes.
+
+### Dead-Letter Queue (RELAY-P2-11)
+
+- Failed messages that exceed the retry limit are routed to `tide.relay_dlq`.
+- New SQL API: `tide.dlq_list()`, `tide.dlq_replay()`, `tide.dlq_drop()`,
+  `tide.dlq_stats()`, `tide.dlq_purge_before()`, `tide.dlq_inspect()`.
+- Per-pipeline `dlq` config block enables/disables the DLQ and sets TTL.
+- SQL migration `pg_tide--0.6.0--0.7.0.sql` creates the DLQ table and functions.
+
+### Webhook Source & Signature Verification (RELAY-P2-12)
+
+- `source_type: "webhook"` launches an embedded HTTP server and writes
+  incoming payloads to the pg-tide inbox.
+- `signature_scheme` supports `hmac_sha256`, `github`, `stripe`, and `svix`.
+- Constant-time comparison prevents timing attacks.
+
+### JMESPath Message Transforms (RELAY-P2-13)
+
+- Per-pipeline `transforms` block supports `filter` and `projection` expressions.
+- `filter`: JMESPath expression evaluated against the payload; messages that do
+  not match are dropped before reaching the sink.
+- `projection`: JMESPath expression that reshapes the payload (e.g. extract a
+  sub-object).
+
+### Rate Limiting (RELAY-P2-15)
+
+- Token-bucket rate limiter via `governor`. Per-pipeline `rate_limit` config
+  block sets `messages_per_second`. The relay blocks until a token is available.
+
+### Circuit Breaker (RELAY-P2-16)
+
+- Three-state circuit breaker (`Closed` → `Open` → `HalfOpen`) prevents
+  thundering-herd retries against a failing sink.
+- `failure_threshold`, `recovery_timeout_secs`, and `half_open_probe_count`
+  are configurable.
+
+### Confluent Schema Registry & Avro (RELAY-P2-17)
+
+- Optional `schema-registry` feature adds Confluent Schema Registry integration.
+- Avro serialization with auto-registration of schemas.
+- `SubjectNameStrategy`: `topic` (default), `record_name`, `topic_record_name`.
+- Confluent wire-format framing (magic byte + 4-byte schema ID).
+
+### SIGHUP Config Reload (RELAY-P2-18)
+
+- Sending `SIGHUP` to the relay process triggers a live config reload without
+  downtime.
+
+### Dry-Run & Replay Modes (RELAY-P2-19)
+
+- `--dry-run` flag: the relay reads messages and applies transforms but does
+  not publish to the sink or update cursor state.
+- `--replay` flag: reprocesses already-acknowledged messages from the outbox
+  from the beginning without modifying inbox/DLQ state.
+
+### OpenTelemetry Tracing (RELAY-P2-20)
+
+- Optional `otel` feature emits OTLP traces for every relay pipeline iteration.
+- `[otel]` config block sets `endpoint`, `service_name`, and `sampling_ratio`.
+- Uses `opentelemetry-otlp` 0.27 with Tonic gRPC transport.
 
 ---
 

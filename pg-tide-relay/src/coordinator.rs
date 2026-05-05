@@ -8,9 +8,14 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch, RwLock};
 use tokio_postgres::Client;
 
+use crate::circuit_breaker::CircuitBreaker;
 use crate::config::{resolve_pipeline_secrets, PipelineConfig, PipelineDirection};
+use crate::dlq::{DlqConfig, DlqEntry, ErrorKind};
 use crate::error::RelayError;
+use crate::jmespath_transform::{apply_transforms, TransformConfig};
 use crate::metrics::{HealthState, RelayMetrics};
+use crate::rate_limiter::build_rate_limiter;
+use crate::routing::{apply_routing, RoutingConfig};
 
 /// Coordinator manages pipeline ownership via advisory locks.
 pub struct Coordinator {
@@ -314,6 +319,31 @@ async fn worker_inner(
         .unwrap_or(default_batch_size);
     let poll_interval_ms = pipeline.opt_i64(&["poll_interval_ms"]).unwrap_or(1_000) as u64;
 
+    // v0.7.0: Parse operational config.
+    let dry_run = pipeline.opt_bool(&["dry_run"]).unwrap_or(false);
+    let dlq_config = DlqConfig::from_pipeline_config(&pipeline.config);
+    let transform_config = TransformConfig::from_pipeline_config(&pipeline.config);
+    let routing_config = RoutingConfig::from_pipeline_config(&pipeline.config);
+    let rate_limiter = build_rate_limiter(&pipeline.config);
+    let mut circuit_breaker = CircuitBreaker::from_pipeline_config(&pipeline.config);
+
+    // v0.7.0: Replay mode — read from_offset/to_offset.
+    let replay_from = pipeline.opt_i64(&["replay", "from_offset"]);
+    let replay_to = pipeline.opt_i64(&["replay", "to_offset"]);
+    let is_replay = replay_from.is_some();
+
+    if dry_run {
+        tracing::info!(pipeline = %pipeline.name, "dry-run mode enabled — messages will NOT be published");
+    }
+    if is_replay {
+        tracing::info!(
+            pipeline = %pipeline.name,
+            from = replay_from,
+            to = replay_to,
+            "replay mode enabled"
+        );
+    }
+
     let mut source = build_source(&pipeline, Arc::clone(&db), &relay_group_id).await?;
     let mut sink = build_sink(&pipeline, Arc::clone(&db)).await?;
 
@@ -327,8 +357,11 @@ async fn worker_inner(
         direction = direction_label,
         source = source.name(),
         sink = sink.name(),
+        dry_run,
         "worker started"
     );
+
+    let mut consecutive_failures: u32 = 0;
 
     loop {
         if *stop_rx.borrow() {
@@ -359,8 +392,99 @@ async fn worker_inner(
             continue;
         }
 
+        // v0.7.0: Replay mode — skip messages outside the replay range.
+        let batch = if is_replay {
+            filter_replay_batch(batch, replay_from, replay_to)
+        } else {
+            batch
+        };
+
+        if batch.is_empty() {
+            // Replay range exhausted.
+            tracing::info!(pipeline = %pipeline.name, "replay complete");
+            break;
+        }
+
+        // v0.7.0: Apply JMESPath transforms (filter + payload projection).
+        let batch = match apply_transforms(&transform_config, batch) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(pipeline = %pipeline.name, error = %e, "transform error");
+                continue;
+            }
+        };
+
+        if batch.is_empty() {
+            // All messages filtered out — acknowledge the source and continue.
+            continue;
+        }
+
+        // v0.7.0: Apply content-based routing.
+        let mut batch = batch;
+        apply_routing(&routing_config, &mut batch);
+
+        // v0.7.0: Dry-run mode — log what would be published, skip actual publish.
+        if dry_run {
+            for msg in &batch {
+                tracing::info!(
+                    pipeline = %pipeline.name,
+                    subject = %msg.subject,
+                    dedup_key = %msg.dedup_key,
+                    payload_bytes = msg.payload.to_string().len(),
+                    "[dry-run] would publish message"
+                );
+            }
+            if let Some(last) = batch.last() {
+                let _ = source.acknowledge(last).await;
+            }
+            metrics
+                .messages_published
+                .with_label_values(&[&pipeline.name, &direction_label])
+                .inc_by(batch.len() as u64);
+            continue;
+        }
+
+        // v0.7.0: Circuit breaker check.
+        if !circuit_breaker.should_allow() {
+            tracing::warn!(
+                pipeline = %pipeline.name,
+                "circuit breaker open — routing batch to DLQ or sleeping"
+            );
+            if dlq_config.enabled {
+                let entries: Vec<DlqEntry> = batch
+                    .iter()
+                    .map(|msg| {
+                        DlqEntry::from_message(
+                            &direction_label,
+                            &pipeline.name,
+                            source.name(),
+                            sink.name(),
+                            msg,
+                            "circuit breaker open",
+                            ErrorKind::SinkPermanent,
+                        )
+                    })
+                    .collect();
+                if let Err(e) = crate::dlq::insert_batch(&db, &entries).await {
+                    tracing::warn!(pipeline = %pipeline.name, error = %e, "DLQ insert error");
+                }
+            } else {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+                    _ = stop_rx.changed() => { break; }
+                }
+            }
+            continue;
+        }
+
+        // v0.7.0: Rate limiting — wait for tokens before publishing.
+        rate_limiter.acquire(batch.len() as u32).await;
+
         match sink.publish(&batch).await {
             Ok(()) => {
+                consecutive_failures = 0;
+                circuit_breaker.record_success();
+
                 if let Some(last) = batch.last() {
                     if let Err(e) = source.acknowledge(last).await {
                         tracing::warn!(
@@ -376,15 +500,52 @@ async fn worker_inner(
                     .inc_by(batch.len() as u64);
             }
             Err(e) => {
+                consecutive_failures += 1;
+                circuit_breaker.record_failure();
+
                 tracing::warn!(
                     pipeline = %pipeline.name,
                     error = %e,
-                    "publish error — retrying batch"
+                    consecutive_failures,
+                    "publish error"
                 );
+
                 metrics
                     .publish_errors
                     .with_label_values(&[&pipeline.name, &direction_label])
                     .inc();
+
+                // v0.7.0: Route to DLQ when max retries exceeded.
+                if dlq_config.enabled && consecutive_failures > dlq_config.max_retries {
+                    tracing::warn!(
+                        pipeline = %pipeline.name,
+                        "max retries ({}) exceeded — routing batch to DLQ",
+                        dlq_config.max_retries
+                    );
+                    let entries: Vec<DlqEntry> = batch
+                        .iter()
+                        .map(|msg| {
+                            DlqEntry::from_message(
+                                &direction_label,
+                                &pipeline.name,
+                                source.name(),
+                                sink.name(),
+                                msg,
+                                &e.to_string(),
+                                ErrorKind::MaxRetriesExceeded,
+                            )
+                        })
+                        .collect();
+                    if let Err(dlq_err) = crate::dlq::insert_batch(&db, &entries).await {
+                        tracing::warn!(
+                            pipeline = %pipeline.name,
+                            error = %dlq_err,
+                            "DLQ insert error"
+                        );
+                    }
+                    consecutive_failures = 0;
+                }
+
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
                     _ = stop_rx.changed() => { break; }
@@ -396,6 +557,23 @@ async fn worker_inner(
     let _ = source.close().await;
     let _ = sink.close().await;
     Ok(())
+}
+
+/// Filter a batch to only include messages in the replay offset range.
+fn filter_replay_batch(
+    batch: Vec<crate::envelope::RelayMessage>,
+    from_offset: Option<i64>,
+    to_offset: Option<i64>,
+) -> Vec<crate::envelope::RelayMessage> {
+    batch
+        .into_iter()
+        .filter(|msg| {
+            let id = msg.outbox_id.unwrap_or(0);
+            let after_from = from_offset.map(|f| id >= f).unwrap_or(true);
+            let before_to = to_offset.map(|t| id <= t).unwrap_or(true);
+            after_from && before_to
+        })
+        .collect()
 }
 
 // ── Source factory ────────────────────────────────────────────────────────
