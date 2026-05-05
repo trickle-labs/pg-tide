@@ -46,6 +46,14 @@ arrow-flight    = ["dep:arrow-array", "dep:arrow-schema", "dep:arrow-flight", "d
 # v0.9.0: Connector ecosystem
 singer          = []
 airbyte         = []
+# v0.10.0: Analytics sinks
+clickhouse      = ["dep:reqwest"]
+mongodb         = ["dep:mongodb"]
+snowflake       = ["dep:reqwest"]
+bigquery        = ["dep:reqwest"]
+iceberg         = ["dep:object_store", "dep:parquet"]
+delta           = ["dep:object_store", "dep:parquet"]
+ducklake        = ["dep:object_store", "dep:parquet"]
 
 [dependencies]
 # Core async runtime + CLI
@@ -104,6 +112,8 @@ arrow-array = { version = "54", optional = true }
 arrow-schema = { version = "54", optional = true }
 arrow-flight = { version = "54", optional = true }
 tonic = { version = "0.12", optional = true }
+# v0.10.0 optional backends: analytics sinks
+mongodb = { version = "3", optional = true }
 
 [dev-dependencies]
 testcontainers = "0.27"

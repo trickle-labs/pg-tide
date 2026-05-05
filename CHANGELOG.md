@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.10.0 — Analytics Sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Iceberg, Delta Lake, DuckLake](#0100--2026-05-07--analytics-sinks-clickhouse-mongodb-snowflake-bigquery-iceberg-delta-lake-ducklake)
 - [0.9.0 — Connector Ecosystem Foundation (Singer, Airbyte, Fivetran)](#090--2026-05-06--connector-ecosystem-foundation-singer-airbyte-fivetran)
 - [0.8.0 — Notification Sinks & Apache Arrow Flight](#080--2026-05-05--notification-sinks--apache-arrow-flight)
 - [0.7.0 — Production-Grade Relay Operations](#070--2026-05-06--production-grade-relay-operations)
@@ -17,6 +18,89 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.10.0] — 2026-05-07 — Analytics Sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Iceberg, Delta Lake, DuckLake
+
+v0.10.0 delivers seven analytics sink backends for the relay, enabling
+pg_tide to act as the bridge between your PostgreSQL transactional tables
+and every major analytical data platform.
+
+### ClickHouse Sink (RELAY-P3-CH)
+
+- `sink_type: "clickhouse"` delivers relay messages to ClickHouse via its
+  HTTP interface using `INSERT INTO … FORMAT JSONEachRow`.
+- Messages are grouped by resolved table name and sent as NDJSON batches.
+- Authentication via `X-ClickHouse-User` / `X-ClickHouse-Key` headers.
+- `table_template` supports `{stream_table}` substitution.
+- Feature flag: `--features clickhouse`.
+
+### MongoDB Sink (RELAY-P3-MDB)
+
+- `sink_type: "mongodb"` upserts relay messages as MongoDB documents using
+  `replaceOne(upsert: true)` keyed by `dedup_key`.
+- `op = "delete"` maps to `deleteOne`; `is_full_refresh = true` drops and
+  recreates the collection.
+- `collection_template` supports `{stream_table}` substitution.
+- Configurable write concern (`majority` or numeric).
+- Feature flag: `--features mongodb`.
+
+### Snowflake Sink (RELAY-P3-SF)
+
+- `sink_type: "snowflake"` delivers relay messages to Snowflake using the
+  Snowpipe Streaming REST API (`insertRows`).
+- Column names uppercased per Snowflake convention: `_DEDUP_KEY`, `_SUBJECT`,
+  `_OP`, `_OUTBOX_ID`, `DATA`.
+- `table_template` supports `{stream_table}` substitution.
+- Bearer token authentication (JWT/pre-generated).
+- Feature flag: `--features snowflake`.
+
+### BigQuery Sink (RELAY-P3-BQ)
+
+- `sink_type: "bigquery"` streams relay messages into BigQuery tables via
+  the `tabledata.insertAll` REST endpoint.
+- `insertId` is set to `dedup_key` for server-side deduplication.
+- Checks `insertErrors` in the response and surfaces per-row failures.
+- `table_template` supports `{stream_table}` substitution.
+- Feature flag: `--features bigquery`.
+
+### Apache Iceberg v2 Sink (RELAY-P3-ICE)
+
+- `sink_type: "iceberg"` writes relay messages as Parquet data files
+  (`PAR1`) conforming to the Iceberg v2 open table format spec.
+- Generates `metadata/vN.metadata.json` per snapshot with full schema,
+  partition spec, and snapshot manifest compatible with Iceberg readers.
+- `write_mode: "append"` (default) or `"overwrite"`.
+- Stores files via the `object_store` crate (S3, GCS, Azure Blob, local).
+- Feature flag: `--features iceberg`.
+
+### Delta Lake Sink (RELAY-P3-DL)
+
+- `sink_type: "delta"` writes relay messages as Parquet files with Delta
+  Lake Protocol v2 log commits under `_delta_log/`.
+- Version 0 commit writes `protocol` + `metaData` actions; subsequent
+  commits write `add` actions with row-count statistics.
+- `change_data_feed: true` adds a `_change_type` column
+  (`insert` / `delete` / `update_postimage`) for CDC consumers.
+- Stores files via `object_store`; log entries are newline-delimited JSON.
+- Feature flag: `--features delta`.
+
+### DuckLake Sink (RELAY-P3-DLK)
+
+- `sink_type: "ducklake"` writes relay messages as Parquet files to object
+  storage and records snapshot metadata in a PostgreSQL catalog table
+  (`tide.ducklake_snapshots`), enabling DuckDB to query data lake files
+  via `CREATE TABLE … USING parquet(...)`.
+- Catalog table is created automatically on first use.
+- Supports `compression: "snappy"` (default), `"zstd"`, or `"none"`.
+- `table_template` supports `{stream_table}` substitution.
+- Feature flag: `--features ducklake`.
+
+### Upgrade notes
+
+This is a relay-binary-only release. No PostgreSQL catalog changes are
+required. The `pg_tide--0.9.0--0.10.0.sql` migration file is a no-op.
 
 ---
 

@@ -126,7 +126,7 @@ jobs:
           key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run integration tests (testcontainers)
-        run: cargo test --package pg-tide-relay --test '*' -- --test-threads=1
+        run: cargo test --package pg-tide-relay --test '*' --all-features -- --test-threads=1
 
   test-ext-pgrx:
     name: Extension pgrx Tests

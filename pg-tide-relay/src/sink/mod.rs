@@ -65,6 +65,28 @@ pub mod singer;
 #[cfg(feature = "airbyte")]
 pub mod airbyte;
 
+// v0.10.0: Analytics sinks
+#[cfg(feature = "clickhouse")]
+pub mod clickhouse;
+
+#[cfg(feature = "mongodb")]
+pub mod mongodb;
+
+#[cfg(feature = "snowflake")]
+pub mod snowflake;
+
+#[cfg(feature = "bigquery")]
+pub mod bigquery;
+
+#[cfg(feature = "iceberg")]
+pub mod iceberg;
+
+#[cfg(feature = "delta")]
+pub mod delta;
+
+#[cfg(feature = "ducklake")]
+pub mod ducklake;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;

@@ -1,0 +1,8 @@
+-- pg_tide 0.9.0 → 0.10.0
+--
+-- v0.10.0 is a relay-binary-only release adding seven analytics sink backends:
+--   ClickHouse, MongoDB, Snowflake, BigQuery, Apache Iceberg, Delta Lake, DuckLake.
+--
+-- No PostgreSQL catalog changes are required for this version.
+-- The DuckLake catalog table (tide.ducklake_snapshots) is created automatically
+-- by the relay on first use via CREATE TABLE IF NOT EXISTS.

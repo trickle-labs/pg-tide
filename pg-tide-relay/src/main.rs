@@ -3,22 +3,25 @@
 // Dead code warnings are suppressed because many types are feature-gated or
 // used only at runtime via trait objects rather than direct construction.
 #![allow(dead_code, unused_imports)]
-mod circuit_breaker;
+
+// Re-use public modules from the library target.
+use pg_tide_relay::circuit_breaker;
+use pg_tide_relay::config;
+use pg_tide_relay::coordinator;
+use pg_tide_relay::dlq;
+use pg_tide_relay::envelope;
+use pg_tide_relay::error;
+use pg_tide_relay::jmespath_transform;
+use pg_tide_relay::metrics;
+use pg_tide_relay::otel;
+use pg_tide_relay::rate_limiter;
+use pg_tide_relay::routing;
+use pg_tide_relay::schema_registry;
+use pg_tide_relay::sink;
+use pg_tide_relay::source;
+use pg_tide_relay::transforms;
+
 mod cli;
-mod config;
-mod coordinator;
-mod dlq;
-mod envelope;
-mod error;
-mod jmespath_transform;
-mod metrics;
-mod otel;
-mod rate_limiter;
-mod routing;
-mod schema_registry;
-mod sink;
-mod source;
-mod transforms;
 
 use clap::Parser;
 use futures_util::StreamExt;
