@@ -97,10 +97,8 @@ fn eval_filter(expr: &str, payload: &serde_json::Value) -> Result<bool, String> 
     let compiled = jmespath::compile(expr)
         .map_err(|e| format!("invalid JMESPath expression '{expr}': {e}"))?;
 
-    let json_str =
-        serde_json::to_string(payload).map_err(|e| format!("payload serialization error: {e}"))?;
     let result = compiled
-        .search(json_str.as_str())
+        .search(payload)
         .map_err(|e| format!("JMESPath evaluation error: {e}"))?;
 
     Ok(is_truthy(&result))
@@ -112,10 +110,8 @@ fn eval_projection(expr: &str, payload: &serde_json::Value) -> Result<serde_json
     let compiled = jmespath::compile(expr)
         .map_err(|e| format!("invalid JMESPath expression '{expr}': {e}"))?;
 
-    let json_str =
-        serde_json::to_string(payload).map_err(|e| format!("payload serialization error: {e}"))?;
     let result = compiled
-        .search(json_str.as_str())
+        .search(payload)
         .map_err(|e| format!("JMESPath evaluation error: {e}"))?;
 
     variable_to_json(&result).map_err(|e| format!("JMESPath result conversion error: {e}"))

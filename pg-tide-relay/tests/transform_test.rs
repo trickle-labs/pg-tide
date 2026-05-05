@@ -64,9 +64,8 @@ fn test_jmespath_filter_truthy_values() {
     for val in &truthy {
         // Evaluate "data" field which contains the truthy value.
         let payload = serde_json::json!({"data": val});
-        let json_str = serde_json::to_string(&payload).unwrap();
         let expr = jmespath::compile("data").unwrap();
-        let result = expr.search(json_str.as_str()).unwrap();
+        let result = expr.search(&payload).unwrap();
         // All should be truthy.
         let is_truthy = match result.as_ref() {
             jmespath::Variable::Null => false,
@@ -93,9 +92,8 @@ fn test_jmespath_filter_falsy_values() {
 
     for val in &falsy {
         let payload = serde_json::json!({"data": val});
-        let json_str = serde_json::to_string(&payload).unwrap();
         let expr = jmespath::compile("data").unwrap();
-        let result = expr.search(json_str.as_str()).unwrap();
+        let result = expr.search(&payload).unwrap();
         let is_truthy = match result.as_ref() {
             jmespath::Variable::Null => false,
             jmespath::Variable::Bool(b) => *b,
@@ -119,10 +117,9 @@ fn test_jmespath_nested_path_extraction() {
         }
     });
 
-    let json_str = serde_json::to_string(&payload).unwrap();
     let expr = jmespath::compile("order.customer.name").unwrap();
-    let result = expr.search(json_str.as_str()).unwrap();
-    let json_str2 = serde_json::to_string(&*result).unwrap();
-    let val: serde_json::Value = serde_json::from_str(&json_str2).unwrap();
+    let result = expr.search(&payload).unwrap();
+    let json_str = serde_json::to_string(&*result).unwrap();
+    let val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
     assert_eq!(val, serde_json::json!("Alice"));
 }
