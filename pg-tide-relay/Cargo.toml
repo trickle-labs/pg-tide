@@ -38,6 +38,11 @@ object-storage  = ["dep:object_store", "dep:parquet"]
 # v0.7.0: Operational excellence features
 schema-registry = ["dep:apache-avro"]
 otel            = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
+# v0.8.0: Notification sinks + Arrow Flight
+slack           = ["dep:reqwest"]
+discord         = ["dep:reqwest"]
+pagerduty       = ["dep:reqwest"]
+arrow-flight    = ["dep:arrow-array", "dep:arrow-schema", "dep:arrow-flight", "dep:tonic"]
 
 [dependencies]
 # Core async runtime + CLI
@@ -91,6 +96,11 @@ tracing-opentelemetry = { version = "0.28", optional = true }
 # v0.7.0 always-on: JMESPath transforms + rate limiting
 jmespath = "0.3"
 governor = { version = "0.7", features = ["std"] }
+# v0.8.0 optional backends: notification sinks + Arrow Flight
+arrow-array = { version = "54", optional = true }
+arrow-schema = { version = "54", optional = true }
+arrow-flight = { version = "54", optional = true }
+tonic = { version = "0.12", optional = true }
 
 [dev-dependencies]
 testcontainers = "0.27"
@@ -98,6 +108,10 @@ testcontainers-modules = { version = "0.15", features = ["postgres", "redis", "r
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-uuid-1", "with-chrono-0_4"] }
 tempfile = "3"
+# v0.8.0: Arrow types used in arrow_flight_test.rs (always-on for tests).
+arrow-array = "54"
+arrow-schema = "54"
+arrow-ipc = "54"
 criterion = { version = "0.5", features = ["async_tokio"] }
 async-nats = "0.47"
 lapin = "4"

@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.8.0 — Notification Sinks & Apache Arrow Flight](#080--2026-05-05--notification-sinks--apache-arrow-flight)
 - [0.7.0 — Production-Grade Relay Operations](#070--2026-05-06--production-grade-relay-operations)
 - [0.6.0 — MQTT v5, Azure Event Hubs & Object Storage (JSONL + Parquet)](#060--2026-05-05--mqtt-v5-azure-event-hubs--object-storage-jsonl--parquet)
 - [0.5.0 — Cloud Provider Parity: Pub/Sub, Kinesis, Azure Service Bus & Elasticsearch](#050--2026-05-04--cloud-provider-parity-pubsub-kinesis-azure-service-bus--elasticsearch)
@@ -15,6 +16,104 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.8.0] — 2026-05-05 — Notification Sinks & Apache Arrow Flight
+
+v0.8.0 adds four new sinks to the relay: three notification backends
+(Slack, Discord, PagerDuty) and the high-performance Apache Arrow Flight /
+gRPC columnar data transport.
+
+### Slack Notification Sink (RELAY-P3-N1)
+
+- `sink_type: "slack"` delivers relay messages to a Slack channel via the
+  Incoming Webhooks API (Block Kit format).
+- Each batch is formatted as a Block Kit message with one `section` block per
+  relay message — subjects, op type, dedup key, and JSON payload are included.
+- Large batches are split into multiple Slack messages respecting the
+  configurable `batch_limit` (default: 50 blocks per message).
+- Optional `username` and `icon_emoji` override the bot display name and icon.
+- Feature flag: `--features slack`.
+
+**Configuration:**
+```toml
+[sink]
+webhook_url   = "https://hooks.slack.com/services/T.../B.../..."
+username      = "pg-tide"         # optional
+icon_emoji    = ":database:"      # optional
+batch_limit   = 50                # optional, default 50
+```
+
+### Discord Notification Sink (RELAY-P3-N2)
+
+- `sink_type: "discord"` delivers relay messages to a Discord channel via the
+  Discord Webhook API (Embeds format).
+- Each relay message is presented as a Discord Embed with colour coding:
+  green (`0x57F287`) for inserts, red (`0xED4245`) for deletes, grey otherwise.
+- Embed title shows subject and op; description shows the JSON payload in a
+  code block; footer contains the dedup key for tracing.
+- Discord's limit of 10 embeds per message is enforced via `batch_limit` (max 10).
+- Optional `username` and `avatar_url` customise the webhook bot appearance.
+- Feature flag: `--features discord`.
+
+**Configuration:**
+```toml
+[sink]
+webhook_url  = "https://discord.com/api/webhooks/1234567890/XXXX"
+username     = "pg-tide-relay"    # optional
+avatar_url   = "https://..."      # optional
+batch_limit  = 10                 # optional, default 10 (Discord max)
+```
+
+### PagerDuty Notification Sink (RELAY-P3-N3)
+
+- `sink_type: "pagerduty"` triggers PagerDuty incidents via the Events API v2.
+- Each relay message triggers a separate PagerDuty event with:
+  - `event_action: "trigger"` — creates or deduplicates an incident.
+  - `dedup_key` set from the relay message's dedup key — prevents duplicate alerts.
+  - `payload.custom_details` contains the full relay message payload.
+  - `payload.severity` is configurable (`critical`, `error`, `warning`, `info`);
+    delete operations always use `info` regardless of the configured severity.
+- Optional `source` and `component` fields populate the PagerDuty event context.
+- Feature flag: `--features pagerduty`.
+
+**Configuration:**
+```toml
+[sink]
+routing_key = "R0000000000000000000000000000001"
+severity    = "critical"          # optional, default "info"
+source      = "pg-tide-relay"     # optional
+component   = "orders-service"    # optional
+```
+
+### Apache Arrow Flight / gRPC Sink (RELAY-P3-2)
+
+- `sink_type: "arrow-flight"` pushes relay messages to an Arrow Flight server
+  using the `DoPut` RPC — the standard columnar high-throughput data transfer protocol.
+- Messages are encoded as Arrow RecordBatches with a fixed schema:
+
+  | Column     | Type  | Nullable |
+  |------------|-------|----------|
+  | dedup_key  | Utf8  | No       |
+  | subject    | Utf8  | No       |
+  | op         | Utf8  | No       |
+  | payload    | Utf8  | No       |
+  | outbox_id  | Int64 | Yes      |
+
+- The `payload` column contains the JSON-serialized relay message payload.
+- Connection is lazily established on first publish and reused across batches.
+- Optional `auth_token` sets a Bearer token on the gRPC metadata.
+- `descriptor_path` identifies the stream on the server (slash-separated, e.g. `"pg-tide/orders"`).
+- Feature flag: `--features arrow-flight`.
+
+**Configuration:**
+```toml
+[sink]
+url             = "http://localhost:50051"
+auth_token      = "Bearer ..."    # optional
+descriptor_path = "pg-tide"       # optional, default "pg-tide"
+```
 
 ---
 

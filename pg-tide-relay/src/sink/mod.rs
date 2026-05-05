@@ -45,6 +45,19 @@ pub mod eventhubs;
 #[cfg(feature = "object-storage")]
 pub mod object_storage;
 
+// v0.8.0: Notification sinks + Arrow Flight
+#[cfg(feature = "slack")]
+pub mod slack;
+
+#[cfg(feature = "discord")]
+pub mod discord;
+
+#[cfg(feature = "pagerduty")]
+pub mod pagerduty;
+
+#[cfg(feature = "arrow-flight")]
+pub mod arrow_flight;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;

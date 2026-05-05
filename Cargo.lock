@@ -284,6 +284,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow-flight"
+version = "54.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a194f47959a4e111463cb6d02c8576fe084b3d7a3c092314baf3b9629b62595b"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-cast",
+ "arrow-ipc",
+ "arrow-schema",
+ "base64",
+ "bytes",
+ "futures",
+ "prost 0.13.5",
+ "prost-types 0.13.5",
+ "tonic 0.12.3",
+]
+
+[[package]]
 name = "arrow-ipc"
 version = "54.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1336,7 +1355,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85a885520bf6249ab931a764ffdb87b0ceef48e6e7d807cfdb21b751e086e1ad"
 dependencies = [
  "prost 0.14.3",
- "prost-types",
+ "prost-types 0.14.3",
  "tonic 0.14.5",
  "tonic-prost",
  "ureq",
@@ -4309,7 +4328,7 @@ dependencies = [
 
 [[package]]
 name = "pg-tide-ext"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "pgrx",
  "pgrx-tests",
@@ -4320,9 +4339,13 @@ dependencies = [
 
 [[package]]
 name = "pg-tide-relay"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "apache-avro",
+ "arrow-array",
+ "arrow-flight",
+ "arrow-ipc",
+ "arrow-schema",
  "async-nats",
  "async-trait",
  "aws-config",
@@ -4360,6 +4383,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "toml 1.1.2+spec-1.1.0",
+ "tonic 0.12.3",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -4818,6 +4842,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52c2c1bf36ddb1a1c396b3601a3cec27c2462e45f07c386894ec3ccf5332bd16"
+dependencies = [
+ "prost 0.13.5",
 ]
 
 [[package]]

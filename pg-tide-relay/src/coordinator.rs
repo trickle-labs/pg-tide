@@ -1051,6 +1051,66 @@ async fn build_sink(
             )?))
         }
 
+        // v0.8.0: Notification sinks + Arrow Flight
+        #[cfg(feature = "slack")]
+        "slack" => {
+            let webhook_url = pipeline.require_str(&["sink", "webhook_url"])?;
+            let username = pipeline.opt_str(&["sink", "username"]).map(String::from);
+            let icon_emoji = pipeline.opt_str(&["sink", "icon_emoji"]).map(String::from);
+            let batch_limit = pipeline.opt_i64(&["sink", "batch_limit"]).unwrap_or(50) as usize;
+            Ok(Box::new(crate::sink::slack::SlackSink::new(
+                webhook_url,
+                username,
+                icon_emoji,
+                batch_limit,
+            )?))
+        }
+
+        #[cfg(feature = "discord")]
+        "discord" => {
+            let webhook_url = pipeline.require_str(&["sink", "webhook_url"])?;
+            let username = pipeline.opt_str(&["sink", "username"]).map(String::from);
+            let avatar_url = pipeline.opt_str(&["sink", "avatar_url"]).map(String::from);
+            let batch_limit = pipeline.opt_i64(&["sink", "batch_limit"]).unwrap_or(10) as usize;
+            Ok(Box::new(crate::sink::discord::DiscordSink::new(
+                webhook_url,
+                username,
+                avatar_url,
+                batch_limit,
+            )?))
+        }
+
+        #[cfg(feature = "pagerduty")]
+        "pagerduty" => {
+            let routing_key = pipeline.require_str(&["sink", "routing_key"])?;
+            let severity = pipeline.opt_str(&["sink", "severity"]).unwrap_or("info");
+            let source = pipeline.opt_str(&["sink", "source"]).map(String::from);
+            let component = pipeline.opt_str(&["sink", "component"]).map(String::from);
+            Ok(Box::new(crate::sink::pagerduty::PagerDutySink::new(
+                routing_key,
+                severity,
+                source,
+                component,
+            )?))
+        }
+
+        #[cfg(feature = "arrow-flight")]
+        "arrow-flight" => {
+            let url = pipeline.require_str(&["sink", "url"])?;
+            let auth_token = pipeline.opt_str(&["sink", "auth_token"]).map(String::from);
+            let descriptor_path: Vec<String> = pipeline
+                .opt_str(&["sink", "descriptor_path"])
+                .unwrap_or("pg-tide")
+                .split('/')
+                .map(String::from)
+                .collect();
+            Ok(Box::new(crate::sink::arrow_flight::ArrowFlightSink::new(
+                url,
+                auth_token,
+                descriptor_path,
+            )))
+        }
+
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
             reason: format!("unknown sink_type: {other}"),
