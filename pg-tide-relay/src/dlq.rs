@@ -75,12 +75,48 @@ impl DlqEntry {
 
 /// Insert a batch of failed messages into `tide.relay_dlq`.
 ///
-/// Each entry is inserted individually.  Insertion errors are logged but do
-/// not propagate — we must not lose the DLQ record because of a DB transient.
+/// v0.13.0: Reports partial failures — each entry is attempted individually.
+/// Entries that fail (e.g., transient DB errors) are logged but do not prevent
+/// other entries from being inserted.
+///
+/// Returns an error only if ALL inserts fail (total DLQ write failure).
 pub async fn insert_batch(db: &Arc<Client>, entries: &[DlqEntry]) -> Result<(), RelayError> {
+    let mut last_error: Option<RelayError> = None;
+    let mut success_count = 0usize;
+
     for entry in entries {
-        insert_one(db, entry).await?;
+        match insert_one(db, entry).await {
+            Ok(()) => {
+                success_count += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    pipeline = %entry.pipeline_name,
+                    dedup_key = %entry.dedup_key,
+                    error = %e,
+                    "DLQ insert failed for entry — continuing with remaining entries"
+                );
+                last_error = Some(e);
+            }
+        }
     }
+
+    if success_count == 0 && !entries.is_empty() {
+        // All entries failed — propagate the last error.
+        if let Some(e) = last_error {
+            return Err(e);
+        }
+    }
+
+    if let Some(ref e) = last_error {
+        tracing::warn!(
+            success_count,
+            total = entries.len(),
+            error = %e,
+            "DLQ batch partially failed"
+        );
+    }
+
     Ok(())
 }
 

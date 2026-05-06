@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.13.0 — Security Hardening, Reliability & Performance](#0130--2026-05-08--security-hardening-reliability--performance)
 - [0.12.0 — Contract Correctness & Operational Tooling](#0120--2026-05-05--contract-correctness--operational-tooling)
 - [0.11.0 — Pluggable Wire Formats: Debezium, Maxwell, Canal, Custom CDC JSON](#0110--2026-05-05--pluggable-wire-formats-debezium-maxwell-canal-custom-cdc-json)
 - [0.10.0 — Analytics Sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Iceberg, Delta Lake, DuckLake](#0100--2026-05-07--analytics-sinks-clickhouse-mongodb-snowflake-bigquery-iceberg-delta-lake-ducklake)
@@ -20,6 +21,92 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.13.0] — 2026-05-08 — Security Hardening, Reliability & Performance
+
+v0.13.0 is a focused security, reliability, and performance release. It
+introduces publisher ACLs for per-outbox publish authorization, SSRF guards for
+webhook sinks, TLS/mTLS connection support, schema evolution guardrails, batch
+inserts for the pg-inbox sink, connection pooling limits, improved DLQ
+semantics, OTel spans, and supply-chain auditing via cargo-deny.
+
+### Security
+
+- **Outbox publisher ACLs** — New `tide.outbox_publishers` table and
+  `tide.outbox_grant_publish(outbox, role)` / `tide.outbox_revoke_publish(outbox,
+  role)` functions enforce per-outbox publish authorization. Roles must be
+  granted explicitly; superusers bypass the check. All ACL functions use
+  `SECURITY DEFINER SET search_path` to prevent search-path injection attacks.
+- **SSRF guard for webhook sinks** — `validate_webhook_url()` rejects
+  loopback (127.x, ::1, localhost), link-local (169.254.x, fe80::), private
+  ranges (10.x, 172.16–31.x, 192.168.x), and plain HTTP by default. Disable
+  via `ssrf_protection: false` for development. Hardened on every publish.
+- **TLS/mTLS support** — New `pg_tls` module parses `sslmode` from connection
+  URLs (including `verify-full`, `verify-ca` → `Require`) and provides
+  `with_ssl_mode()` for programmatic override.
+- **Supply-chain audit** — `deny.toml` and a `cargo-deny` CI step check all
+  dependencies for RUSTSEC advisories, license compliance (Apache-2.0, MIT,
+  BSD, etc.), and duplicate crate versions.
+
+### Reliability
+
+- **Schema evolution guardrails** — `SchemaEvolutionGuard` computes SHA-256
+  fingerprints of message payload schemas, detects `Initial` / `Additive` /
+  `Breaking` changes, and persists results in the new
+  `tide.relay_schema_fingerprints` table. Policy (`warn`, `continue`, `pause`,
+  `dlq`) is configurable per-pipeline.
+- **DLQ partial failure semantics** — `dlq::insert_batch()` now reports per-entry
+  failures instead of aborting on the first error. The source is acknowledged
+  only after a durable DLQ write; circuit-breaker and max-retries paths both
+  follow this guarantee.
+- **Connection pooling limit** — Coordinators enforce a configurable
+  `max_owned_pipelines` limit (default 50) to cap PostgreSQL connections. The
+  limit is reflected in the new `tide.relay_limits` catalog table.
+
+### Performance
+
+- **Batch pg-inbox inserts** — The `InboxSink` now uses a single
+  `INSERT ... SELECT * FROM UNNEST(...)` to deliver an entire batch in one
+  round trip instead of per-row `INSERT` calls. Deduplication via
+  `ON CONFLICT (event_id) DO NOTHING` is preserved.
+
+### Observability
+
+- **OTel spans** — `relay.source.poll`, `relay.sink.publish`, and
+  `relay.source.acknowledge` spans are emitted per poll cycle. The spans use
+  `tracing::info_span!` with `Instrument` so they bridge to any OTLP subscriber
+  (Jaeger, Tempo, Honeycomb, Datadog).
+- **New Prometheus metrics**:
+  - `pg_tide_relay_dlq_entries_written_total` — DLQ entries written per pipeline
+    and direction.
+  - `pg_tide_relay_messages_consumed_total` — messages polled from source (was
+    previously missing the consumed counter).
+  - `pg_tide_relay_pipeline_healthy` gauge — set to 1 after each successful
+    publish, 0 on error or exit.
+  - `pg_tide_relay_delivery_latency_seconds` histogram — end-to-end latency
+    from poll to ack.
+
+### Migration
+
+Upgrade from v0.12.0:
+
+```sql
+ALTER EXTENSION pg_tide UPDATE TO '0.13.0';
+-- or run: psql -f sql/pg_tide--0.12.0--0.13.0.sql
+```
+
+New objects added by the migration:
+
+| Object | Type | Description |
+|--------|------|-------------|
+| `tide.outbox_publishers` | TABLE | Per-outbox publisher ACL |
+| `tide.outbox_grant_publish(text,text)` | FUNCTION | Grant publish to role |
+| `tide.outbox_revoke_publish(text,text)` | FUNCTION | Revoke publish from role |
+| `tide.relay_schema_fingerprints` | TABLE | Per-pipeline schema evolution state |
+| `tide.relay_limits` | TABLE | Per-relay-group connection limits |
+| `uq_relay_dlq_pipeline_dedup` | INDEX | Partial unique index on relay_dlq |
 
 ---
 

@@ -112,6 +112,44 @@ fn outbox_publish_impl(
         Some(true) => {}
     }
 
+    // v0.13.0: Publisher ACL enforcement.
+    // When the outbox_publishers table exists and has ACL entries for this
+    // outbox, only listed roles (or superusers) may publish.
+    let acl_count: i64 = Spi::get_one_with_args::<i64>(
+        "SELECT COUNT(*) FROM tide.outbox_publishers WHERE outbox_name = $1",
+        &[name.into()],
+    )
+    .unwrap_or(None)
+    .unwrap_or(0);
+
+    if acl_count > 0 {
+        let current_role = Spi::get_one::<String>("SELECT current_user")
+            .unwrap_or(None)
+            .unwrap_or_default();
+        let is_superuser: bool = Spi::get_one_with_args::<bool>(
+            "SELECT rolsuper FROM pg_roles WHERE rolname = $1",
+            &[current_role.as_str().into()],
+        )
+        .unwrap_or(None)
+        .unwrap_or(false);
+
+        if !is_superuser {
+            let allowed: bool = Spi::get_one_with_args::<bool>(
+                "SELECT EXISTS(SELECT 1 FROM tide.outbox_publishers \
+                 WHERE outbox_name = $1 AND role_name = $2)",
+                &[name.into(), current_role.as_str().into()],
+            )
+            .unwrap_or(None)
+            .unwrap_or(false);
+            if !allowed {
+                return Err(PgTideError::InvalidArgument(format!(
+                    "role '{}' is not authorized to publish to outbox '{}'",
+                    current_role, name
+                )));
+            }
+        }
+    }
+
     let payload_str = serde_json::to_string(&payload.0)
         .map_err(|e| PgTideError::SpiError(format!("payload serialize: {e}")))?;
     let headers_str = serde_json::to_string(&headers.0)
@@ -427,6 +465,58 @@ fn commit_offset_impl(group: &str, consumer: &str, last_offset: i64) -> Result<(
     Ok(())
 }
 
+// ── TIDE-API: Publisher ACLs (v0.13.0) ────────────────────────────────────
+
+/// Grant a role fine-grained publish access to a specific outbox.
+///
+/// Inserts into `tide.outbox_publishers(outbox_name, role_name)`.
+/// Once any ACL entry exists for an outbox, `outbox_publish()` enforces
+/// publisher authorization.
+#[pg_extern(schema = "tide")]
+pub fn outbox_grant_publish(p_outbox: &str, p_role: &str) {
+    outbox_grant_publish_impl(p_outbox, p_role).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn outbox_grant_publish_impl(outbox: &str, role: &str) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(outbox)?;
+    if !outbox_exists(outbox) {
+        return Err(PgTideError::OutboxNotFound(outbox.to_string()));
+    }
+    Spi::run_with_args(
+        "INSERT INTO tide.outbox_publishers (outbox_name, role_name) \
+         VALUES ($1, $2) ON CONFLICT (outbox_name, role_name) DO NOTHING",
+        &[outbox.into(), role.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("outbox_grant_publish: {e}")))?;
+    pgrx::log!(
+        "[pg_tide] outbox_grant_publish: granted role '{}' publish on '{}'",
+        role,
+        outbox
+    );
+    Ok(())
+}
+
+/// Revoke fine-grained publish access from a role for a specific outbox.
+#[pg_extern(schema = "tide")]
+pub fn outbox_revoke_publish(p_outbox: &str, p_role: &str) {
+    outbox_revoke_publish_impl(p_outbox, p_role).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn outbox_revoke_publish_impl(outbox: &str, role: &str) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(outbox)?;
+    Spi::run_with_args(
+        "DELETE FROM tide.outbox_publishers WHERE outbox_name = $1 AND role_name = $2",
+        &[outbox.into(), role.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("outbox_revoke_publish: {e}")))?;
+    pgrx::log!(
+        "[pg_tide] outbox_revoke_publish: revoked role '{}' publish on '{}'",
+        role,
+        outbox
+    );
+    Ok(())
+}
+
 /// Update consumer heartbeat timestamp.
 #[pg_extern(schema = "tide")]
 pub fn consumer_heartbeat(p_group: &str, p_consumer: &str) {
@@ -574,5 +664,51 @@ mod tests {
         .unwrap()
         .unwrap_or(1);
         assert_eq!(count, 0);
+    }
+
+    // ── Publisher ACL (v0.13.0) ────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_outbox_grant_publish_adds_acl() {
+        crate::outbox::outbox_create("acl-outbox", 24, 10_000);
+        crate::outbox::outbox_grant_publish("acl-outbox", "app_role");
+
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.outbox_publishers \
+             WHERE outbox_name = 'acl-outbox' AND role_name = 'app_role'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+        assert_eq!(count, 1, "ACL entry should be added");
+    }
+
+    #[pg_test]
+    fn test_outbox_grant_publish_idempotent() {
+        crate::outbox::outbox_create("acl-idem", 24, 10_000);
+        crate::outbox::outbox_grant_publish("acl-idem", "some_role");
+        crate::outbox::outbox_grant_publish("acl-idem", "some_role"); // duplicate
+
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.outbox_publishers \
+             WHERE outbox_name = 'acl-idem'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+        assert_eq!(count, 1, "Duplicate grant should not add a second row");
+    }
+
+    #[pg_test]
+    fn test_outbox_revoke_publish_removes_acl() {
+        crate::outbox::outbox_create("acl-revoke", 24, 10_000);
+        crate::outbox::outbox_grant_publish("acl-revoke", "to_revoke");
+        crate::outbox::outbox_revoke_publish("acl-revoke", "to_revoke");
+
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.outbox_publishers \
+             WHERE outbox_name = 'acl-revoke'",
+        )
+        .unwrap()
+        .unwrap_or(1);
+        assert_eq!(count, 0, "ACL entry should be removed");
     }
 }

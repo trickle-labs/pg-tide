@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 use tokio_postgres::Client;
+use tracing::Instrument as _;
 
 use crate::circuit_breaker::CircuitBreaker;
 use crate::config::{resolve_pipeline_secrets, PipelineConfig, PipelineDirection};
@@ -16,7 +17,6 @@ use crate::jmespath_transform::{apply_transforms, TransformConfig};
 use crate::metrics::{HealthState, RelayMetrics};
 use crate::rate_limiter::build_rate_limiter;
 use crate::routing::{apply_routing, RoutingConfig};
-
 /// Coordinator manages pipeline ownership via advisory locks.
 pub struct Coordinator {
     db: Arc<Client>,
@@ -25,6 +25,8 @@ pub struct Coordinator {
     health: Arc<RwLock<HealthState>>,
     /// Pipeline ID → cancellation sender.
     owned: HashMap<String, watch::Sender<bool>>,
+    /// v0.13.0: Maximum owned pipelines (connection limit).
+    max_owned_pipelines: usize,
 }
 
 impl Coordinator {
@@ -40,7 +42,18 @@ impl Coordinator {
             metrics,
             health,
             owned: HashMap::new(),
+            max_owned_pipelines: 50, // default: matches tide.relay_limits
         }
+    }
+
+    /// Set the maximum number of pipelines this coordinator will own.
+    pub fn set_max_owned_pipelines(&mut self, max: usize) {
+        self.max_owned_pipelines = max;
+    }
+
+    /// Get the current max_owned_pipelines limit.
+    fn max_owned_pipelines(&self) -> usize {
+        self.max_owned_pipelines
     }
 
     /// Run the coordinator discovery loop until shutdown is signalled.
@@ -201,6 +214,20 @@ impl Coordinator {
                 continue; // Already running.
             }
 
+            // v0.13.0: Enforce max_owned_pipelines connection limit.
+            // Each owned pipeline consumes one PostgreSQL connection.
+            // Default: 50 pipelines / 60 connections (2 shared + 50 workers).
+            let max_owned = self.max_owned_pipelines();
+            if self.owned.len() >= max_owned {
+                tracing::warn!(
+                    owned = self.owned.len(),
+                    max = max_owned,
+                    pipeline = %pipeline.name,
+                    "max_owned_pipelines limit reached — not acquiring additional pipelines"
+                );
+                break;
+            }
+
             let acquired = match self.try_acquire_lock(&pipeline.name).await {
                 Ok(v) => v,
                 Err(e) => {
@@ -276,18 +303,30 @@ async fn run_pipeline_worker(
     mut stop_rx: watch::Receiver<bool>,
 ) {
     let name = pipeline.name.clone();
+
+    // v0.13.0: Mark pipeline as healthy when worker starts.
+    metrics.pipeline_healthy.with_label_values(&[&name]).set(1);
+
     match worker_inner(
         pipeline,
         db_url,
         relay_group_id,
-        metrics,
+        metrics.clone(),
         batch_size,
         &mut stop_rx,
     )
     .await
     {
-        Ok(()) => tracing::info!(pipeline = %name, "worker stopped"),
-        Err(e) => tracing::error!(pipeline = %name, error = %e, "worker exited with error"),
+        Ok(()) => {
+            tracing::info!(pipeline = %name, "worker stopped");
+            // Mark as 0 on clean stop.
+            metrics.pipeline_healthy.with_label_values(&[&name]).set(0);
+        }
+        Err(e) => {
+            tracing::error!(pipeline = %name, error = %e, "worker exited with error");
+            // Mark as 0 on error exit.
+            metrics.pipeline_healthy.with_label_values(&[&name]).set(0);
+        }
     }
 }
 
@@ -341,6 +380,14 @@ async fn worker_inner(
     let replay_to = pipeline.opt_i64(&["replay", "to_offset"]);
     let is_replay = replay_from.is_some();
 
+    // v0.13.0: Wire-format factory — instantiate the configured wire format.
+    let wire_format = crate::wire_format::from_config(&pipeline.config);
+    tracing::info!(
+        pipeline = %pipeline.name,
+        wire_format = wire_format.name(),
+        "wire format active"
+    );
+
     if dry_run {
         tracing::info!(pipeline = %pipeline.name, "dry-run mode enabled — messages will NOT be published");
     }
@@ -377,19 +424,28 @@ async fn worker_inner(
             break;
         }
 
-        let batch = match source.poll(batch_size).await {
-            Ok(msgs) => msgs,
-            Err(e) => {
-                tracing::warn!(
-                    pipeline = %pipeline.name,
-                    error = %e,
-                    "poll error — sleeping before retry"
-                );
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
-                    _ = stop_rx.changed() => { break; }
+        let batch = {
+            // v0.13.0: OTel span for the poll call.
+            // Use Instrument::instrument() to avoid holding EnteredSpan across await.
+            let span = tracing::info_span!(
+                "relay.source.poll",
+                pipeline = %pipeline.name,
+                direction = %direction_label,
+            );
+            match source.poll(batch_size).instrument(span).await {
+                Ok(msgs) => msgs,
+                Err(e) => {
+                    tracing::warn!(
+                        pipeline = %pipeline.name,
+                        error = %e,
+                        "poll error — sleeping before retry"
+                    );
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+                        _ = stop_rx.changed() => { break; }
+                    }
+                    continue;
                 }
-                continue;
             }
         };
 
@@ -400,6 +456,15 @@ async fn worker_inner(
             }
             continue;
         }
+
+        // v0.13.0: Increment consumed counter after successful poll.
+        metrics
+            .messages_consumed
+            .with_label_values(&[&pipeline.name, &direction_label])
+            .inc_by(batch.len() as u64);
+
+        // v0.13.0: Record the poll timestamp for end-to-end latency tracking.
+        let poll_instant = std::time::Instant::now();
 
         // v0.7.0: Replay mode — skip messages outside the replay range.
         let batch = if is_replay {
@@ -476,6 +541,15 @@ async fn worker_inner(
                     .collect();
                 if let Err(e) = crate::dlq::insert_batch(&db, &entries).await {
                     tracing::warn!(pipeline = %pipeline.name, error = %e, "DLQ insert error");
+                } else {
+                    // v0.13.0: Ack source after durable DLQ write; increment DLQ metric.
+                    if let Some(last) = batch.last() {
+                        let _ = source.acknowledge(last).await;
+                    }
+                    metrics
+                        .dlq_entries_written
+                        .with_label_values(&[&pipeline.name, &direction_label])
+                        .inc_by(entries.len() as u64);
                 }
             } else {
                 tokio::select! {
@@ -497,13 +571,27 @@ async fn worker_inner(
             None
         };
 
-        match sink.publish(&batch).await {
+        // v0.13.0: OTel span around the publish call.
+        let publish_result = {
+            let span = tracing::info_span!(
+                "relay.sink.publish",
+                pipeline = %pipeline.name,
+                batch_size = batch.len(),
+            );
+            sink.publish(&batch).instrument(span).await
+        };
+        match publish_result {
             Ok(()) => {
                 consecutive_failures = 0;
                 circuit_breaker.record_success();
 
                 if let Some(last) = batch.last() {
-                    if let Err(e) = source.acknowledge(last).await {
+                    // v0.13.0: OTel span around acknowledge.
+                    let ack_span = tracing::info_span!(
+                        "relay.source.acknowledge",
+                        pipeline = %pipeline.name,
+                    );
+                    if let Err(e) = source.acknowledge(last).instrument(ack_span).await {
                         tracing::warn!(
                             pipeline = %pipeline.name,
                             error = %e,
@@ -511,6 +599,20 @@ async fn worker_inner(
                         );
                     }
                 }
+
+                // v0.13.0: Observe end-to-end delivery latency.
+                let latency_secs = poll_instant.elapsed().as_secs_f64();
+                metrics
+                    .delivery_latency_seconds
+                    .with_label_values(&[&pipeline.name])
+                    .observe(latency_secs);
+
+                // v0.13.0: Set pipeline_healthy gauge to 1 on success.
+                metrics
+                    .pipeline_healthy
+                    .with_label_values(&[&pipeline.name])
+                    .set(1);
+
                 metrics
                     .messages_published
                     .with_label_values(&[&pipeline.name, &direction_label])
@@ -526,6 +628,12 @@ async fn worker_inner(
                     consecutive_failures,
                     "publish error"
                 );
+
+                // v0.13.0: Set pipeline_healthy gauge to 0 on error.
+                metrics
+                    .pipeline_healthy
+                    .with_label_values(&[&pipeline.name])
+                    .set(0);
 
                 metrics
                     .publish_errors
@@ -553,12 +661,24 @@ async fn worker_inner(
                             )
                         })
                         .collect();
-                    if let Err(dlq_err) = crate::dlq::insert_batch(&db, &entries).await {
-                        tracing::warn!(
-                            pipeline = %pipeline.name,
-                            error = %dlq_err,
-                            "DLQ insert error"
-                        );
+                    match crate::dlq::insert_batch(&db, &entries).await {
+                        Ok(()) => {
+                            // v0.13.0: Ack source after durable DLQ write.
+                            if let Some(last) = batch.last() {
+                                let _ = source.acknowledge(last).await;
+                            }
+                            metrics
+                                .dlq_entries_written
+                                .with_label_values(&[&pipeline.name, &direction_label])
+                                .inc_by(entries.len() as u64);
+                        }
+                        Err(dlq_err) => {
+                            tracing::warn!(
+                                pipeline = %pipeline.name,
+                                error = %dlq_err,
+                                "DLQ insert error"
+                            );
+                        }
                     }
                     consecutive_failures = 0;
                 }
@@ -570,6 +690,12 @@ async fn worker_inner(
             }
         }
     }
+
+    // v0.13.0: Mark pipeline as healthy=0 on worker exit.
+    metrics
+        .pipeline_healthy
+        .with_label_values(&[&pipeline.name])
+        .set(0);
 
     let _ = source.close().await;
     let _ = sink.close().await;

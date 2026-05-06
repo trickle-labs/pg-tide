@@ -12,6 +12,8 @@ pub struct RelayMetrics {
     pub messages_consumed: IntCounterVec,
     pub publish_errors: IntCounterVec,
     pub dedup_skipped: IntCounterVec,
+    /// v0.13.0: DLQ entries written.
+    pub dlq_entries_written: IntCounterVec,
     pub pipeline_healthy: IntGaugeVec,
     /// Pending messages in the outbox that haven't been consumed yet.
     pub consumer_lag: IntGaugeVec,
@@ -53,6 +55,14 @@ impl RelayMetrics {
             &["pipeline"]
         )?;
 
+        let dlq_entries_written = register_int_counter_vec!(
+            prometheus::opts!(
+                "pg_tide_relay_dlq_entries_written_total",
+                "Total entries written to the dead-letter queue"
+            ),
+            &["pipeline", "direction"]
+        )?;
+
         let pipeline_healthy = register_int_gauge_vec!(
             prometheus::opts!(
                 "pg_tide_relay_pipeline_healthy",
@@ -82,6 +92,7 @@ impl RelayMetrics {
         registry.register(Box::new(messages_consumed.clone()))?;
         registry.register(Box::new(publish_errors.clone()))?;
         registry.register(Box::new(dedup_skipped.clone()))?;
+        registry.register(Box::new(dlq_entries_written.clone()))?;
         registry.register(Box::new(pipeline_healthy.clone()))?;
         registry.register(Box::new(consumer_lag.clone()))?;
         registry.register(Box::new(delivery_latency_seconds.clone()))?;
@@ -91,6 +102,7 @@ impl RelayMetrics {
             messages_consumed,
             publish_errors,
             dedup_skipped,
+            dlq_entries_written,
             pipeline_healthy,
             consumer_lag,
             delivery_latency_seconds,
