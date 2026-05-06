@@ -91,14 +91,27 @@ fn extract_sslmode_str(url: &str) -> Option<String> {
 /// Connect to PostgreSQL with the appropriate TLS mode parsed from the URL.
 ///
 /// - `sslmode=disable` or not set → `NoTls`
-/// - `sslmode=prefer` → try native TLS, fall back to NoTls  
-/// - `sslmode=require` → native TLS required; error if TLS is not available
+/// - `sslmode=prefer` → try TLS first, fall back to plaintext
+/// - `sslmode=require` / `verify-ca` / `verify-full` → **fail closed** if TLS
+///   is not available (the `native-tls` feature is not compiled in)
 ///
-/// When the `native-tls` feature is not enabled, this function falls back to
-/// `NoTls` and returns an error if `sslmode=require` is set.
+/// ## Security
+/// When `sslmode=require` is set, this function refuses to connect without TLS
+/// rather than silently downgrading to plaintext.  This prevents accidental
+/// credential exposure on networks that do not enforce encryption at the
+/// infrastructure layer.
 pub async fn connect(
     url: &str,
 ) -> Result<(Client, Connection<Socket, tokio_postgres::tls::NoTlsStream>), RelayError> {
+    let ssl_mode = parse_ssl_mode(url);
+    if ssl_mode.is_required() {
+        // Fail closed: sslmode=require without a TLS backend is a security
+        // misconfiguration.  Return an explicit error rather than silently
+        // connecting in plaintext.
+        return Err(RelayError::TlsRequired {
+            url: url.to_string(),
+        });
+    }
     connect_notls(url).await
 }
 

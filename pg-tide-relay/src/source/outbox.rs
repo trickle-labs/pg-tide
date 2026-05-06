@@ -12,12 +12,28 @@ use crate::error::RelayError;
 const FETCH_BATCH: i64 = 1000;
 
 /// Decode one outbox row payload into an OutboxBatch.
+///
+/// v0.15.0: `raw_mode` — when `true`, treats the payload as a native JSONB
+/// event (published via `tide.outbox_publish()` without a `v:1` pg_trickle
+/// envelope).  This allows non-pg_trickle producers to use pg_tide.
 pub async fn decode_payload(
     payload: &serde_json::Value,
     db: &Client,
     stream_table_name: &str,
     outbox_id: i64,
+    raw_mode: bool,
 ) -> Result<OutboxBatch, RelayError> {
+    // v0.15.0: Raw mode — treat the whole payload as a native event.
+    if raw_mode {
+        return Ok(OutboxBatch {
+            outbox_id,
+            refresh_id: None,
+            is_full_refresh: false,
+            inserted: vec![payload.clone()],
+            deleted: vec![],
+        });
+    }
+
     let v = payload.get("v").and_then(|v| v.as_i64()).unwrap_or(0);
     if v != 1 {
         return Err(RelayError::UnsupportedPayloadVersion(v));
@@ -38,8 +54,34 @@ pub async fn decode_payload(
         .and_then(|s| Uuid::parse_str(s).ok());
 
     if is_claim_check {
-        // Cursor-fetch from companion claim-check delta table.
+        // v0.15.0: Guard — verify the claim-check delta table exists before
+        // attempting to fetch from it.  Absent tables mean pg_trickle >= 0.46.0
+        // is not installed.  Return a clear error rather than a confusing SQL
+        // error from a missing table.
         let outbox_name = format!("outbox_{stream_table_name}");
+        let delta_table_name = format!("outbox_delta_rows_{outbox_name}");
+        let delta_exists: bool = db
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+                 WHERE table_schema = 'tide' AND table_name = $1)",
+                &[&delta_table_name],
+            )
+            .await
+            .map(|r| r.get(0))
+            .unwrap_or(false);
+        if !delta_exists {
+            return Err(RelayError::PayloadDecode {
+                outbox: outbox_name.clone(),
+                outbox_id,
+                reason: format!(
+                    "claim-check guard: tide.{delta_table_name} does not exist. \
+                     This outbox requires pg_trickle >= 0.46.0 with claim-check tables enabled. \
+                     Run `pg-tide doctor` for pre-flight checks."
+                ),
+            });
+        }
+
+        // Cursor-fetch from companion claim-check delta table.
         let (inserted, deleted) = fetch_claim_check_rows(db, &outbox_name, outbox_id).await?;
 
         // Signal consumption complete so extension can drain old rows.
@@ -152,6 +194,9 @@ fn extract_array(v: &serde_json::Value, key: &str) -> Vec<serde_json::Value> {
 /// Outbox poller that works in two modes:
 /// - Simple: tracks offsets in `relay_consumer_offsets` (suitable for single-relay).
 /// - Consumer group: delegates to `poll_outbox()` + `commit_offset()`.
+///
+/// v0.15.0: Also supports `raw_payload_mode` — treats payloads as native JSONB
+/// events (no `v:1` pg_trickle envelope required).
 pub struct OutboxPollerSource {
     db: Arc<Client>,
     stream_table_name: String,
@@ -162,6 +207,9 @@ pub struct OutboxPollerSource {
     worker_id: String,
     consumer_group: Option<ConsumerGroupConfig>,
     last_offset: i64,
+    /// v0.15.0: When true, payloads are treated as raw JSONB events rather than
+    /// v:1 pg_trickle envelopes.  Set via `source.payload_mode = "raw"`.
+    raw_payload_mode: bool,
 }
 
 pub struct ConsumerGroupConfig {
@@ -179,8 +227,39 @@ impl OutboxPollerSource {
         relay_group_id: impl Into<String>,
         pipeline_id: impl Into<String>,
     ) -> Result<Self, RelayError> {
+        Self::new_simple_with_mode(
+            db,
+            stream_table_name,
+            outbox_table_name,
+            subject_template,
+            relay_group_id,
+            pipeline_id,
+            false,
+        )
+        .await
+    }
+
+    /// Create a simple outbox poller with explicit payload mode.
+    ///
+    /// v0.15.0: `raw_payload_mode = true` treats payloads as native JSONB events.
+    pub async fn new_simple_with_mode(
+        db: Arc<Client>,
+        stream_table_name: impl Into<String>,
+        outbox_table_name: impl Into<String>,
+        subject_template: impl Into<String>,
+        relay_group_id: impl Into<String>,
+        pipeline_id: impl Into<String>,
+        raw_payload_mode: bool,
+    ) -> Result<Self, RelayError> {
         let relay_group_id = relay_group_id.into();
         let pipeline_id = pipeline_id.into();
+        let stream_table_name = stream_table_name.into();
+        let outbox_table_name = outbox_table_name.into();
+
+        // v0.15.0: Relay-side identifier validation.
+        crate::config::validate_relay_identifier(&stream_table_name)?;
+        crate::config::validate_relay_identifier(&outbox_table_name)?;
+
         let worker_id = format!(
             "{}:{}",
             std::env::var("HOSTNAME").unwrap_or_else(|_| "relay".to_string()),
@@ -192,14 +271,15 @@ impl OutboxPollerSource {
 
         Ok(Self {
             db,
-            stream_table_name: stream_table_name.into(),
-            outbox_table_name: outbox_table_name.into(),
+            stream_table_name,
+            outbox_table_name,
             subject_template: subject_template.into(),
             relay_group_id,
             pipeline_id,
             worker_id,
             consumer_group: None,
             last_offset,
+            raw_payload_mode,
         })
     }
 
@@ -217,6 +297,13 @@ impl OutboxPollerSource {
     ) -> Result<Self, RelayError> {
         let relay_group_id = relay_group_id.into();
         let pipeline_id = pipeline_id.into();
+        let stream_table_name = stream_table_name.into();
+        let outbox_table_name = outbox_table_name.into();
+
+        // v0.15.0: Relay-side identifier validation.
+        crate::config::validate_relay_identifier(&stream_table_name)?;
+        crate::config::validate_relay_identifier(&outbox_table_name)?;
+
         let worker_id = format!(
             "{}:{}",
             std::env::var("HOSTNAME").unwrap_or_else(|_| "relay".to_string()),
@@ -225,8 +312,8 @@ impl OutboxPollerSource {
 
         Ok(Self {
             db,
-            stream_table_name: stream_table_name.into(),
-            outbox_table_name: outbox_table_name.into(),
+            stream_table_name,
+            outbox_table_name,
             subject_template: subject_template.into(),
             relay_group_id,
             pipeline_id,
@@ -237,6 +324,7 @@ impl OutboxPollerSource {
                 visibility_seconds,
             }),
             last_offset: 0,
+            raw_payload_mode: false, // consumer group mode does not support raw payload mode
         })
     }
 }
@@ -257,6 +345,7 @@ impl super::Source for OutboxPollerSource {
                 &self.subject_template,
                 batch_size as i32,
                 cg.visibility_seconds,
+                false, // consumer group doesn't use raw mode
             )
             .await
         } else {
@@ -267,6 +356,7 @@ impl super::Source for OutboxPollerSource {
                 &self.subject_template,
                 self.last_offset,
                 batch_size,
+                self.raw_payload_mode,
             )
             .await
         }
@@ -313,6 +403,7 @@ async fn poll_simple(
     subject_template: &str,
     last_offset: i64,
     batch_size: i64,
+    raw_mode: bool,
 ) -> Result<Vec<RelayMessage>, RelayError> {
     // Outbox tables are in the tide schema: tide.outbox_<stream_table>
     let outbox_schema_table = format!("tide.{outbox_table_name}");
@@ -331,7 +422,7 @@ async fn poll_simple(
     for row in &rows {
         let id: i64 = row.get("id");
         let payload: serde_json::Value = row.get("payload");
-        let batch = decode_payload(&payload, db, stream_table_name, id).await?;
+        let batch = decode_payload(&payload, db, stream_table_name, id, raw_mode).await?;
         let mut batch_msgs = batch.into_messages(outbox_table_name, subject_template);
         // Attach ack token to the last message in each outbox row.
         if let Some(last) = batch_msgs.last_mut() {
@@ -343,6 +434,7 @@ async fn poll_simple(
 }
 
 /// Consumer group mode: use poll_outbox() + commit_offset().
+#[allow(clippy::too_many_arguments)]
 async fn poll_consumer_group(
     db: &Client,
     group: &str,
@@ -351,6 +443,7 @@ async fn poll_consumer_group(
     subject_template: &str,
     batch_size: i32,
     visibility_seconds: i32,
+    raw_mode: bool,
 ) -> Result<Vec<RelayMessage>, RelayError> {
     let rows = db
         .query(
@@ -375,7 +468,7 @@ async fn poll_consumer_group(
     for row in &rows {
         let id: i64 = row.get("outbox_id");
         let payload: serde_json::Value = row.get("payload");
-        let batch = decode_payload(&payload, db, stream_table_name, id).await?;
+        let batch = decode_payload(&payload, db, stream_table_name, id, raw_mode).await?;
         let mut batch_msgs = batch.into_messages(&outbox_table_name, subject_template);
         if let Some(last) = batch_msgs.last_mut() {
             last.ack_token = AckToken::OutboxOffset(id);

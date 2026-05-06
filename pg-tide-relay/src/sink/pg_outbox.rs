@@ -4,7 +4,6 @@ use tokio_postgres::Client;
 
 use crate::envelope::RelayMessage;
 use crate::error::RelayError;
-
 /// Remote PostgreSQL inbox sink.
 /// Uses tokio-postgres directly for PostgreSQL connections.
 pub struct PgInboxSink {
@@ -18,12 +17,8 @@ impl PgInboxSink {
         postgres_url: &str,
         inbox_table: impl Into<String>,
     ) -> Result<Self, RelayError> {
-        let (client, conn) = tokio_postgres::connect(postgres_url, tokio_postgres::NoTls)
-            .await
-            .map_err(|e| RelayError::ConnectionFailed {
-                url: postgres_url.to_string(),
-                err: e,
-            })?;
+        // v0.15.0: Use pg_tls::connect to honour sslmode from the URL.
+        let (client, conn) = crate::pg_tls::connect(postgres_url).await?;
 
         tokio::spawn(async move {
             if let Err(e) = conn.await {

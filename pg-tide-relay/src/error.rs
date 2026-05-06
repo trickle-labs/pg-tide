@@ -83,6 +83,10 @@ pub enum RelayError {
     // Generic
     #[error("{0}")]
     Other(String),
+
+    // TLS errors (v0.15.0)
+    #[error("TLS required by sslmode=require but TLS backend not compiled in: {url}")]
+    TlsRequired { url: String },
 }
 
 impl RelayError {
@@ -101,6 +105,28 @@ impl RelayError {
         Self::SinkPublish {
             sink: sink.into(),
             source: Box::new(source),
+        }
+    }
+
+    /// Returns `true` if this error is transient (may succeed on retry).
+    ///
+    /// Permanent errors (bad credentials, schema mismatch, auth rejection,
+    /// invalid config) should not trigger retry loops — they indicate that
+    /// the pipeline must be paused and reviewed before retrying.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            // Permanent: configuration / auth / schema errors
+            Self::Config(_)
+            | Self::InvalidConfig { .. }
+            | Self::PipelineNotFound(_)
+            | Self::MissingConfigKey { .. }
+            | Self::UnsupportedPayloadVersion(_)
+            | Self::InvalidSecretToken(_)
+            | Self::SecretNotFound { .. }
+            | Self::SecretReadError { .. }
+            | Self::TlsRequired { .. } => false,
+            // Transient: network / I/O / temporary backend issues
+            _ => true,
         }
     }
 

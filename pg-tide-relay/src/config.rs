@@ -32,6 +32,15 @@ pub struct RelayConfig {
     /// A39: Maximum number of in-flight messages to the downstream sink
     /// before upstream polling is paused.  0 = unlimited (legacy behaviour).
     pub sink_max_inflight: usize,
+
+    /// v0.15.0: Maximum number of pipeline workers this relay instance will
+    /// own concurrently.  Each worker holds one PostgreSQL connection.
+    /// `--max-pipelines` / `PG_TIDE_MAX_PIPELINES` / TOML `max_owned_pipelines`.
+    pub max_owned_pipelines: usize,
+
+    /// v0.15.0: Maximum number of connections in the coordinator connection pool.
+    /// `--max-connections` / `PG_TIDE_MAX_CONNECTIONS` / TOML `max_connections`.
+    pub max_connections: usize,
 }
 
 impl Default for RelayConfig {
@@ -45,6 +54,8 @@ impl Default for RelayConfig {
             default_batch_size: 100,
             relay_group_id: "default".to_string(),
             sink_max_inflight: 1_000,
+            max_owned_pipelines: 50,
+            max_connections: 52, // 2 coordinator + 50 workers by default
         }
     }
 }
@@ -169,9 +180,68 @@ impl PipelineConfig {
 
 // ── RELAY-SEC: Pipeline config secret resolution ───────────────────────────
 
-/// Recursively resolve `${env:VAR}` and `${file:/path}` tokens in every
-/// string value within a pipeline config JSONB.
+/// v0.15.0: Returns a copy of `config` with any string that contains a secret
+/// token pattern (`${env:…}` or `${file:…}`) replaced by `"[REDACTED]"`.
 ///
+/// Use this when logging pipeline configuration to avoid leaking credentials
+/// (OWASP A02:2021 Cryptographic Failures — logging sensitive data).
+pub fn mask_secrets_for_logging(config: &serde_json::Value) -> serde_json::Value {
+    mask_json_secrets(config.clone())
+}
+
+fn mask_json_secrets(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) => {
+            if s.contains("${env:") || s.contains("${file:") {
+                serde_json::Value::String("[REDACTED]".to_string())
+            } else {
+                serde_json::Value::String(s)
+            }
+        }
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, mask_json_secrets(v)))
+                .collect(),
+        ),
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(mask_json_secrets).collect())
+        }
+        other => other,
+    }
+}
+
+/// v0.15.0: Validate a PostgreSQL identifier sourced from relay configuration.
+///
+/// Identifiers are always double-quoted in SQL (`"name"`), so the only
+/// characters that can break out of double-quoting are `"` and the null byte.
+///
+/// Rules:
+/// - Non-empty
+/// - ≤ 63 bytes (PostgreSQL's `NAMEDATALEN - 1`)
+/// - No double-quote characters (`"`) or null bytes
+pub fn validate_relay_identifier(name: &str) -> Result<(), crate::error::RelayError> {
+    if name.is_empty() {
+        return Err(crate::error::RelayError::Config(
+            "identifier must not be empty".to_string(),
+        ));
+    }
+    if name.len() > 63 {
+        return Err(crate::error::RelayError::Config(format!(
+            "identifier '{name}' exceeds 63 bytes (PostgreSQL NAMEDATALEN limit)"
+        )));
+    }
+    for c in name.chars() {
+        if c == '"' || c == '\0' {
+            return Err(crate::error::RelayError::Config(format!(
+                "identifier '{name}' contains invalid character '{c}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Recursively resolve `${env:VAR}` and `${file:/path}` tokens in every
+/// string value within a pipeline config JSONB.///
 /// On success returns the fully-resolved value.  On error (unknown env var,
 /// missing file, invalid var name) returns `RelayError::SecretNotFound` or
 /// similar so the coordinator can disable only the affected pipeline rather
@@ -316,6 +386,8 @@ mod tests {
             default_batch_size: 200,
             relay_group_id: "prod-cluster-1".to_string(),
             sink_max_inflight: 500,
+            max_owned_pipelines: 30,
+            max_connections: 32,
         };
         let toml_str = toml::to_string(&cfg).unwrap();
         let decoded: RelayConfig = toml::from_str(&toml_str).unwrap();

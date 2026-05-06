@@ -6,38 +6,46 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch, RwLock, Semaphore};
+use tokio::task::JoinHandle;
 use tokio_postgres::Client;
 use tracing::Instrument as _;
 
 use crate::circuit_breaker::CircuitBreaker;
-use crate::config::{resolve_pipeline_secrets, PipelineConfig, PipelineDirection};
+use crate::config::{
+    mask_secrets_for_logging, resolve_pipeline_secrets, PipelineConfig, PipelineDirection,
+};
 use crate::dlq::{DlqConfig, DlqEntry, ErrorKind};
 use crate::error::RelayError;
 use crate::jmespath_transform::{apply_transforms, TransformConfig};
 use crate::metrics::{HealthState, RelayMetrics};
 use crate::rate_limiter::build_rate_limiter;
 use crate::routing::{apply_routing, RoutingConfig};
+
 /// Coordinator manages pipeline ownership via advisory locks.
+/// v0.15.0: Uses a deadpool-postgres Pool for coordinator metadata operations,
+/// replacing the single persistent Arc<Client>.
 pub struct Coordinator {
-    db: Arc<Client>,
+    /// v0.15.0: Connection pool for coordinator-level metadata operations.
+    pool: deadpool_postgres::Pool,
     relay_group_id: String,
     metrics: Arc<RelayMetrics>,
     health: Arc<RwLock<HealthState>>,
-    /// Pipeline ID → cancellation sender.
-    owned: HashMap<String, watch::Sender<bool>>,
-    /// v0.13.0: Maximum owned pipelines (connection limit).
+    /// Pipeline ID → (cancellation sender, join handle).
+    /// v0.15.0: JoinHandle stored for panic detection.
+    owned: HashMap<String, (watch::Sender<bool>, JoinHandle<()>)>,
+    /// v0.13.0 / v0.15.0: Maximum owned pipelines (connection limit).
     max_owned_pipelines: usize,
 }
 
 impl Coordinator {
     pub fn new(
-        db: Arc<Client>,
+        pool: deadpool_postgres::Pool,
         relay_group_id: impl Into<String>,
         metrics: Arc<RelayMetrics>,
         health: Arc<RwLock<HealthState>>,
     ) -> Self {
         Self {
-            db,
+            pool,
             relay_group_id: relay_group_id.into(),
             metrics,
             health,
@@ -93,8 +101,12 @@ impl Coordinator {
 
     /// Load all enabled pipelines from the catalog.
     pub async fn load_pipelines(&self) -> Result<Vec<PipelineConfig>, RelayError> {
-        let rows = self
-            .db
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| RelayError::other(format!("coordinator pool error: {e}")))?;
+        let rows = client
             .query(
                 "SELECT name, 'forward' AS direction, enabled, config,
                         COALESCE(tenant_name, 'default') AS tenant_name
@@ -135,8 +147,12 @@ impl Coordinator {
     /// Try to acquire the advisory lock for a pipeline.
     /// Returns true if the lock was acquired (this pod owns the pipeline).
     pub async fn try_acquire_lock(&self, pipeline_id: &str) -> Result<bool, RelayError> {
-        let row = self
-            .db
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| RelayError::other(format!("coordinator pool error: {e}")))?;
+        let row = client
             .query_one(
                 "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2))",
                 &[&self.relay_group_id, &pipeline_id],
@@ -147,7 +163,12 @@ impl Coordinator {
 
     /// Release the advisory lock for a pipeline.
     pub async fn release_lock(&self, pipeline_id: &str) -> Result<(), RelayError> {
-        self.db
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| RelayError::other(format!("coordinator pool error: {e}")))?;
+        client
             .execute(
                 "SELECT pg_advisory_unlock(hashtext($1), hashtext($2))",
                 &[&self.relay_group_id, &pipeline_id],
@@ -168,14 +189,14 @@ impl Coordinator {
     /// current batch.  Called during graceful shutdown before `release_all_locks`.
     pub async fn drain(&self) {
         // Send the stop signal to every owned pipeline.
-        for (pipeline_id, tx) in &self.owned {
+        for (pipeline_id, (tx, _handle)) in &self.owned {
             if tx.send(true).is_err() {
                 tracing::debug!(pipeline = %pipeline_id, "pipeline already stopped");
             }
         }
 
         // Wait until every pipeline's receiver is closed (i.e. the task exited).
-        for (pipeline_id, tx) in &self.owned {
+        for (pipeline_id, (tx, _handle)) in &self.owned {
             tx.closed().await;
             tracing::debug!(pipeline = %pipeline_id, "pipeline drained");
         }
@@ -184,7 +205,41 @@ impl Coordinator {
     // ── Private ──────────────────────────────────────────────────────────
 
     /// Load pipelines, start new ones, stop removed/disabled ones.
+    ///
+    /// v0.15.0: Also checks for panicked/completed workers and cleans them up
+    /// immediately rather than waiting up to `discovery_interval` seconds.
     async fn reconcile(&mut self, db_url: &str, batch_size: i64) {
+        // v0.15.0: Detect panicked or unexpectedly completed worker tasks and
+        // clean up their owned entries before loading the pipeline list.
+        let panicked: Vec<_> = self
+            .owned
+            .iter()
+            .filter(|(_, (_, handle))| handle.is_finished())
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in panicked {
+            if let Some((_, handle)) = self.owned.remove(&name) {
+                match handle.await {
+                    Ok(()) => tracing::warn!(
+                        pipeline = %name,
+                        "worker exited unexpectedly — will attempt to re-acquire"
+                    ),
+                    Err(e) => tracing::error!(
+                        pipeline = %name,
+                        panic = ?e,
+                        "worker panicked — releasing lock and cleaning up"
+                    ),
+                }
+                if let Err(e) = self.release_lock(&name).await {
+                    tracing::warn!(
+                        pipeline = %name,
+                        error = %e,
+                        "failed to release advisory lock after worker panic"
+                    );
+                }
+            }
+        }
+
         let pipelines = match self.load_pipelines().await {
             Ok(p) => p,
             Err(e) => {
@@ -204,7 +259,7 @@ impl Coordinator {
             .collect();
         for name in &to_stop {
             tracing::info!(pipeline = %name, "pipeline removed/disabled — stopping worker");
-            if let Some(tx) = self.owned.remove(name) {
+            if let Some((tx, _handle)) = self.owned.remove(name) {
                 let _ = tx.send(true);
             }
             if let Err(e) = self.release_lock(name).await {
@@ -218,9 +273,8 @@ impl Coordinator {
                 continue; // Already running.
             }
 
-            // v0.13.0: Enforce max_owned_pipelines connection limit.
+            // v0.13.0/v0.15.0: Enforce max_owned_pipelines connection limit.
             // Each owned pipeline consumes one PostgreSQL connection.
-            // Default: 50 pipelines / 60 connections (2 shared + 50 workers).
             let max_owned = self.max_owned_pipelines();
             if self.owned.len() >= max_owned {
                 tracing::warn!(
@@ -251,12 +305,17 @@ impl Coordinator {
             // RELAY-SEC: resolve ${env:VAR} / ${file:/path} tokens before
             // handing the config to the worker.  A bad secret disables only
             // this pipeline — all others continue running.
+            // v0.15.0: Log masked config (not resolved config) to avoid
+            // credential leakage in structured log output.
             let resolved_config = match resolve_pipeline_secrets(pipeline.config.clone()) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::error!(
                         pipeline = %pipeline.name,
                         error = %e,
+                        masked_config = %serde_json::to_string(
+                            &mask_secrets_for_logging(&pipeline.config)
+                        ).unwrap_or_default(),
                         "secret resolution failed — pipeline disabled"
                     );
                     if let Err(re) = self.release_lock(&pipeline.name).await {
@@ -282,7 +341,8 @@ impl Coordinator {
                 tenant_name: pipeline.tenant_name.clone(),
             };
 
-            tokio::spawn(run_pipeline_worker(
+            // v0.15.0: Store JoinHandle for panic detection.
+            let handle = tokio::spawn(run_pipeline_worker(
                 resolved_pipeline,
                 db_url.to_string(),
                 self.relay_group_id.clone(),
@@ -291,7 +351,7 @@ impl Coordinator {
                 stop_rx,
             ));
 
-            self.owned.insert(pipeline.name, stop_tx);
+            self.owned.insert(pipeline.name, (stop_tx, handle));
         }
     }
 }
@@ -355,12 +415,8 @@ async fn worker_inner(
     stop_rx: &mut watch::Receiver<bool>,
 ) -> Result<(), RelayError> {
     // Each worker owns its own DB connection so pipelines are isolated.
-    let (db_client, db_conn) = tokio_postgres::connect(&db_url, tokio_postgres::NoTls)
-        .await
-        .map_err(|e| RelayError::ConnectionFailed {
-            url: db_url.clone(),
-            err: e,
-        })?;
+    // v0.15.0: Use pg_tls::connect to honour sslmode from the URL.
+    let (db_client, db_conn) = crate::pg_tls::connect(&db_url).await?;
     let db = Arc::new(db_client);
     tokio::spawn(async move {
         if let Err(e) = db_conn.await {
@@ -436,6 +492,13 @@ async fn worker_inner(
     );
 
     let mut consecutive_failures: u32 = 0;
+    // v0.15.0: Exponential backoff on poll errors.
+    // Starts at poll_interval_ms, doubles on each failure, caps at 60 s.
+    let max_poll_backoff_ms: u64 = pipeline
+        .opt_i64(&["max_poll_backoff_ms"])
+        .map(|v| v as u64)
+        .unwrap_or(60_000);
+    let mut poll_backoff_ms = poll_interval_ms;
 
     loop {
         if *stop_rx.borrow() {
@@ -451,23 +514,51 @@ async fn worker_inner(
                 direction = %direction_label,
             );
             match source.poll(batch_size).instrument(span).await {
-                Ok(msgs) => msgs,
+                Ok(msgs) => {
+                    // v0.15.0: Reset backoff on successful poll.
+                    poll_backoff_ms = poll_interval_ms;
+                    msgs
+                }
                 Err(e) => {
+                    // v0.15.0: Permanent errors stop the pipeline immediately.
+                    if !e.is_transient() {
+                        tracing::error!(
+                            pipeline = %pipeline.name,
+                            error = %e,
+                            "permanent poll error — stopping pipeline"
+                        );
+                        return Err(e);
+                    }
+                    // v0.15.0: Exponential backoff with jitter for transient errors.
+                    consecutive_failures += 1;
+                    let jitter_range = (poll_backoff_ms as f64 * 0.20) as u64;
+                    let jitter = if jitter_range > 0 {
+                        let pseudo = consecutive_failures as u64 * 6_364_136_223_846_793_005_u64;
+                        (pseudo % (jitter_range * 2)).saturating_sub(jitter_range)
+                    } else {
+                        0
+                    };
+                    let sleep_ms = poll_backoff_ms.saturating_add(jitter);
                     tracing::warn!(
                         pipeline = %pipeline.name,
                         error = %e,
-                        "poll error — sleeping before retry"
+                        sleep_ms,
+                        consecutive_failures,
+                        "transient poll error — backing off before retry"
                     );
                     tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+                        _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
                         _ = stop_rx.changed() => { break; }
                     }
+                    poll_backoff_ms = (poll_backoff_ms * 2).min(max_poll_backoff_ms);
                     continue;
                 }
             }
         };
 
         if batch.is_empty() {
+            // Reset backoff when idle (no messages).
+            poll_backoff_ms = poll_interval_ms;
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
                 _ = stop_rx.changed() => { break; }
@@ -777,13 +868,19 @@ async fn build_source(
                 .await?;
                 Ok(Box::new(src))
             } else {
-                let src = crate::source::outbox::OutboxPollerSource::new_simple(
+                // v0.15.0: Support raw payload mode (no v:1 envelope).
+                let raw_mode = pipeline
+                    .opt_str(&["source", "payload_mode"])
+                    .map(|m| m == "raw")
+                    .unwrap_or(false);
+                let src = crate::source::outbox::OutboxPollerSource::new_simple_with_mode(
                     db,
                     outbox,
                     format!("outbox_{outbox}"),
                     subject_template,
                     relay_group_id,
                     &pipeline.name,
+                    raw_mode,
                 )
                 .await?;
                 Ok(Box::new(src))

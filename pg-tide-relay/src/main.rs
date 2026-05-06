@@ -60,6 +60,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "json" => LogFormat::Json,
         _ => LogFormat::Text,
     };
+    // v0.15.0: CLI overrides for max_pipelines and max_connections.
+    if let Some(max) = cli.max_pipelines {
+        cfg.max_owned_pipelines = max;
+    }
+    if let Some(max) = cli.max_connections {
+        cfg.max_connections = max;
+    }
     let drain_timeout = Duration::from_secs(cli.drain_timeout);
 
     // Expand ${ENV:VAR_NAME} placeholders in connection strings.
@@ -99,6 +106,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Asyncapi(asyncapi_cmd)) => {
             return run_asyncapi_command(asyncapi_cmd, &cfg.postgres_url).await;
         }
+        Some(Commands::Sweep {
+            outbox,
+            postgres_url,
+        }) => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| cfg.postgres_url.clone());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for sweep");
+                std::process::exit(1);
+            }
+            return run_sweep(&url, outbox.as_deref()).await;
+        }
         None => {}
     }
 
@@ -113,16 +133,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "pg-tide starting"
     );
 
-    // A38: Connect to PostgreSQL (coordinator connection) with exponential backoff.
-    let (db_client, db_conn) = connect_with_backoff(&cfg.postgres_url).await?;
-    let db = Arc::new(db_client);
-
-    // Spawn the coordinator connection driver.
-    tokio::spawn(async move {
-        if let Err(e) = db_conn.await {
-            tracing::error!("coordinator DB connection error: {e}");
-        }
-    });
+    // v0.15.0: Create a deadpool-postgres connection pool for coordinator
+    // metadata operations.  Workers still create their own dedicated
+    // connections via pg_tls::connect (one per pipeline).
+    let pool = create_coordinator_pool(&cfg.postgres_url, cfg.max_connections)?;
 
     // Open a dedicated LISTEN connection for hot-reload notifications.
     // poll_message drives the connection I/O and surfaces Notification events;
@@ -133,7 +147,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let notif_tx_pg = notif_tx.clone();
     let notify_url = cfg.postgres_url.clone();
     tokio::spawn(async move {
-        let pair = tokio_postgres::connect(&notify_url, tokio_postgres::NoTls).await;
+        // v0.15.0: Use pg_tls::connect to honour sslmode from the URL.
+        let pair = pg_tls::connect(&notify_url).await;
         let (notif_client, notif_conn) = match pair {
             Ok(p) => p,
             Err(e) => {
@@ -179,11 +194,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build coordinator.
     let mut coordinator = coordinator::Coordinator::new(
-        Arc::clone(&db),
+        pool,
         &cfg.relay_group_id,
         Arc::clone(&relay_metrics),
         Arc::clone(&health_state),
     );
+    // v0.15.0: Apply max_owned_pipelines from config.
+    coordinator.set_max_owned_pipelines(cfg.max_owned_pipelines);
 
     // Shutdown watch channel: signal handler sends true when SIGTERM/Ctrl-C arrives.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -252,7 +269,8 @@ async fn run_doctor(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("pg-tide doctor v{}", env!("CARGO_PKG_VERSION"));
     println!("Connecting to PostgreSQL...");
 
-    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+    // v0.15.0: Use pg_tls::connect (honours sslmode from URL).
+    let (client, conn) = pg_tls::connect(url)
         .await
         .map_err(|e| format!("connection failed: {e}"))?;
 
@@ -340,6 +358,22 @@ async fn run_doctor(url: &str) -> Result<(), Box<dyn std::error::Error>> {
         "  [INFO] {outbox_count} forward pipeline(s), {inbox_count} reverse pipeline(s) configured"
     );
 
+    // v0.15.0: Check for claim-check delta tables (pg_trickle >= 0.46.0).
+    let has_sweep_fn: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.routines \
+             WHERE routine_schema = 'tide' AND routine_name = 'outbox_truncate_delivered')",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(false);
+    if has_sweep_fn {
+        println!("  [OK] tide.outbox_truncate_delivered() present (v0.15.0+)");
+    } else {
+        println!("  [WARN] tide.outbox_truncate_delivered() missing — upgrade to v0.15.0");
+    }
+
     if all_ok {
         println!("\npg-tide doctor: all checks passed.");
         Ok(())
@@ -357,7 +391,8 @@ async fn run_validate_config(url: &str, pipeline: &str) -> Result<(), Box<dyn st
 
     println!("pg-tide validate-config — pipeline: {pipeline}");
 
-    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+    // v0.15.0: Use pg_tls::connect (honours sslmode from URL).
+    let (client, conn) = pg_tls::connect(url)
         .await
         .map_err(|e| format!("connection failed: {e}"))?;
     tokio::spawn(async move {
@@ -421,7 +456,8 @@ async fn run_validate_config(url: &str, pipeline: &str) -> Result<(), Box<dyn st
     };
 
     // Try to build source.
-    let (worker_client, worker_conn) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+    // v0.15.0: Use pg_tls::connect (honours sslmode from URL).
+    let (worker_client, worker_conn) = pg_tls::connect(url)
         .await
         .map_err(|e| format!("worker connection failed: {e}"))?;
     tokio::spawn(async move {
@@ -535,7 +571,7 @@ async fn run_replay_preview(
     to_id: i64,
     limit: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    let (client, conn) = pg_tls::connect(url).await?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
@@ -581,7 +617,7 @@ async fn run_replay_dry_run(
     to_id: i64,
     limit: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    let (client, conn) = pg_tls::connect(url).await?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
@@ -655,7 +691,7 @@ async fn run_dlq_resolve(
     pipeline: &str,
     dedup_key: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    let (client, conn) = pg_tls::connect(url).await?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
@@ -689,7 +725,7 @@ async fn run_dlq_requeue(
     pipeline: &str,
     dedup_key: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    let (client, conn) = pg_tls::connect(url).await?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
@@ -765,7 +801,7 @@ async fn run_asyncapi_export(
     format: &str,
     output: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    let (client, conn) = pg_tls::connect(url).await?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
@@ -1037,4 +1073,85 @@ async fn connect_with_backoff(
             }
         }
     }
+}
+
+// ── `pg-tide sweep` ──────────────────────────────────────────────────────
+
+/// Delete consumed outbox messages past their retention window.
+///
+/// Calls `tide.outbox_truncate_delivered()` for each configured outbox (or
+/// just the one named by `outbox_name`).  Run on a schedule via cron or a
+/// Kubernetes CronJob to prevent unbounded growth of the outbox message table.
+async fn run_sweep(url: &str, outbox_name: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("pg-tide sweep v{}", env!("CARGO_PKG_VERSION"));
+
+    let (client, conn) = pg_tls::connect(url)
+        .await
+        .map_err(|e| format!("connection failed: {e}"))?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let outboxes: Vec<String> = if let Some(name) = outbox_name {
+        vec![name.to_string()]
+    } else {
+        client
+            .query(
+                "SELECT outbox_name FROM tide.tide_outbox_config ORDER BY outbox_name",
+                &[],
+            )
+            .await?
+            .iter()
+            .map(|r| r.get::<_, String>(0))
+            .collect()
+    };
+
+    if outboxes.is_empty() {
+        println!("  [INFO] No outboxes configured — nothing to sweep.");
+        return Ok(());
+    }
+
+    let mut total_deleted: i64 = 0;
+    for name in &outboxes {
+        let deleted: i64 = client
+            .query_one("SELECT tide.outbox_truncate_delivered($1)", &[name])
+            .await
+            .map(|r| r.get::<_, i64>(0))
+            .unwrap_or(0);
+        println!("  [OK] Swept outbox '{name}': {deleted} rows deleted");
+        total_deleted += deleted;
+    }
+
+    println!(
+        "\npg-tide sweep: {total_deleted} total row(s) deleted from {} outbox(es).",
+        outboxes.len()
+    );
+    Ok(())
+}
+
+// ── Connection pool helper ───────────────────────────────────────────────
+
+/// v0.15.0: Create a deadpool-postgres connection pool for coordinator
+/// metadata operations.
+///
+/// The pool is used for short-lived coordinator queries (pipeline discovery,
+/// advisory lock management).  Workers create their own dedicated connections
+/// via `pg_tls::connect`.
+fn create_coordinator_pool(
+    url: &str,
+    max_size: usize,
+) -> Result<deadpool_postgres::Pool, Box<dyn std::error::Error>> {
+    let mut cfg = deadpool_postgres::Config::new();
+    cfg.url = Some(url.to_string());
+    cfg.pool = Some(deadpool_postgres::PoolConfig {
+        max_size,
+        ..Default::default()
+    });
+    let pool = cfg
+        .create_pool(
+            Some(deadpool_postgres::Runtime::Tokio1),
+            tokio_postgres::NoTls,
+        )
+        .map_err(|e| format!("failed to create coordinator connection pool: {e}"))?;
+    Ok(pool)
 }

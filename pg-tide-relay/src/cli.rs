@@ -77,6 +77,29 @@ pub struct Cli {
     )]
     pub drain_timeout: u64,
 
+    /// Maximum number of pipeline workers to own concurrently.
+    ///
+    /// Each pipeline worker holds one PostgreSQL connection.  Use this to
+    /// limit connection exhaustion on managed databases (e.g. RDS, Cloud SQL)
+    /// with low connection limits.
+    #[arg(
+        long = "max-pipelines",
+        env = "PG_TIDE_MAX_PIPELINES",
+        help = "Maximum number of concurrent pipeline workers (default: 50)"
+    )]
+    pub max_pipelines: Option<usize>,
+
+    /// Maximum number of connections in the coordinator connection pool.
+    ///
+    /// Controls the `deadpool-postgres` pool size used for coordinator metadata
+    /// operations (pipeline discovery, advisory lock management).
+    #[arg(
+        long = "max-connections",
+        env = "PG_TIDE_MAX_CONNECTIONS",
+        help = "Maximum coordinator pool connections (default: 52)"
+    )]
+    pub max_connections: Option<usize>,
+
     /// Optional subcommand.  When absent the relay daemon is started.
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -120,6 +143,21 @@ pub enum Commands {
     /// AsyncAPI document generation.
     #[command(subcommand)]
     Asyncapi(AsyncapiCommands),
+
+    /// Delete consumed outbox messages that are past their retention window.
+    ///
+    /// Calls `tide.outbox_truncate_delivered()` for each configured outbox
+    /// (or a specific outbox when `--outbox` is given).  Run this on a
+    /// schedule to prevent unbounded growth of the outbox message table.
+    Sweep {
+        /// Outbox name to sweep.  When omitted all outboxes are swept.
+        #[arg(long)]
+        outbox: Option<String>,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
 }
 
 /// Replay workbench subcommands.

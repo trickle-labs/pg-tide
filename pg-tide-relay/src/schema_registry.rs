@@ -94,6 +94,11 @@ pub struct SchemaRegistryConfig {
     pub subject_strategy: SubjectNameStrategy,
     /// Whether to auto-register schemas not found in the registry.
     pub auto_register: bool,
+    /// v0.15.0: Passthrough mode — forward Confluent wire-format bytes
+    /// directly without deserialising/re-serialising.  Halves overhead for
+    /// Kafka→Kafka routing where the schema is already embedded.
+    /// Set via `schema_registry.mode = "passthrough"`.
+    pub passthrough: bool,
 }
 
 impl SchemaRegistryConfig {
@@ -134,6 +139,13 @@ impl SchemaRegistryConfig {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
+        // v0.15.0: Passthrough mode — `schema_registry.mode = "passthrough"`.
+        let passthrough = sr
+            .and_then(|s| s.get("mode"))
+            .and_then(|v| v.as_str())
+            .map(|m| m == "passthrough")
+            .unwrap_or(false);
+
         Self {
             url,
             username,
@@ -141,12 +153,21 @@ impl SchemaRegistryConfig {
             format,
             subject_strategy,
             auto_register,
+            passthrough,
         }
     }
 
     /// Whether schema registry is configured and active.
     pub fn is_active(&self) -> bool {
         self.url.is_some() && self.format != SerializationFormat::Json
+    }
+
+    /// v0.15.0: Whether passthrough mode is enabled.
+    ///
+    /// In passthrough mode, Confluent wire-format bytes are forwarded directly
+    /// without deserialising/re-serialising.
+    pub fn is_passthrough(&self) -> bool {
+        self.passthrough
     }
 }
 

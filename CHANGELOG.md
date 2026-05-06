@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.15.0 — TLS Enforcement, Resilience & Outbox Sweep](#0150--2026-05-10--tls-enforcement-resilience--outbox-sweep)
 - [0.14.0 — Replay Workbench, CloudEvents, Tenant Scale & Managed Backfill](#0140--2026-05-09--replay-workbench-cloudevents-tenant-scale--managed-backfill)
 - [0.13.0 — Security Hardening, Reliability & Performance](#0130--2026-05-08--security-hardening-reliability--performance)
 - [0.12.0 — Contract Correctness & Operational Tooling](#0120--2026-05-05--contract-correctness--operational-tooling)
@@ -22,6 +23,76 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.15.0] — 2026-05-10 — TLS Enforcement, Resilience & Outbox Sweep
+
+v0.15.0 hardens the relay binary with fail-closed TLS enforcement, secret
+redaction in logs, transient vs. permanent error classification, worker crash
+detection, exponential backoff, deadpool connection pooling, and a new
+`pg-tide sweep` command for outbox retention. Schema registry passthrough mode
+and raw outbox payload mode complete the feature set.
+
+### Relay Security
+
+- **Fail-closed TLS** — When `sslmode=require` is configured, the relay now
+  returns an error immediately instead of silently falling back to plaintext.
+  New `RelayError::TlsRequired` variant prevents accidental insecure connections.
+- **Secret redaction in logs** — Pipeline config values containing
+  `${env:…}` or `${file:…}` secret references are now replaced with
+  `[REDACTED]` before the config is emitted to logs. Raw secret values no
+  longer appear in log output.
+
+### Relay Resilience
+
+- **Transient vs. permanent error classification** — `RelayError::is_transient()`
+  predicate distinguishes recoverable network errors from fatal config/auth
+  failures. Permanent errors now stop the worker immediately instead of
+  retrying indefinitely.
+- **Worker crash detection** — The coordinator stores `JoinHandle`s for each
+  worker and checks `handle.is_finished()` in every reconcile tick. Crashed or
+  panicked workers are automatically restarted.
+- **Exponential backoff with jitter** — Poll-loop errors now back off
+  exponentially from the configured `poll_interval_ms` up to 60 seconds,
+  reducing thundering-herd pressure during database outages.
+- **Connection pooling** — Coordinator metadata operations (pipeline discovery,
+  advisory lock management) now use a `deadpool-postgres` pool. Workers retain
+  dedicated connections for throughput isolation.
+
+### Relay Configuration
+
+- **`max_owned_pipelines`** (`--max-pipelines` / `PG_TIDE_MAX_PIPELINES`) —
+  Caps how many pipelines a single relay instance will own. Default: 50.
+- **`max_connections`** (`--max-connections` / `PG_TIDE_MAX_CONNECTIONS`) —
+  Sets the coordinator pool size. Default: 52.
+
+### Outbox & Payload
+
+- **`pg-tide sweep`** — New CLI command that calls
+  `tide.outbox_truncate_delivered()` for each configured outbox (or a named
+  one with `--outbox`). Outputs a per-outbox row count and a summary total.
+- **Raw payload mode** — Sources can opt into `payload_mode = "raw"` to pass
+  outbox payloads through without the v:1 envelope parse, enabling migration
+  from legacy message schemas.
+- **Claim-check guard** — The outbox source now checks for
+  `tide.outbox_delta_rows_*` table existence before attempting claim-check
+  fetches and returns a descriptive error if the table is missing.
+- **`pg-tide doctor`** — Extended to check for
+  `tide.outbox_truncate_delivered()` function presence (v0.15.0+ indicator).
+
+### Schema Registry
+
+- **Passthrough mode** — `schema_registry.mode = "passthrough"` bypasses
+  schema validation and wraps messages in the Confluent wire format header
+  with a sentinel schema ID, allowing raw pass-through for compatibility
+  with legacy consumers.
+
+### SQL
+
+- **`tide.outbox_truncate_delivered(outbox_name TEXT) → BIGINT`** — Deletes
+  consumed outbox messages older than the outbox's `retention_hours` window
+  and returns the number of rows deleted.
 
 ---
 
