@@ -110,6 +110,8 @@ pub struct PipelineConfig {
     pub enabled: bool,
     /// The full config JSONB from the catalog.
     pub config: serde_json::Value,
+    /// v0.14.0: Tenant discriminator for multi-tenant relay groups.
+    pub tenant_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +265,7 @@ mod tests {
             direction: PipelineDirection::Forward,
             enabled: true,
             config,
+            tenant_name: "default".to_string(),
         }
     }
 

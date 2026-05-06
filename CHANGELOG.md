@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.14.0 — Replay Workbench, CloudEvents, Tenant Scale & Managed Backfill](#0140--2026-05-09--replay-workbench-cloudevents-tenant-scale--managed-backfill)
 - [0.13.0 — Security Hardening, Reliability & Performance](#0130--2026-05-08--security-hardening-reliability--performance)
 - [0.12.0 — Contract Correctness & Operational Tooling](#0120--2026-05-05--contract-correctness--operational-tooling)
 - [0.11.0 — Pluggable Wire Formats: Debezium, Maxwell, Canal, Custom CDC JSON](#0110--2026-05-05--pluggable-wire-formats-debezium-maxwell-canal-custom-cdc-json)
@@ -21,6 +22,96 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.14.0] — 2026-05-09 — Replay Workbench, CloudEvents, Tenant Scale & Managed Backfill
+
+v0.14.0 adds four major capability areas: a SQL + CLI replay workbench for
+incident recovery, CloudEvents v1.0 wire format with AsyncAPI export, a
+tenant-aware relay layer with RLS policies and per-tenant Prometheus labels, and
+cataloged backfill jobs with pause/resume and progress tracking.
+
+### Replay Workbench
+
+- **`tide.consumer_offset_rewind(pipeline, lsn)`** — Admin function to
+  intentionally roll back a consumer's committed offset, guarded by a
+  monotonicity check on normal progress.
+- **`tide.relay_replay_preview(pipeline, from_lsn, to_lsn)`** — Returns the
+  messages that would be replayed without committing any offsets (dry-run).
+- **`tide.dlq_resolve(pipeline, event_id)`** / **`tide.dlq_requeue(pipeline,
+  event_id)`** — Mark DLQ entries as resolved or reschedule them for
+  reprocessing.
+- **`tide.inbox_fleet_summary` view** — Cross-inbox pending-count overview.
+- **`pg-tide replay preview|dry-run|dlq-resolve|dlq-requeue`** — CLI subcommands
+  backed by the SQL functions above, with `--from-lsn` / `--to-lsn` arguments.
+- **`inbox_status(NULL)`** — Returns a fleet-wide JSON summary across all
+  configured inboxes.
+
+### CloudEvents & AsyncAPI
+
+- **CloudEvents v1.0 wire format** — New `cloudevents` wire format option wraps
+  outbox messages in a standard CloudEvents 1.0 JSON envelope (`specversion`,
+  `type`, `source`, `id`, `time`, `datacontenttype`, `data`, `ce-op`).
+  Decode validates `specversion: "1.0"` and maps fields back to `InboxRow`.
+- **`pg-tide asyncapi export`** — CLI command that generates an AsyncAPI 3.0
+  document from relay catalog metadata and observed message schemas.
+- **`wire_format TEXT DEFAULT 'native'`** — Added to `relay_outbox_config` and
+  `relay_inbox_config` so wire format is catalog-persisted per pipeline.
+
+### Tenant-Aware Relay Groups
+
+- **`tenant_name` column** — Added to `relay_outbox_config`, `relay_inbox_config`,
+  and `relay_consumer_offsets` (default `'default'`).
+- **Row-level security** — `tide.relay_tenant_grants` table and RLS policies on
+  relay config tables ensure each tenant can only see and modify their own
+  pipelines.
+- **`tide.relay_set_tenant(pipeline, tenant)`** — Sets the tenant for a pipeline.
+- **`tide.relay_grant_tenant(pipeline, tenant, role)`** / **`tide.relay_revoke_tenant(pipeline, tenant, role)`** — Admin ACL API.
+- **Per-tenant Prometheus labels** — All relay metrics now carry a `tenant` label
+  dimension for per-tenant observability dashboards.
+
+### Managed Backfill Jobs
+
+- **`tide.backfill_jobs` table** — Cataloged backfill jobs with chunk size,
+  progress tracking (rows processed, estimated completion), and status.
+- **`tide.backfill_create(outbox, sink_pipeline, chunk_size)`** — Creates a new
+  backfill job and returns the job ID.
+- **`tide.backfill_pause(job_id)`** / **`tide.backfill_resume(job_id)`** — Pause
+  and resume a running backfill job.
+- **`tide.backfill_status(job_id)`** — Returns JSON status for a single job, or
+  fleet summary when called with `NULL`.
+
+### Migration
+
+Upgrade from v0.13.0:
+
+```sql
+ALTER EXTENSION pg_tide UPDATE TO '0.14.0';
+-- or run: psql -f sql/pg_tide--0.13.0--0.14.0.sql
+```
+
+New objects added by the migration:
+
+| Object | Type | Description |
+|--------|------|-------------|
+| `tide.relay_dlq` | TABLE | DLQ entries for failed messages |
+| `tide.backfill_jobs` | TABLE | Cataloged backfill job state |
+| `tide.relay_tenant_grants` | TABLE | Per-tenant ACL grants |
+| `tide.inbox_fleet_summary` | VIEW | Cross-inbox pending-count overview |
+| `tide.consumer_offset_rewind(text,pg_lsn)` | FUNCTION | Admin offset rollback |
+| `tide.relay_replay_preview(text,pg_lsn,pg_lsn)` | FUNCTION | Dry-run replay preview |
+| `tide.dlq_resolve(text,text)` | FUNCTION | Resolve DLQ entry |
+| `tide.dlq_requeue(text,text)` | FUNCTION | Requeue DLQ entry |
+| `tide.relay_set_tenant(text,text)` | FUNCTION | Set pipeline tenant |
+| `tide.relay_grant_tenant(text,text,text)` | FUNCTION | Grant tenant access |
+| `tide.relay_revoke_tenant(text,text,text)` | FUNCTION | Revoke tenant access |
+| `tide.backfill_create(text,text,int)` | FUNCTION | Create backfill job |
+| `tide.backfill_pause(bigint)` | FUNCTION | Pause backfill job |
+| `tide.backfill_resume(bigint)` | FUNCTION | Resume backfill job |
+| `tide.backfill_status(bigint)` | FUNCTION | Job status JSON |
+| `tenant_name TEXT` | COLUMN | Added to relay config + offsets tables |
+| `wire_format TEXT` | COLUMN | Added to relay config tables |
 
 ---
 

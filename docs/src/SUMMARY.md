@@ -15,6 +15,7 @@
 
 - [Installation](getting-started/installation.md)
 - [Your First Pipeline](getting-started/first-pipeline.md)
+- [Quick Start Tutorial](tutorials/getting-started.md)
 
 ---
 

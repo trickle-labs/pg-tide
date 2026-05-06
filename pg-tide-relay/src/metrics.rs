@@ -1,8 +1,5 @@
 /// Prometheus metrics + health endpoint (RELAY-9).
-use prometheus::{
-    register_histogram_vec, register_int_counter_vec, register_int_gauge_vec, HistogramVec,
-    IntCounterVec, IntGaugeVec, Registry, TextEncoder,
-};
+use prometheus::{HistogramVec, IntCounterVec, IntGaugeVec, Registry, TextEncoder};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -26,66 +23,66 @@ impl RelayMetrics {
     pub fn new() -> Result<Arc<Self>, prometheus::Error> {
         let registry = Registry::new();
 
-        let messages_published = register_int_counter_vec!(
+        let messages_published = IntCounterVec::new(
             prometheus::opts!(
                 "pg_tide_relay_messages_published_total",
                 "Total messages published to sink"
             ),
-            &["pipeline", "direction"]
+            &["pipeline", "direction", "tenant"],
         )?;
 
-        let messages_consumed = register_int_counter_vec!(
+        let messages_consumed = IntCounterVec::new(
             prometheus::opts!(
                 "pg_tide_relay_messages_consumed_total",
                 "Total messages consumed from source"
             ),
-            &["pipeline", "direction"]
+            &["pipeline", "direction", "tenant"],
         )?;
 
-        let publish_errors = register_int_counter_vec!(
+        let publish_errors = IntCounterVec::new(
             prometheus::opts!("pg_tide_relay_publish_errors_total", "Total publish errors"),
-            &["pipeline", "direction"]
+            &["pipeline", "direction", "tenant"],
         )?;
 
-        let dedup_skipped = register_int_counter_vec!(
+        let dedup_skipped = IntCounterVec::new(
             prometheus::opts!(
                 "pg_tide_relay_dedup_skipped_total",
                 "Total messages skipped due to deduplication"
             ),
-            &["pipeline"]
+            &["pipeline", "tenant"],
         )?;
 
-        let dlq_entries_written = register_int_counter_vec!(
+        let dlq_entries_written = IntCounterVec::new(
             prometheus::opts!(
                 "pg_tide_relay_dlq_entries_written_total",
                 "Total entries written to the dead-letter queue"
             ),
-            &["pipeline", "direction"]
+            &["pipeline", "direction", "tenant"],
         )?;
 
-        let pipeline_healthy = register_int_gauge_vec!(
+        let pipeline_healthy = IntGaugeVec::new(
             prometheus::opts!(
                 "pg_tide_relay_pipeline_healthy",
                 "1 if pipeline is healthy, 0 otherwise"
             ),
-            &["pipeline"]
+            &["pipeline", "tenant"],
         )?;
 
-        let consumer_lag = register_int_gauge_vec!(
+        let consumer_lag = IntGaugeVec::new(
             prometheus::opts!(
                 "pg_tide_relay_consumer_lag",
                 "Pending messages in the outbox not yet consumed by the relay"
             ),
-            &["pipeline"]
+            &["pipeline", "tenant"],
         )?;
 
-        let delivery_latency_seconds = register_histogram_vec!(
+        let delivery_latency_seconds = HistogramVec::new(
             prometheus::HistogramOpts::new(
                 "pg_tide_relay_delivery_latency_seconds",
                 "End-to-end latency from outbox publish to sink acknowledgement",
             )
             .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0]),
-            &["pipeline"]
+            &["pipeline", "tenant"],
         )?;
 
         registry.register(Box::new(messages_published.clone()))?;
@@ -201,10 +198,33 @@ mod tests {
         let metrics = RelayMetrics::new().unwrap();
         metrics
             .messages_published
-            .with_label_values(&["test-pipeline", "forward"])
+            .with_label_values(&["test-pipeline", "forward", "default"])
             .inc();
         let rendered = metrics.render().unwrap();
         assert!(rendered.contains("pg_tide_relay_messages_published_total"));
+    }
+
+    #[test]
+    fn test_metrics_tenant_label_dimension() {
+        let metrics = RelayMetrics::new().unwrap();
+        // v0.14.0: verify per-tenant label dimension works.
+        metrics
+            .messages_published
+            .with_label_values(&["pipeline-a", "forward", "tenant-acme"])
+            .inc_by(5);
+        metrics
+            .messages_published
+            .with_label_values(&["pipeline-b", "forward", "tenant-beta"])
+            .inc_by(3);
+        let rendered = metrics.render().unwrap();
+        assert!(
+            rendered.contains("tenant-acme"),
+            "tenant label must appear in metrics output"
+        );
+        assert!(
+            rendered.contains("tenant-beta"),
+            "second tenant label must appear"
+        );
     }
 
     #[test]

@@ -239,9 +239,37 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
         return Ok(pgrx::JsonB(status));
     }
 
-    // Summary of all inboxes.
-    let all = serde_json::json!({"inboxes": []});
-    Ok(pgrx::JsonB(all))
+    // Fleet summary: collect every configured inbox with a basic count.
+    let rows = Spi::connect(|client| {
+        let mut entries = Vec::new();
+        let tup = client.select(
+            "SELECT inbox_name, inbox_schema FROM tide.tide_inbox_config ORDER BY inbox_name",
+            None,
+            &[],
+        )?;
+        for row in tup {
+            let iname: String = row.get(1)?.unwrap_or_default();
+            let ischema: String = row.get(2)?.unwrap_or_else(|| "tide".to_string());
+            entries.push((iname, ischema));
+        }
+        Ok::<_, pgrx::spi::SpiError>(entries)
+    })
+    .unwrap_or_default();
+
+    let mut summaries = Vec::new();
+    for (iname, ischema) in &rows {
+        let pending_sql = format!(
+            r#"SELECT COUNT(*) FROM "{ischema}"."{iname}_inbox" WHERE processed_at IS NULL"#
+        );
+        let pending: i64 = Spi::get_one::<i64>(&pending_sql)
+            .unwrap_or(None)
+            .unwrap_or(0);
+        summaries.push(serde_json::json!({
+            "inbox_name": iname,
+            "pending": pending,
+        }));
+    }
+    Ok(pgrx::JsonB(serde_json::json!({ "inboxes": summaries })))
 }
 
 // ── TIDE-API: replay_inbox_messages ──────────────────────────────────────
@@ -385,6 +413,18 @@ mod tests {
         let v = &status.0;
         assert_eq!(v["inbox_name"], "stat-inbox");
         assert_eq!(v["pending"], 0);
+    }
+
+    #[pg_test]
+    fn test_inbox_status_null_returns_fleet_summary() {
+        crate::inbox::inbox_create("fleet-inbox-a", "tide", 3, 72, 0);
+        crate::inbox::inbox_create("fleet-inbox-b", "tide", 3, 72, 0);
+        let status = crate::inbox::inbox_status(None);
+        let v = &status.0;
+        assert!(
+            v.get("inboxes").and_then(|a| a.as_array()).is_some(),
+            "fleet summary must contain 'inboxes' array"
+        );
     }
 
     // ── idempotent delivery ───────────────────────────────────────────────

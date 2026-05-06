@@ -9,6 +9,7 @@
 
 use pgrx::prelude::*;
 
+mod backfill;
 mod error;
 mod inbox;
 mod outbox;
@@ -41,6 +42,8 @@ extern "C-unwind" fn _PG_init() {
 }
 
 // Re-export all pg_extern functions so pgrx discovers them.
+#[allow(unused_imports)]
+use crate::backfill::*;
 #[allow(unused_imports)]
 use crate::inbox::*;
 #[allow(unused_imports)]
