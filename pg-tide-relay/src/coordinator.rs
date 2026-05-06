@@ -423,7 +423,7 @@ async fn run_pipeline_worker(
             };
             metrics
                 .pipeline_errors_total
-                .with_label_values(&[&name, error_class])
+                .with_label_values(&[name.as_str(), error_class])
                 .inc();
         }
     }
