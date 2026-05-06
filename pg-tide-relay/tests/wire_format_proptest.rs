@@ -99,21 +99,23 @@ fn arb_native_payload() -> impl Strategy<Value = Value> {
 // ── NativePgTideFormat round-trip ─────────────────────────────────────────────
 
 proptest! {
-    /// Native format: decode a serialised native envelope → InboxRow payload
-    /// must match the original payload field.
+    /// Native format: decode a serialised native envelope → the InboxRow payload
+    /// is the full decoded JSON envelope (not the inner payload field).
+    /// Verify that the top-level envelope keys (v, subject, dedup_key, op, payload)
+    /// survive the decode round-trip.
     #[test]
-    fn prop_native_decode_payload_preserved(payload in arb_native_payload()) {
+    fn prop_native_decode_payload_preserved(envelope in arb_native_payload()) {
         let fmt = NativePgTideFormat::new();
-        let raw = RawMessage::from_json("test-topic", &payload);
+        let raw = RawMessage::from_json("test-topic", &envelope);
         let result = fmt.decode(&raw).unwrap();
         prop_assume!(result.is_some());
         let row: InboxRow = result.unwrap();
-        // The decoded payload must contain all keys from the original.
-        let original_payload = &payload["payload"];
-        if let (Value::Object(orig), Value::Object(decoded)) = (original_payload, &row.payload) {
+        // NativePgTideFormat stores the whole envelope as row.payload.
+        // Verify that the top-level keys from the envelope are present.
+        if let (Value::Object(orig), Value::Object(decoded)) = (&envelope, &row.payload) {
             for (k, v) in orig {
                 prop_assert_eq!(decoded.get(k), Some(v),
-                    "key '{}' should be preserved after decode", k);
+                    "envelope key '{}' should be preserved in InboxRow.payload", k);
             }
         }
     }
