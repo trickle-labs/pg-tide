@@ -389,3 +389,48 @@ $$;
 
 COMMENT ON FUNCTION tide.inbox_truncate_processed(TEXT) IS
     'TIDE-4 (v0.1.0): Delete processed inbox messages past their retention window.';
+
+-- ── v0.13.0 additions (idempotent) ──────────────────────────────────────────
+
+-- Per-outbox publisher ACL table (v0.13.0).
+CREATE TABLE IF NOT EXISTS tide.outbox_publishers (
+    outbox_name  TEXT        NOT NULL
+                             REFERENCES tide.tide_outbox_config(outbox_name)
+                             ON DELETE CASCADE,
+    role_name    TEXT        NOT NULL,
+    granted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    granted_by   TEXT        NOT NULL DEFAULT current_user,
+    PRIMARY KEY (outbox_name, role_name)
+);
+
+COMMENT ON TABLE tide.outbox_publishers IS
+    'TIDE-SEC-3 (v0.13.0): Per-outbox publisher ACL.';
+
+-- Schema evolution fingerprints (v0.13.0).
+CREATE TABLE IF NOT EXISTS tide.relay_schema_fingerprints (
+    pipeline_name    TEXT        NOT NULL,
+    topic            TEXT        NOT NULL,
+    fingerprint      TEXT        NOT NULL,
+    column_count     INT         NOT NULL DEFAULT 0,
+    column_names     TEXT[]      NOT NULL DEFAULT '{}',
+    on_schema_change TEXT        NOT NULL DEFAULT 'warn'
+                                 CHECK (on_schema_change IN
+                                        ('warn', 'pause', 'dlq', 'continue')),
+    first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (pipeline_name, topic)
+);
+
+COMMENT ON TABLE tide.relay_schema_fingerprints IS
+    'TIDE-SCHEMA-1 (v0.13.0): Per-pipeline schema evolution tracking.';
+
+-- Relay limits (v0.13.0).
+CREATE TABLE IF NOT EXISTS tide.relay_limits (
+    relay_group_id      TEXT    NOT NULL PRIMARY KEY,
+    max_owned_pipelines INT     NOT NULL DEFAULT 50,
+    max_connections     INT     NOT NULL DEFAULT 60,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE tide.relay_limits IS
+    'TIDE-PERF-1 (v0.13.0): Per-relay-group connection and pipeline limits.';

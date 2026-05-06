@@ -19,7 +19,7 @@ default = ["nats", "webhook", "stdout"]
 
 # Optional backends (each adds a Cargo dependency)
 nats            = ["dep:async-nats"]
-webhook         = ["dep:reqwest", "dep:hmac", "dep:sha2"]
+webhook         = ["dep:reqwest", "dep:hmac"]
 kafka           = ["dep:rdkafka"]
 stdout          = []
 redis           = ["dep:redis"]
@@ -30,10 +30,10 @@ rabbitmq        = ["dep:lapin"]
 elasticsearch   = ["dep:reqwest", "dep:base64"]
 pubsub          = ["dep:reqwest", "dep:base64"]
 kinesis         = ["dep:aws-sdk-kinesis", "dep:aws-config"]
-servicebus      = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:base64"]
+servicebus      = ["dep:reqwest", "dep:hmac", "dep:base64"]
 # v0.6.0: IoT and data lake backends
 mqtt            = ["dep:rumqttc"]
-eventhubs       = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:base64"]
+eventhubs       = ["dep:reqwest", "dep:hmac", "dep:base64"]
 object-storage  = ["dep:object_store", "dep:parquet"]
 # v0.7.0: Operational excellence features
 schema-registry = ["dep:apache-avro"]
@@ -98,7 +98,7 @@ lapin = { version = "4", optional = true }
 aws-sdk-kinesis = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
 hmac = { version = "0.12", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = "0.10"
 # v0.6.0 optional backends
 rumqttc = { version = "0.24", optional = true }
 object_store = { version = "0.11", features = ["aws", "gcp", "azure"], optional = true }
@@ -119,6 +119,9 @@ arrow-flight = { version = "54", optional = true }
 tonic = { version = "0.12", optional = true }
 # v0.10.0 optional backends: analytics sinks
 mongodb = { version = "3", optional = true }
+# v0.13.0 always-on: schema evolution fingerprinting + SSRF guard
+hex = "0.4"
+regex-lite = "0.1"
 
 [dev-dependencies]
 testcontainers = "0.27"

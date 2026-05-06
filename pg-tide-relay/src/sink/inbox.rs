@@ -1,5 +1,8 @@
 /// pg-trickle inbox sink (RELAY-22).
 /// Writes RelayMessages to a pg-trickle inbox table with ON CONFLICT dedup.
+///
+/// v0.13.0: Batch inserts via UNNEST — replaces per-row INSERT loop with a
+/// single multi-row INSERT for significantly reduced round-trip overhead.
 use std::sync::Arc;
 use tokio_postgres::Client;
 
@@ -33,44 +36,49 @@ impl super::Sink for InboxSink {
             return Ok(());
         }
 
-        // Batch insert with ON CONFLICT (event_id) DO NOTHING for dedup.
+        // v0.13.0: Batch insert via UNNEST for significantly lower round-trip overhead.
         // Extension-created inbox tables have columns: event_id, source, payload, headers.
         // msg.subject maps to source; headers are stored as a jsonb object.
         let schema_table = format!("tide.{}", self.inbox_table);
 
-        for msg in messages {
-            // Build a headers JSONB object that includes the event_type/subject.
-            let headers = serde_json::json!({ "event_type": msg.subject });
-            let headers_str = serde_json::to_string(&headers).unwrap_or_else(|_| "{}".to_string());
-            let result = self
-                .db
-                .execute(
-                    &format!(
-                        "INSERT INTO {table} (event_id, source, payload, headers)
-                         VALUES ($1, $2, $3, $4::jsonb)
-                         ON CONFLICT (event_id) DO NOTHING",
-                        table = schema_table
-                    ),
-                    &[&msg.dedup_key, &msg.subject, &msg.payload, &headers_str],
-                )
-                .await
-                .map_err(RelayError::from)?;
+        // Build parallel arrays for UNNEST.
+        let event_ids: Vec<&str> = messages.iter().map(|m| m.dedup_key.as_str()).collect();
+        let sources: Vec<&str> = messages.iter().map(|m| m.subject.as_str()).collect();
+        let payloads: Vec<serde_json::Value> = messages.iter().map(|m| m.payload.clone()).collect();
+        let headers: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|m| serde_json::json!({ "event_type": m.subject }))
+            .collect();
 
-            if result == 0 {
-                // Conflict — duplicate message.
-                self.dedup_count += 1;
-                tracing::debug!(
-                    dedup_key = %msg.dedup_key,
-                    inbox = %self.inbox_table,
-                    "duplicate message skipped (dedup)"
-                );
-            }
+        let inserted = self
+            .db
+            .execute(
+                &format!(
+                    "INSERT INTO {table} (event_id, source, payload, headers)
+                     SELECT * FROM UNNEST($1::text[], $2::text[], $3::jsonb[], $4::jsonb[])
+                       AS t(event_id, source, payload, headers)
+                     ON CONFLICT (event_id) DO NOTHING",
+                    table = schema_table
+                ),
+                &[&event_ids, &sources, &payloads, &headers],
+            )
+            .await
+            .map_err(RelayError::from)?;
+
+        let duplicates = messages.len() as u64 - inserted;
+        if duplicates > 0 {
+            self.dedup_count += duplicates;
+            tracing::debug!(
+                inbox = %self.inbox_table,
+                duplicates,
+                "duplicate messages skipped (dedup)"
+            );
         }
+
         Ok(())
     }
 
     async fn is_healthy(&mut self) -> bool {
-        // Simple health check: run a trivial query.
         self.db.query_opt("SELECT 1", &[]).await.is_ok()
     }
 

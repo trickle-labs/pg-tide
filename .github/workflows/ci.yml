@@ -178,3 +178,15 @@ jobs:
             /usr/share/postgresql/18/extension \
             /usr/lib/postgresql/18/lib
           cargo pgrx test pg18 --package pg-tide-ext
+
+  supply-chain:
+    name: Supply-Chain Audit (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features

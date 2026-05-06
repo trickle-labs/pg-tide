@@ -23,6 +23,7 @@ const V0_8_0_TO_0_9_0: &str = include_str!("../../sql/pg_tide--0.8.0--0.9.0.sql"
 const V0_9_0_TO_0_10_0: &str = include_str!("../../sql/pg_tide--0.9.0--0.10.0.sql");
 const V0_10_0_TO_0_11_0: &str = include_str!("../../sql/pg_tide--0.10.0--0.11.0.sql");
 const V0_11_0_TO_0_12_0: &str = include_str!("../../sql/pg_tide--0.11.0--0.12.0.sql");
+const V0_12_0_TO_0_13_0: &str = include_str!("../../sql/pg_tide--0.12.0--0.13.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -37,6 +38,7 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.9.0 → 0.10.0", V0_9_0_TO_0_10_0),
     ("0.10.0 → 0.11.0", V0_10_0_TO_0_11_0),
     ("0.11.0 → 0.12.0", V0_11_0_TO_0_12_0),
+    ("0.12.0 → 0.13.0", V0_12_0_TO_0_13_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
@@ -197,4 +199,34 @@ async fn test_sequential_migration_upgrade() {
         )
         .await
         .expect("relay_consumer_offsets insert after upgrade");
+
+    // After v0.13.0 upgrade: outbox_publishers table should exist.
+    let has_outbox_publishers: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'tide' AND table_name = 'outbox_publishers')",
+            &[],
+        )
+        .await
+        .expect("table check")
+        .get(0);
+    assert!(
+        has_outbox_publishers,
+        "after v0.13.0 upgrade, tide.outbox_publishers must exist"
+    );
+
+    // relay_schema_fingerprints table should exist.
+    let has_fingerprints: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'tide' AND table_name = 'relay_schema_fingerprints')",
+            &[],
+        )
+        .await
+        .expect("table check")
+        .get(0);
+    assert!(
+        has_fingerprints,
+        "after v0.13.0 upgrade, tide.relay_schema_fingerprints must exist"
+    );
 }

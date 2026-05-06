@@ -1,0 +1,72 @@
+# cargo-deny configuration (v0.13.0 supply-chain hardening)
+# https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+# Warn on RUSTSEC advisories; do not error by default to avoid blocking CI on
+# advisories that have no fix yet.  Change `warn` to `deny` to enforce stricter
+# policy.
+vulnerability = "warn"
+unmaintained = "warn"
+yanked = "warn"
+notice = "warn"
+
+[licenses]
+# Allow standard permissive and weak-copyleft licences.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "OpenSSL",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+# Deny GPL-only licences (they are incompatible with Apache-2.0 distribution).
+deny = [
+    "GPL-2.0",
+    "GPL-3.0",
+    "LGPL-2.0",
+    "AGPL-3.0",
+]
+# Some crates ship dual-licensed; prefer the most permissive interpretation.
+confidence-threshold = 0.8
+
+[bans]
+# Warn on duplicate versions of the same crate (large version skews can hide
+# known-bad versions from audits).
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+# Known duplicates that are acceptable (e.g., transitive constraints).
+skip = [
+    # Various ecosystem crates have not yet aligned on a single version.
+    { name = "base64" },
+    { name = "bitflags" },
+    { name = "futures-channel" },
+    { name = "futures-core" },
+    { name = "futures-io" },
+    { name = "futures-sink" },
+    { name = "futures-task" },
+    { name = "futures-util" },
+    { name = "pin-project-lite" },
+    { name = "proc-macro2" },
+    { name = "quote" },
+    { name = "regex" },
+    { name = "regex-syntax" },
+    { name = "syn" },
+    { name = "tokio" },
+    { name = "tokio-util" },
+    { name = "indexmap" },
+    { name = "hashbrown" },
+]
+
+[sources]
+# Only allow crates from crates.io.
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

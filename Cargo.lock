@@ -4587,7 +4587,7 @@ dependencies = [
 
 [[package]]
 name = "pg-tide-ext"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "pgrx",
  "pgrx-tests",
@@ -4598,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "pg-tide-relay"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "apache-avro",
  "arrow-array",
@@ -4619,6 +4619,7 @@ dependencies = [
  "criterion",
  "futures-util",
  "governor",
+ "hex",
  "hmac 0.12.1",
  "jmespath",
  "lapin",
@@ -4631,6 +4632,7 @@ dependencies = [
  "prometheus",
  "rdkafka",
  "redis",
+ "regex-lite",
  "reqwest",
  "rumqttc",
  "serde",
