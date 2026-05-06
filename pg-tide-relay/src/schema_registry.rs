@@ -213,6 +213,7 @@ pub fn decode_confluent_wire(data: &[u8]) -> Result<(i32, &[u8]), String> {
 #[cfg(feature = "schema-registry")]
 pub mod avro {
     //! Avro serialisation helpers for the Confluent Schema Registry wire format.
+    #[allow(unused_imports)]
     use apache_avro::{from_value, to_avro_datum, Reader, Schema, Writer};
     use serde_json::Value;
 

@@ -128,6 +128,65 @@ jobs:
       - name: Run integration tests (testcontainers)
         run: cargo test --package pg-tide-relay --test '*' --all-features -- --test-threads=1
 
+  # v0.16.0: Additional parallel integration test job groups by backend category.
+  # Splits the 40+ test files into groups to reduce CI wall-clock time.
+  test-integration-core:
+    name: Integration Tests — Core (migration, sql-api, wire-format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-integration-core-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run core integration tests
+        run: |
+          cargo test --package pg-tide-relay --test migration_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test sql_api_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test wire_format_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test wire_format_proptest -- --test-threads=1
+
+  test-integration-relay:
+    name: Integration Tests — Relay (coordinator, circuit breaker, DLQ)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-integration-relay-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run relay coordinator tests
+        run: |
+          cargo test --package pg-tide-relay --test multi_pipeline_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test circuit_breaker_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test dlq_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test consumer_group_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test graceful_shutdown_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test outbox_source_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test batch_inbox_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test replay_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test dry_run_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test sighup_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test backpressure_test -- --test-threads=1
+
   test-ext-pgrx:
     name: Extension pgrx Tests
     runs-on: ubuntu-latest
@@ -202,3 +261,65 @@ jobs:
 
       - name: Run cargo-deny check
         run: cargo deny check
+
+  # v0.16.0: Link checker — validates URLs in README and docs on every PR.
+  link-check:
+    name: Link Checker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check links in README and docs
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --exclude-loopback
+            --exclude-mail
+            --timeout 30
+            --max-retries 3
+            --accept 200,204,206,301,302,307,308
+            README.md
+            docs/**/*.md
+            CHANGELOG.md
+            ROADMAP.md
+          fail: true
+        continue-on-error: true
+
+  # v0.16.0: Grafana dashboard metric name consistency check.
+  dashboard-check:
+    name: Grafana Dashboard Metric Name Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify dashboard references known metric names
+        run: |
+          # Extract all metric name constants from metrics.rs
+          METRICS=$(grep -o 'pg_tide_relay_[a-z_]*' pg-tide-relay/src/metrics.rs | sort -u)
+          # Extract metric names referenced in the Grafana dashboard.
+          # Strip Prometheus histogram/summary suffixes (_bucket, _sum, _count)
+          # so that e.g. pg_tide_relay_delivery_latency_seconds_bucket maps to
+          # the base metric name pg_tide_relay_delivery_latency_seconds.
+          DASHBOARD_METRICS=$(grep -o 'pg_tide_relay_[a-z_]*' pg-tide/dashboards/relay-health.json 2>/dev/null \
+            | sed -E 's/_(bucket|sum|count)$//' \
+            | sort -u || true)
+          echo "Metrics in metrics.rs:"
+          echo "$METRICS"
+          if [ -n "$DASHBOARD_METRICS" ]; then
+            echo "Metrics referenced in dashboard (normalised):"
+            echo "$DASHBOARD_METRICS"
+            # Check that every dashboard metric exists in metrics.rs
+            UNKNOWN=""
+            for m in $DASHBOARD_METRICS; do
+              if ! echo "$METRICS" | grep -q "^${m}$"; then
+                UNKNOWN="$UNKNOWN $m"
+              fi
+            done
+            if [ -n "$UNKNOWN" ]; then
+              echo "ERROR: Dashboard references unknown metric(s):$UNKNOWN"
+              exit 1
+            fi
+            echo "All dashboard metric names verified."
+          else
+            echo "No pg_tide_relay_* metrics in dashboard — skipping check."
+          fi

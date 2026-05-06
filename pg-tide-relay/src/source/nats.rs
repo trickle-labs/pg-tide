@@ -1,6 +1,7 @@
 /// NATS JetStream source (RELAY-23) — durable pull consumer.
 /// Feature-gated: only compiled with `--features nats`.
 #[cfg(feature = "nats")]
+#[allow(unused_imports)]
 use async_nats::jetstream::{self, consumer::pull::BatchConfig};
 
 use crate::envelope::{AckToken, RelayMessage};
@@ -10,10 +11,15 @@ use crate::error::RelayError;
 pub struct NatsSource {
     messages:
         async_nats::jetstream::consumer::Consumer<async_nats::jetstream::consumer::pull::Config>,
+    #[allow(dead_code)]
     stream_name: String,
+    #[allow(dead_code)]
     consumer_name: String,
+    #[allow(dead_code)]
     subject: String,
+    #[allow(dead_code)]
     event_type: String,
+    #[allow(dead_code)]
     pending: Vec<async_nats::jetstream::Message>,
 }
 

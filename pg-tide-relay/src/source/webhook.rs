@@ -349,6 +349,7 @@ fn verify_fivetran(
 #[cfg(feature = "webhook")]
 pub struct WebhookSource {
     rx: mpsc::Receiver<RelayMessage>,
+    #[allow(dead_code)]
     event_type: String,
 }
 

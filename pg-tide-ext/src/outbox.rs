@@ -77,6 +77,45 @@ fn outbox_create_impl(
     Ok(())
 }
 
+// ── TIDE-API: outbox_create_if_not_exists ────────────────────────────────
+
+/// Idempotent outbox creation.
+///
+/// Creates the outbox if it does not already exist. Returns `true` when the
+/// outbox was created, `false` when it already existed. This is safe to call
+/// from deployment scripts where the outbox may or may not exist already.
+#[pg_extern(schema = "tide")]
+pub fn outbox_create_if_not_exists(
+    p_name: &str,
+    p_retention_hours: default!(i32, 24),
+    p_inline_threshold: default!(i32, 10000),
+) -> bool {
+    outbox_create_if_not_exists_impl(p_name, p_retention_hours, p_inline_threshold)
+        .unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn outbox_create_if_not_exists_impl(
+    name: &str,
+    retention_hours: i32,
+    inline_threshold: i32,
+) -> Result<bool, PgTideError> {
+    crate::validation::validate_identifier(name)?;
+    if outbox_exists(name) {
+        return Ok(false);
+    }
+
+    Spi::run_with_args(
+        "INSERT INTO tide.tide_outbox_config \
+         (outbox_name, retention_hours, inline_threshold) \
+         VALUES ($1, $2, $3)",
+        &[name.into(), retention_hours.into(), inline_threshold.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("INSERT tide_outbox_config: {e}")))?;
+
+    pgrx::log!("[pg_tide] outbox_create_if_not_exists: created outbox '{name}'");
+    Ok(true)
+}
+
 // ── TIDE-API: outbox_publish ──────────────────────────────────────────────
 
 /// Publish a payload to a named outbox transactionally.

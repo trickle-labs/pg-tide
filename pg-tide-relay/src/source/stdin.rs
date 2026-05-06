@@ -1,5 +1,6 @@
 /// stdin / file source (RELAY-29).
 /// Reads JSONL from stdin or a file and converts each line to a RelayMessage.
+#[allow(unused_imports)]
 use std::io::BufRead;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -74,6 +75,7 @@ impl super::Source for StdinSource {
 
 /// File source — reads a JSONL file.
 pub struct FileSource {
+    #[allow(dead_code)]
     path: String,
     event_type: String,
     lines: std::collections::VecDeque<String>,

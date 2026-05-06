@@ -158,6 +158,18 @@ pub enum Commands {
         #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
         postgres_url: Option<String>,
     },
+
+    /// Print the status of all configured relay pipelines.
+    ///
+    /// Connects to PostgreSQL and prints a table of pipeline names,
+    /// direction (forward/reverse), enabled state, last committed offset,
+    /// consumer lag (outbox pipelines only), and circuit-breaker state.
+    /// Exits 0 on success, 1 on connection failure.
+    Status {
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
 }
 
 /// Replay workbench subcommands.

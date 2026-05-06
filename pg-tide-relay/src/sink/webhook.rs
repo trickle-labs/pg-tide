@@ -91,6 +91,7 @@ fn is_private_172(host: &str) -> bool {
 pub struct WebhookSink {
     client: Client,
     url: Url,
+    #[allow(dead_code)]
     timeout_secs: u64,
     allow_http: bool,
     ssrf_protection: bool,

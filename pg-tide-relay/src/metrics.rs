@@ -3,6 +3,21 @@ use prometheus::{HistogramVec, IntCounterVec, IntGaugeVec, Registry, TextEncoder
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+// ── Metric name constants (used by Grafana dashboard codegen check) ───────────
+
+pub const METRIC_MESSAGES_PUBLISHED: &str = "pg_tide_relay_messages_published_total";
+pub const METRIC_MESSAGES_CONSUMED: &str = "pg_tide_relay_messages_consumed_total";
+pub const METRIC_PUBLISH_ERRORS: &str = "pg_tide_relay_publish_errors_total";
+pub const METRIC_DEDUP_SKIPPED: &str = "pg_tide_relay_dedup_skipped_total";
+pub const METRIC_DLQ_ENTRIES_WRITTEN: &str = "pg_tide_relay_dlq_entries_written_total";
+pub const METRIC_PIPELINE_HEALTHY: &str = "pg_tide_relay_pipeline_healthy";
+pub const METRIC_CONSUMER_LAG: &str = "pg_tide_relay_consumer_lag";
+pub const METRIC_DELIVERY_LATENCY: &str = "pg_tide_relay_delivery_latency_seconds";
+/// v0.16.0: New coordinator metrics.
+pub const METRIC_OWNED_PIPELINES: &str = "pg_tide_relay_owned_pipelines";
+pub const METRIC_RECONCILE_DURATION: &str = "pg_tide_relay_reconcile_duration_seconds";
+pub const METRIC_PIPELINE_ERRORS: &str = "pg_tide_relay_pipeline_errors_total";
+
 /// Shared relay metrics.
 pub struct RelayMetrics {
     pub messages_published: IntCounterVec,
@@ -16,6 +31,12 @@ pub struct RelayMetrics {
     pub consumer_lag: IntGaugeVec,
     /// End-to-end delivery latency in seconds (outbox publish → sink ack).
     pub delivery_latency_seconds: HistogramVec,
+    /// v0.16.0: Number of pipeline workers currently owned by this coordinator.
+    pub owned_pipelines: IntGaugeVec,
+    /// v0.16.0: Duration of each reconcile loop iteration.
+    pub reconcile_duration_seconds: HistogramVec,
+    /// v0.16.0: Pipeline errors labelled by error class (transient/permanent).
+    pub pipeline_errors_total: IntCounterVec,
     registry: Registry,
 }
 
@@ -25,7 +46,7 @@ impl RelayMetrics {
 
         let messages_published = IntCounterVec::new(
             prometheus::opts!(
-                "pg_tide_relay_messages_published_total",
+                METRIC_MESSAGES_PUBLISHED,
                 "Total messages published to sink"
             ),
             &["pipeline", "direction", "tenant"],
@@ -33,20 +54,20 @@ impl RelayMetrics {
 
         let messages_consumed = IntCounterVec::new(
             prometheus::opts!(
-                "pg_tide_relay_messages_consumed_total",
+                METRIC_MESSAGES_CONSUMED,
                 "Total messages consumed from source"
             ),
             &["pipeline", "direction", "tenant"],
         )?;
 
         let publish_errors = IntCounterVec::new(
-            prometheus::opts!("pg_tide_relay_publish_errors_total", "Total publish errors"),
+            prometheus::opts!(METRIC_PUBLISH_ERRORS, "Total publish errors"),
             &["pipeline", "direction", "tenant"],
         )?;
 
         let dedup_skipped = IntCounterVec::new(
             prometheus::opts!(
-                "pg_tide_relay_dedup_skipped_total",
+                METRIC_DEDUP_SKIPPED,
                 "Total messages skipped due to deduplication"
             ),
             &["pipeline", "tenant"],
@@ -54,7 +75,7 @@ impl RelayMetrics {
 
         let dlq_entries_written = IntCounterVec::new(
             prometheus::opts!(
-                "pg_tide_relay_dlq_entries_written_total",
+                METRIC_DLQ_ENTRIES_WRITTEN,
                 "Total entries written to the dead-letter queue"
             ),
             &["pipeline", "direction", "tenant"],
@@ -62,7 +83,7 @@ impl RelayMetrics {
 
         let pipeline_healthy = IntGaugeVec::new(
             prometheus::opts!(
-                "pg_tide_relay_pipeline_healthy",
+                METRIC_PIPELINE_HEALTHY,
                 "1 if pipeline is healthy, 0 otherwise"
             ),
             &["pipeline", "tenant"],
@@ -70,7 +91,7 @@ impl RelayMetrics {
 
         let consumer_lag = IntGaugeVec::new(
             prometheus::opts!(
-                "pg_tide_relay_consumer_lag",
+                METRIC_CONSUMER_LAG,
                 "Pending messages in the outbox not yet consumed by the relay"
             ),
             &["pipeline", "tenant"],
@@ -78,11 +99,39 @@ impl RelayMetrics {
 
         let delivery_latency_seconds = HistogramVec::new(
             prometheus::HistogramOpts::new(
-                "pg_tide_relay_delivery_latency_seconds",
+                METRIC_DELIVERY_LATENCY,
                 "End-to-end latency from outbox publish to sink acknowledgement",
             )
             .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0]),
             &["pipeline", "tenant"],
+        )?;
+
+        // v0.16.0: New coordinator metrics.
+        let owned_pipelines = IntGaugeVec::new(
+            prometheus::opts!(
+                METRIC_OWNED_PIPELINES,
+                "Number of pipeline workers currently owned by this coordinator instance"
+            ),
+            &["relay_group"],
+        )?;
+
+        let reconcile_duration_seconds = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                METRIC_RECONCILE_DURATION,
+                "Duration of coordinator reconcile loop iterations in seconds",
+            )
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+            ]),
+            &["relay_group"],
+        )?;
+
+        let pipeline_errors_total = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_PIPELINE_ERRORS,
+                "Total pipeline errors labelled by error class"
+            ),
+            &["pipeline", "error_class"],
         )?;
 
         registry.register(Box::new(messages_published.clone()))?;
@@ -93,6 +142,9 @@ impl RelayMetrics {
         registry.register(Box::new(pipeline_healthy.clone()))?;
         registry.register(Box::new(consumer_lag.clone()))?;
         registry.register(Box::new(delivery_latency_seconds.clone()))?;
+        registry.register(Box::new(owned_pipelines.clone()))?;
+        registry.register(Box::new(reconcile_duration_seconds.clone()))?;
+        registry.register(Box::new(pipeline_errors_total.clone()))?;
 
         Ok(Arc::new(Self {
             messages_published,
@@ -103,6 +155,9 @@ impl RelayMetrics {
             pipeline_healthy,
             consumer_lag,
             delivery_latency_seconds,
+            owned_pipelines,
+            reconcile_duration_seconds,
+            pipeline_errors_total,
             registry,
         }))
     }
@@ -201,7 +256,11 @@ mod tests {
             .with_label_values(&["test-pipeline", "forward", "default"])
             .inc();
         let rendered = metrics.render().unwrap();
-        assert!(rendered.contains("pg_tide_relay_messages_published_total"));
+        assert!(rendered.contains(METRIC_MESSAGES_PUBLISHED));
+        // v0.16.0: verify new coordinator metrics are registered.
+        assert!(rendered.contains(METRIC_OWNED_PIPELINES));
+        assert!(rendered.contains(METRIC_RECONCILE_DURATION));
+        assert!(rendered.contains(METRIC_PIPELINE_ERRORS));
     }
 
     #[test]

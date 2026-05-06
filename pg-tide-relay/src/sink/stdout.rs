@@ -56,6 +56,7 @@ impl super::Sink for StdoutSink {
 
 /// File sink — writes JSONL to a file.
 pub struct FileSink {
+    #[allow(dead_code)]
     path: String,
     file: tokio::fs::File,
     format: StdoutFormat,

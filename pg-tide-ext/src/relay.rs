@@ -150,9 +150,94 @@ fn relay_set_inbox_impl(
     Ok(())
 }
 
+// ── TIDE-API: relay_set_inbox_v2 (v0.16.0) ───────────────────────────────
+
+/// Configure a reverse relay pipeline using a single JSONB config parameter.
+///
+/// This is the v0.16.0 single-parameter form of `relay_set_inbox()`.
+/// The config object accepts the following keys:
+///
+/// - `name`        TEXT  (required) Pipeline name.
+/// - `inbox`       TEXT  (required) Target inbox name.
+/// - `source`      TEXT  (default: `"stdout"`) Source backend type.
+/// - `config`      JSONB (default: `{}`) Source-specific configuration.
+/// - `batch_size`  INT   (default: 100)
+/// - `enabled`     BOOL  (default: true)
+/// - `max_retries` INT   (default: 3)
+/// - `idempotent`  BOOL  (default: true)
+#[pg_extern(schema = "tide")]
+pub fn relay_set_inbox_v2(p_config: pgrx::JsonB) {
+    relay_set_inbox_v2_impl(p_config).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn relay_set_inbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
+    let obj = &config.0;
+
+    let name = obj["name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            PgTideError::InvalidArgument(
+                r#"relay_set_inbox_v2: config must include a non-empty "name" key"#.to_string(),
+            )
+        })?;
+    let inbox = obj["inbox"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            PgTideError::InvalidArgument(
+                r#"relay_set_inbox_v2: config must include a non-empty "inbox" key"#.to_string(),
+            )
+        })?;
+
+    let source = obj["source"].as_str().unwrap_or("stdout");
+    let src_config = obj
+        .get("config")
+        .cloned()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+    let batch_size = obj["batch_size"].as_i64().unwrap_or(100) as i32;
+    let enabled = obj["enabled"].as_bool().unwrap_or(true);
+    let max_retries = obj["max_retries"].as_i64().unwrap_or(3) as i32;
+    let idempotent = obj["idempotent"].as_bool().unwrap_or(true);
+
+    crate::validation::validate_identifier(name)?;
+    crate::validation::validate_identifier(inbox)?;
+
+    let full_config = serde_json::json!({
+        "source_type": source,
+        "source": src_config,
+        "sink_type": "inbox",
+        "sink": {
+            "inbox": inbox,
+            "max_retries": max_retries,
+            "idempotent": idempotent,
+        },
+        "batch_size": batch_size,
+    });
+    let full_str = serde_json::to_string(&full_config)
+        .map_err(|e| PgTideError::SpiError(format!("serialize config: {e}")))?;
+
+    Spi::run_with_args(
+        "INSERT INTO tide.relay_inbox_config (name, enabled, config) \
+         VALUES ($1, $2, $3::jsonb) \
+         ON CONFLICT (name) DO UPDATE \
+         SET enabled = EXCLUDED.enabled, config = EXCLUDED.config",
+        &[name.into(), enabled.into(), full_str.as_str().into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_inbox_config: {e}")))?;
+
+    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
+
+    Ok(())
+}
+
 // ── TIDE-API: relay_enable / relay_disable / relay_delete ─────────────────
 
 /// Enable a relay pipeline.
+///
+/// If the pipeline does not exist, this function is a **silent no-op** — the
+/// caller is not required to verify existence first.  Sends a
+/// `pg_notify('tide_relay_config')` to wake up any listening relay instances.
 #[pg_extern(schema = "tide")]
 pub fn relay_enable(p_name: &str) {
     relay_enable_impl(p_name).unwrap_or_else(|e| pgrx::error!("{}", e))
@@ -175,6 +260,10 @@ fn relay_enable_impl(name: &str) -> Result<(), PgTideError> {
 }
 
 /// Disable a relay pipeline.
+///
+/// If the pipeline does not exist, this function is a **silent no-op** — the
+/// caller is not required to verify existence first.  Sends a
+/// `pg_notify('tide_relay_config')` to wake up any listening relay instances.
 #[pg_extern(schema = "tide")]
 pub fn relay_disable(p_name: &str) {
     relay_disable_impl(p_name).unwrap_or_else(|e| pgrx::error!("{}", e))

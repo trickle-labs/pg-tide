@@ -24,6 +24,9 @@ const V0_9_0_TO_0_10_0: &str = include_str!("../../sql/pg_tide--0.9.0--0.10.0.sq
 const V0_10_0_TO_0_11_0: &str = include_str!("../../sql/pg_tide--0.10.0--0.11.0.sql");
 const V0_11_0_TO_0_12_0: &str = include_str!("../../sql/pg_tide--0.11.0--0.12.0.sql");
 const V0_12_0_TO_0_13_0: &str = include_str!("../../sql/pg_tide--0.12.0--0.13.0.sql");
+const V0_13_0_TO_0_14_0: &str = include_str!("../../sql/pg_tide--0.13.0--0.14.0.sql");
+const V0_14_0_TO_0_15_0: &str = include_str!("../../sql/pg_tide--0.14.0--0.15.0.sql");
+const V0_15_0_TO_0_16_0: &str = include_str!("../../sql/pg_tide--0.15.0--0.16.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -39,6 +42,9 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.10.0 → 0.11.0", V0_10_0_TO_0_11_0),
     ("0.11.0 → 0.12.0", V0_11_0_TO_0_12_0),
     ("0.12.0 → 0.13.0", V0_12_0_TO_0_13_0),
+    ("0.13.0 → 0.14.0", V0_13_0_TO_0_14_0),
+    ("0.14.0 → 0.15.0", V0_14_0_TO_0_15_0),
+    ("0.15.0 → 0.16.0", V0_15_0_TO_0_16_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
@@ -228,5 +234,74 @@ async fn test_sequential_migration_upgrade() {
     assert!(
         has_fingerprints,
         "after v0.13.0 upgrade, tide.relay_schema_fingerprints must exist"
+    );
+
+    // After v0.15.0 upgrade: outbox_truncate_delivered() should exist.
+    let has_sweep_fn: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.routines \
+             WHERE routine_schema = 'tide' AND routine_name = 'outbox_truncate_delivered')",
+            &[],
+        )
+        .await
+        .expect("routine check")
+        .get(0);
+    assert!(
+        has_sweep_fn,
+        "after v0.15.0 upgrade, tide.outbox_truncate_delivered() must exist"
+    );
+
+    // After v0.16.0 upgrade: outbox_create_if_not_exists() should exist.
+    let has_idem_fn: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.routines \
+             WHERE routine_schema = 'tide' AND routine_name = 'outbox_create_if_not_exists')",
+            &[],
+        )
+        .await
+        .expect("routine check")
+        .get(0);
+    assert!(
+        has_idem_fn,
+        "after v0.16.0 upgrade, tide.outbox_create_if_not_exists() must exist"
+    );
+
+    // After v0.16.0 upgrade: relay_set_inbox_v2() should exist.
+    let has_inbox_v2: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.routines \
+             WHERE routine_schema = 'tide' AND routine_name = 'relay_set_inbox_v2')",
+            &[],
+        )
+        .await
+        .expect("routine check")
+        .get(0);
+    assert!(
+        has_inbox_v2,
+        "after v0.16.0 upgrade, tide.relay_set_inbox_v2() must exist"
+    );
+
+    // Verify outbox_create_if_not_exists() works correctly.
+    let created: bool = client
+        .query_one(
+            "SELECT tide.outbox_create_if_not_exists('upgrade_test_outbox')",
+            &[],
+        )
+        .await
+        .expect("outbox_create_if_not_exists first call")
+        .get(0);
+    assert!(created, "first call should return true (created)");
+
+    let created_again: bool = client
+        .query_one(
+            "SELECT tide.outbox_create_if_not_exists('upgrade_test_outbox')",
+            &[],
+        )
+        .await
+        .expect("outbox_create_if_not_exists second call")
+        .get(0);
+    assert!(
+        !created_again,
+        "second call should return false (already exists)"
     );
 }

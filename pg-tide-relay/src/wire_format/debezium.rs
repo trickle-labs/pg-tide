@@ -26,6 +26,7 @@ use std::collections::HashMap;
 
 use serde_json::{json, Value};
 
+#[allow(unused_imports)]
 use super::{
     apply_logical_type, debezium_op_to_pg, pg_op_to_debezium, EncodeContext, EncodedBatch,
     EncodedMessage, InboxRow, OutboxRow, RawMessage, WireError, WireFormat,
@@ -254,6 +255,7 @@ impl DebeziumFormat {
 
     // ── Decode helpers ────────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     fn decode_json_payload(
         &mut self,
         raw: &RawMessage,
@@ -337,6 +339,7 @@ impl DebeziumFormat {
         }))
     }
 
+    #[allow(dead_code)]
     fn decode_tombstone(&mut self, raw: &RawMessage) -> Result<Option<InboxRow>, WireError> {
         match self.config.tombstone_handling {
             TombstoneHandling::Drop => {
@@ -372,6 +375,7 @@ impl DebeziumFormat {
         }
     }
 
+    #[allow(dead_code)]
     fn build_event_id(&self, raw: &RawMessage, _payload: &Value) -> String {
         match self.config.key_strategy {
             KeyStrategy::MessageKey => raw
