@@ -122,16 +122,9 @@ COMMENT ON FUNCTION tide.relay_set_inbox_v2(JSONB) IS
     'Accepts keys: name, inbox, source, config, batch_size, enabled, '
     'max_retries, idempotent. Added in v0.16.0.';
 
--- ── 3. Refresh documentation on relay_enable / relay_disable ────────────────
-
-COMMENT ON FUNCTION tide.relay_enable(TEXT) IS
-    'Enable a relay pipeline. If the pipeline does not exist, this function '
-    'is a silent no-op — the caller is not required to verify existence first. '
-    'Sends a pg_notify(''tide_relay_config'') to wake up any listening relay '
-    'instances.';
-
-COMMENT ON FUNCTION tide.relay_disable(TEXT) IS
-    'Disable a relay pipeline. If the pipeline does not exist, this function '
-    'is a silent no-op — the caller is not required to verify existence first. '
-    'Sends a pg_notify(''tide_relay_config'') to wake up any listening relay '
-    'instances.';
+-- ── 3. Documentation note on relay_enable / relay_disable behaviour ──────────
+--
+-- relay_enable(TEXT) and relay_disable(TEXT) are pgrx-defined functions whose
+-- doc comments are maintained in Rust source (pg-tide-ext/src/relay.rs).
+-- Behaviour note: both functions are intentional silent no-ops when the named
+-- pipeline does not exist — callers are not required to verify existence first.
