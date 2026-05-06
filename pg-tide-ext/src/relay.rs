@@ -435,8 +435,9 @@ mod tests {
             true,
         );
         let cfg = crate::relay::relay_get_config("cfg-pipeline");
-        assert_eq!(cfg.0["outbox"], "cfg-relay-outbox");
-        assert_eq!(cfg.0["sink"], "stdout");
+        assert_eq!(cfg.0["source_type"], "outbox");
+        assert_eq!(cfg.0["source"]["outbox"], "cfg-relay-outbox");
+        assert_eq!(cfg.0["sink_type"], "stdout");
     }
 
     #[pg_test]
