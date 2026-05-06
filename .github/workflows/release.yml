@@ -149,6 +149,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
@@ -332,7 +333,7 @@ jobs:
 
       - name: Inspect full manifest
         run: |
-          docker buildx imagetools inspect ghcr.io/trickle-labs/pg-tide:${{ steps.meta-full.outputs.version }}-full
+          docker buildx imagetools inspect ghcr.io/trickle-labs/pg-tide:${{ steps.meta-full.outputs.version }}
 
   release:
     name: Create GitHub Release
