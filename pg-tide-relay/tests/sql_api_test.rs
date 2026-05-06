@@ -31,8 +31,8 @@ async fn test_relay_set_outbox_config_shape() {
     db.client
         .execute(
             "INSERT INTO tide.relay_outbox_config (name, enabled, config) \
-             VALUES ('orders-nats', true, $1::jsonb)",
-            &[&serde_json::to_string(&config).unwrap()],
+             VALUES ('orders-nats', true, $1)",
+            &[&config],
         )
         .await
         .expect("insert relay config");
@@ -101,8 +101,8 @@ async fn test_relay_set_inbox_config_shape() {
     db.client
         .execute(
             "INSERT INTO tide.relay_inbox_config (name, enabled, config) \
-             VALUES ('kafka-notifications', true, $1::jsonb)",
-            &[&serde_json::to_string(&config).unwrap()],
+             VALUES ('kafka-notifications', true, $1)",
+            &[&config],
         )
         .await
         .expect("insert relay inbox config");
@@ -297,8 +297,8 @@ async fn test_relay_list_configs_includes_config() {
     db.client
         .execute(
             "INSERT INTO tide.relay_outbox_config (name, enabled, config) \
-             VALUES ('test-pipeline', true, $1::jsonb)",
-            &[&serde_json::to_string(&config).unwrap()],
+             VALUES ('test-pipeline', true, $1)",
+            &[&config],
         )
         .await
         .expect("insert");
