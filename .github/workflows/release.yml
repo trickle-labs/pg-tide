@@ -45,8 +45,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Build release binary
-        run: cargo build --package pg-tide-relay --release --target ${{ matrix.target }}
+      - name: Build release binary (full features)
+        run: cargo build --package pg-tide-relay --release --target ${{ matrix.target }} --all-features
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 

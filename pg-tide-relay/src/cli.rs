@@ -1,5 +1,5 @@
 /// CLI argument definitions for pg-tide.
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -14,7 +14,7 @@ use clap::Parser;
                   Reverse mode: consumes from external sources → writes to inbox tables."
 )]
 pub struct Cli {
-    /// PostgreSQL connection string (required).
+    /// PostgreSQL connection string (required for relay mode; optional for diagnostics).
     /// Example: postgres://user:pass@localhost:5432/mydb
     #[arg(long, env = "PG_TIDE_POSTGRES_URL", help = "PostgreSQL connection URL")]
     pub postgres_url: Option<String>,
@@ -76,4 +76,40 @@ pub struct Cli {
         help = "Seconds to wait for in-flight messages to drain on SIGTERM (default: 30)"
     )]
     pub drain_timeout: u64,
+
+    /// Optional subcommand.  When absent the relay daemon is started.
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+/// Diagnostic / operational subcommands.
+#[derive(Debug, Subcommand)]
+pub enum Commands {
+    /// Validate PostgreSQL connectivity, schema version, and catalog health.
+    ///
+    /// Connects to PostgreSQL, checks that the tide schema and required tables
+    /// exist, verifies the schema version recorded in the catalog, and reports
+    /// the number of configured pipelines.  Exits 0 on success, 1 on any
+    /// problem.
+    Doctor {
+        /// PostgreSQL URL to diagnose.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+
+    /// Dry-run a pipeline's source and sink factories against the catalog config.
+    ///
+    /// Loads the pipeline configuration from PostgreSQL, resolves secrets,
+    /// constructs the source and sink (without processing any messages), then
+    /// reports whether both sides can be instantiated successfully.  Useful for
+    /// validating configuration before deploying a new pipeline.
+    ValidateConfig {
+        /// Name of the pipeline to validate.
+        #[arg(long)]
+        pipeline: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
 }

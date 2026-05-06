@@ -50,12 +50,16 @@ fn relay_set_outbox_impl(
     batch_size: i32,
     enabled: bool,
 ) -> Result<(), PgTideError> {
-    // Build combined config with outbox + sink + batch.
+    crate::validation::validate_identifier(name)?;
+    crate::validation::validate_identifier(outbox)?;
+    // Build combined config matching the relay runtime's expected shape:
+    // source_type / source.outbox + sink_type / sink.* + batch_size.
     let full_config = serde_json::json!({
-        "outbox": outbox,
-        "sink": sink,
+        "source_type": "outbox",
+        "source": { "outbox": outbox },
+        "sink_type": sink,
+        "sink": config.0,
         "batch_size": batch_size,
-        "params": config.0,
     });
     let full_str = serde_json::to_string(&full_config)
         .map_err(|e| PgTideError::SpiError(format!("serialize full config: {e}")))?;
@@ -114,13 +118,20 @@ fn relay_set_inbox_impl(
     max_retries: i32,
     idempotent: bool,
 ) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(name)?;
+    crate::validation::validate_identifier(inbox)?;
+    // Build config matching the relay runtime's expected shape for reverse pipelines:
+    // source_type / source.* + sink_type=inbox / sink.inbox + batch_size.
     let full_config = serde_json::json!({
-        "inbox": inbox,
-        "source": source,
+        "source_type": source,
+        "source": config.0,
+        "sink_type": "inbox",
+        "sink": {
+            "inbox": inbox,
+            "max_retries": max_retries,
+            "idempotent": idempotent,
+        },
         "batch_size": batch_size,
-        "max_retries": max_retries,
-        "idempotent": idempotent,
-        "params": config.0,
     });
     let full_str = serde_json::to_string(&full_config)
         .map_err(|e| PgTideError::SpiError(format!("serialize config: {e}")))?;
@@ -238,6 +249,10 @@ fn relay_get_config_impl(name: &str) -> Result<pgrx::JsonB, PgTideError> {
 /// List all relay pipeline configurations.
 #[pg_extern(schema = "tide")]
 pub fn relay_list_configs() -> pgrx::JsonB {
+    relay_list_configs_impl().unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn relay_list_configs_impl() -> Result<pgrx::JsonB, PgTideError> {
     let outbox_rows = Spi::connect(|client| {
         let mut rows = Vec::new();
         let tup = client.select(
@@ -248,15 +263,20 @@ pub fn relay_list_configs() -> pgrx::JsonB {
         for row in tup {
             let name: String = row.get(1)?.unwrap_or_default();
             let enabled: bool = row.get(2)?.unwrap_or(true);
+            let config: serde_json::Value = row
+                .get::<pgrx::JsonB>(3)?
+                .map(|j| j.0)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
             rows.push(serde_json::json!({
                 "name": name,
                 "direction": "outbox",
                 "enabled": enabled,
+                "config": config,
             }));
         }
         Ok::<_, pgrx::spi::SpiError>(rows)
     })
-    .unwrap_or_default();
+    .map_err(|e| PgTideError::SpiError(format!("list outbox configs: {e}")))?;
 
     let inbox_rows = Spi::connect(|client| {
         let mut rows = Vec::new();
@@ -268,18 +288,23 @@ pub fn relay_list_configs() -> pgrx::JsonB {
         for row in tup {
             let name: String = row.get(1)?.unwrap_or_default();
             let enabled: bool = row.get(2)?.unwrap_or(true);
+            let config: serde_json::Value = row
+                .get::<pgrx::JsonB>(3)?
+                .map(|j| j.0)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
             rows.push(serde_json::json!({
                 "name": name,
                 "direction": "inbox",
                 "enabled": enabled,
+                "config": config,
             }));
         }
         Ok::<_, pgrx::spi::SpiError>(rows)
     })
-    .unwrap_or_default();
+    .map_err(|e| PgTideError::SpiError(format!("list inbox configs: {e}")))?;
 
     let all: Vec<_> = outbox_rows.into_iter().chain(inbox_rows).collect();
-    pgrx::JsonB(serde_json::Value::Array(all))
+    Ok(pgrx::JsonB(serde_json::Value::Array(all)))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -410,8 +435,9 @@ mod tests {
             true,
         );
         let cfg = crate::relay::relay_get_config("cfg-pipeline");
-        assert_eq!(cfg.0["outbox"], "cfg-relay-outbox");
-        assert_eq!(cfg.0["sink"], "stdout");
+        assert_eq!(cfg.0["source_type"], "outbox");
+        assert_eq!(cfg.0["source"]["outbox"], "cfg-relay-outbox");
+        assert_eq!(cfg.0["sink_type"], "stdout");
     }
 
     #[pg_test]

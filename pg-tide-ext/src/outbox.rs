@@ -60,6 +60,7 @@ fn outbox_create_impl(
     retention_hours: i32,
     inline_threshold: i32,
 ) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(name)?;
     if outbox_exists(name) {
         return Err(PgTideError::OutboxAlreadyExists(name.to_string()));
     }
@@ -93,8 +94,22 @@ fn outbox_publish_impl(
     payload: pgrx::JsonB,
     headers: pgrx::JsonB,
 ) -> Result<(), PgTideError> {
-    if !outbox_exists(name) {
-        return Err(PgTideError::OutboxNotFound(name.to_string()));
+    // Fetch existence and enabled state in one query.
+    let enabled: Option<bool> = Spi::get_one_with_args::<bool>(
+        "SELECT enabled FROM tide.tide_outbox_config WHERE outbox_name = $1",
+        &[name.into()],
+    )
+    .unwrap_or(None);
+
+    match enabled {
+        None => return Err(PgTideError::OutboxNotFound(name.to_string())),
+        Some(false) => {
+            return Err(PgTideError::InvalidArgument(format!(
+                "outbox '{}' is disabled",
+                name
+            )))
+        }
+        Some(true) => {}
     }
 
     let payload_str = serde_json::to_string(&payload.0)

@@ -84,7 +84,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(pgtide_relay_messages_forwarded_total[5m])",
+          "expr": "rate(pg_tide_relay_messages_published_total[5m])",
           "legendFormat": "{{pipeline_name}} ({{pipeline_direction}})",
           "refId": "A"
         }
@@ -111,7 +111,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(pgtide_relay_inbox_messages_received_total[5m])",
+          "expr": "rate(pg_tide_relay_messages_published_total{direction="reverse"}[5m])",
           "legendFormat": "{{pipeline_name}} (reverse)",
           "refId": "A"
         }
@@ -155,7 +155,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(pgtide_relay_messages_failed_total[5m]) / (rate(pgtide_relay_messages_forwarded_total[5m]) + rate(pgtide_relay_messages_failed_total[5m]) + 0.00001)",
+          "expr": "rate(pg_tide_relay_publish_errors_total[5m]) / (rate(pg_tide_relay_messages_published_total[5m]) + rate(pg_tide_relay_publish_errors_total[5m]) + 0.00001)",
           "legendFormat": "{{pipeline_name}} error rate",
           "refId": "A"
         }
@@ -190,7 +190,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "increase(pgtide_relay_messages_dlq_total[5m])",
+          "expr": "increase(pg_tide_relay_publish_errors_total[5m])",
           "legendFormat": "{{pipeline_name}} DLQ",
           "refId": "A"
         }
@@ -225,7 +225,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "pgtide_relay_backlog_depth",
+          "expr": "pg_tide_relay_consumer_lag",
           "legendFormat": "{{pipeline_name}} backlog",
           "refId": "A"
         }
@@ -252,19 +252,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.50, rate(pgtide_relay_forward_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, rate(pg_tide_relay_delivery_latency_seconds_bucket[5m]))",
           "legendFormat": "{{pipeline_name}} p50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.95, rate(pgtide_relay_forward_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(pg_tide_relay_delivery_latency_seconds_bucket[5m]))",
           "legendFormat": "{{pipeline_name}} p95",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.99, rate(pgtide_relay_forward_latency_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, rate(pg_tide_relay_delivery_latency_seconds_bucket[5m]))",
           "legendFormat": "{{pipeline_name}} p99",
           "refId": "C"
         }
@@ -317,7 +317,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "pgtide_relay_circuit_breaker_state",
+          "expr": "pg_tide_relay_pipeline_healthy",
           "legendFormat": "{{pipeline_name}}",
           "refId": "A"
         }
@@ -351,7 +351,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(pgtide_relay_retry_attempts_total[5m])",
+          "expr": "rate(pg_tide_relay_publish_errors_total[5m])",
           "legendFormat": "{{pipeline_name}} attempt {{attempt_number}}",
           "refId": "A"
         }
@@ -378,7 +378,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "pgtide_relay_inbox_lag_seconds",
+          "expr": "pg_tide_relay_consumer_lag",
           "legendFormat": "{{pipeline_name}} inbox lag",
           "refId": "A"
         }

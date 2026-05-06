@@ -13,6 +13,7 @@ mod error;
 mod inbox;
 mod outbox;
 mod relay;
+pub(crate) mod validation;
 
 pgrx::pg_module_magic!();
 

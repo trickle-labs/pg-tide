@@ -34,21 +34,24 @@ impl super::Sink for InboxSink {
         }
 
         // Batch insert with ON CONFLICT (event_id) DO NOTHING for dedup.
-        // The inbox table must have columns: event_id, event_type, payload, received_at.
-        // The event_id column maps to the dedup_key from the relay message.
+        // Extension-created inbox tables have columns: event_id, source, payload, headers.
+        // msg.subject maps to source; headers are stored as a jsonb object.
         let schema_table = format!("tide.{}", self.inbox_table);
 
         for msg in messages {
+            // Build a headers JSONB object that includes the event_type/subject.
+            let headers = serde_json::json!({ "event_type": msg.subject });
+            let headers_str = serde_json::to_string(&headers).unwrap_or_else(|_| "{}".to_string());
             let result = self
                 .db
                 .execute(
                     &format!(
-                        "INSERT INTO {table} (event_id, event_type, payload, received_at)
-                         VALUES ($1, $2, $3, now())
+                        "INSERT INTO {table} (event_id, source, payload, headers)
+                         VALUES ($1, $2, $3, $4::jsonb)
                          ON CONFLICT (event_id) DO NOTHING",
                         table = schema_table
                     ),
-                    &[&msg.dedup_key, &msg.subject, &msg.payload],
+                    &[&msg.dedup_key, &msg.subject, &msg.payload, &headers_str],
                 )
                 .await
                 .map_err(RelayError::from)?;

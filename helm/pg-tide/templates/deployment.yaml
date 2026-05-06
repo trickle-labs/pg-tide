@@ -41,7 +41,7 @@ spec:
             - --config={{ .Values.configFile }}
             {{- end }}
           env:
-            - name: PG_TIDE_RELAY_POSTGRES_URL
+            - name: PG_TIDE_POSTGRES_URL
               {{- if .Values.postgres.existingSecret }}
               valueFrom:
                 secretKeyRef:
