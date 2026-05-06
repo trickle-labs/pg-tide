@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.16.0 — Developer Experience & Observability](#0160--2026-05-11--developer-experience--observability)
 - [0.15.0 — TLS Enforcement, Resilience & Outbox Sweep](#0150--2026-05-10--tls-enforcement-resilience--outbox-sweep)
 - [0.14.0 — Replay Workbench, CloudEvents, Tenant Scale & Managed Backfill](#0140--2026-05-09--replay-workbench-cloudevents-tenant-scale--managed-backfill)
 - [0.13.0 — Security Hardening, Reliability & Performance](#0130--2026-05-08--security-hardening-reliability--performance)
@@ -23,6 +24,131 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.16.0] — 2026-05-11 — Developer Experience & Observability
+
+v0.16.0 focuses on developer ergonomics, deeper observability, idempotent SQL
+helpers, property-based testing, and hardened CI. There are no breaking API
+changes — all additions are backward-compatible.
+
+### SQL API
+
+- **`tide.outbox_create_if_not_exists(name, retention_hours, max_size)`** —
+  New idempotent variant of `outbox_create()`. Returns `TRUE` when the outbox
+  is newly created and `FALSE` when it already existed. Lets callers write
+  setup scripts without wrapping every call in `DO $$ BEGIN … EXCEPTION WHEN
+  duplicate_table THEN … END $$` blocks.
+- **`tide.relay_set_inbox_v2(config JSONB)`** — Single-JSONB-parameter variant
+  of `relay_set_inbox()` for easier scripting and tooling. Accepts the same
+  fields: `name`, `inbox`, `source`, `config`, `batch_size`, `enabled`,
+  `max_retries`, `idempotent`.
+
+### Coordinator Metrics
+
+Three new Prometheus metrics expose coordination internals:
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `pg_tide_relay_owned_pipelines` | Gauge | `relay_group` | Number of pipelines currently owned by this relay instance |
+| `pg_tide_relay_reconcile_duration_seconds` | Histogram | `relay_group` | Time taken for each reconcile cycle |
+| `pg_tide_relay_pipeline_errors_total` | Counter | `pipeline`, `error_class` | Total pipeline errors, split by `transient` / `permanent` |
+
+All existing metric names are now referenced through Rust constants (e.g.
+`METRIC_MESSAGES_PUBLISHED`) to make dashboard validation in CI straightforward.
+
+### OTel Span Coverage Expansion
+
+New spans are emitted for every major step in the message-processing pipeline:
+
+| Span name | What it covers |
+|---|---|
+| `relay.transform.evaluate` | JMESPath filter / payload projection |
+| `relay.routing.apply` | Content-based routing rule evaluation |
+| `relay.dlq.insert` | DLQ writes (both circuit-breaker and max-retries paths) |
+| `relay.schema_evolution.check` | Per-topic fingerprint comparison and policy enforcement |
+| `relay.backoff.sleep` | Exponential backoff sleep boundaries |
+
+The `relay.dlq.insert` span carries a `reason` attribute
+(`circuit_breaker_open` or `max_retries_exceeded`) so traces distinguish
+between the two DLQ paths without extra filtering.
+
+### Schema Evolution Wired Into Worker Loop
+
+The `SchemaEvolutionGuard` (introduced in v0.13.0) is now instantiated and
+invoked in every pipeline worker. After JMESPath transforms are applied the
+worker computes a fingerprint of the first message's payload columns and
+calls `observe()`. The configured `on_schema_change` policy (`warn`,
+`continue`, `pause`, `dlq`) is enforced inline.
+
+### `pg-tide status` Command
+
+New `pg-tide status [--postgres-url URL]` subcommand prints a formatted table
+of all configured pipelines with columns:
+
+```
+PIPELINE | DIRECTION | ENABLED | LAST_OFFSET | CONSUMER_LAG
+```
+
+The command queries `tide.relay_outbox_config` and `tide.relay_inbox_config`
+joined with `tide.relay_consumer_offsets` to produce an at-a-glance health
+snapshot without connecting to a running relay.
+
+### Property-Based Testing
+
+Wire-format round-trip correctness is now verified with property-based tests
+(`proptest`) in `tests/wire_format_proptest.rs`:
+
+- `NativePgTideFormat` — payload and `dedup_key` preserved through
+  encode → decode cycle.
+- `DebeziumFormat` — insert and update round-trips; delete produces exactly
+  two entries (data row + tombstone).
+- `CloudEventsFormat` — insert round-trip.
+- `from_config` factory — does not panic for any of the three built-in format
+  names.
+
+### CI Improvements
+
+- **Parallel integration tests** — `test-integration-core` and
+  `test-integration-relay` now run as separate GitHub Actions jobs using
+  `testcontainers`, cutting wall-clock CI time roughly in half.
+- **Link checker** — `link-check` job uses
+  [lychee-action](https://github.com/lycheeverse/lychee-action) to verify all
+  documentation and README hyperlinks on every push and pull request.
+- **Dashboard metric-name validation** — `dashboard-check` job validates that
+  every metric name referenced in `pg-tide/dashboards/relay-health.json` is
+  defined as a constant in `pg-tide-relay/src/metrics.rs`, preventing silent
+  dashboard drift.
+
+### Architecture Decision Records
+
+Five ADRs documenting the key design choices behind pg-tide are now published
+in `docs/adr/`:
+
+| ADR | Decision |
+|---|---|
+| [ADR-001](docs/adr/adr-001-single-table-outbox.md) | Single-table outbox |
+| [ADR-002](docs/adr/adr-002-advisory-lock-coordination.md) | Advisory-lock coordination |
+| [ADR-003](docs/adr/adr-003-wire-format-abstraction.md) | `WireFormat` trait abstraction |
+| [ADR-004](docs/adr/adr-004-jsonb-catalog-config.md) | JSONB catalog config |
+| [ADR-005](docs/adr/adr-005-feature-gated-binary.md) | Feature-gated binary |
+
+### Release Artifacts
+
+- **Docker `:latest-full`** — New `docker-full` release job builds a second
+  Docker image with `--all-features` enabled, making every optional connector
+  available without a custom build.
+- **Cosign signing** — Both the standard and full Docker images, plus binary
+  release artifacts (`.bundle` files), are signed with
+  [sigstore/cosign](https://github.com/sigstore/cosign-installer) using keyless
+  OIDC signing. Verification: `cosign verify --certificate-identity-regexp
+  '.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  ghcr.io/…/pg-tide:…`.
+
+### Helm Chart
+
+- Helm chart `version` and `appVersion` bumped to `0.16.0`.
 
 ---
 

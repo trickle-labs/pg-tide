@@ -3,7 +3,9 @@
 // This `lib.rs` re-exports the public API modules so that integration tests
 // (in `tests/`) and downstream crates can access envelope types, error types,
 // and sink implementations without depending on the binary entry point.
-#![allow(dead_code, unused_imports)]
+//
+// Feature-gated modules conditionally compile optional backends; per-item
+// `#[allow(dead_code)]` attributes are used in those modules as needed.
 
 pub mod circuit_breaker;
 pub mod config;

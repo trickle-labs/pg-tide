@@ -16,6 +16,7 @@ use reqwest::Client;
 
 /// Ack IDs that need to be acknowledged after successful inbox write.
 #[cfg(feature = "pubsub")]
+#[allow(dead_code)]
 struct PendingAck {
     ack_id: String,
 }

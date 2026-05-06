@@ -6,6 +6,7 @@
 /// introduces no behaviour change for pipelines that do not set `wire_format`.
 use serde_json::json;
 
+#[allow(unused_imports)]
 use super::{
     debezium_op_to_pg, EncodeContext, EncodedBatch, EncodedMessage, InboxRow, OutboxRow,
     RawMessage, WireError, WireFormat,

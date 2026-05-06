@@ -9,6 +9,7 @@ use async_nats::jetstream;
 #[cfg(feature = "nats")]
 pub struct NatsSink {
     js: jetstream::Context,
+    #[allow(dead_code)]
     subject_template: String,
 }
 

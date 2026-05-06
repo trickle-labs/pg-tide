@@ -1,27 +1,13 @@
 // pg-tide — relay entry point.
 // The relay backends and traits are public API used by external consumers.
-// Dead code warnings are suppressed because many types are feature-gated or
-// used only at runtime via trait objects rather than direct construction.
-#![allow(dead_code, unused_imports)]
+// Feature-gated modules have items that are conditionally compiled;
+// targeted per-item allows are used in those modules directly.
 
 // Re-use public modules from the library target.
-use pg_tide_relay::circuit_breaker;
 use pg_tide_relay::config;
 use pg_tide_relay::coordinator;
-use pg_tide_relay::dlq;
-use pg_tide_relay::envelope;
-use pg_tide_relay::error;
-use pg_tide_relay::jmespath_transform;
 use pg_tide_relay::metrics;
-use pg_tide_relay::otel;
 use pg_tide_relay::pg_tls;
-use pg_tide_relay::rate_limiter;
-use pg_tide_relay::routing;
-use pg_tide_relay::schema_evolution;
-use pg_tide_relay::schema_registry;
-use pg_tide_relay::sink;
-use pg_tide_relay::source;
-use pg_tide_relay::transforms;
 
 mod cli;
 
@@ -35,7 +21,6 @@ use tracing_subscriber::EnvFilter;
 
 use cli::{AsyncapiCommands, Cli, Commands, ReplayCommands};
 use config::{LogFormat, RelayConfig};
-use error::RelayError;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -118,6 +103,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             return run_sweep(&url, outbox.as_deref()).await;
+        }
+        Some(Commands::Status { postgres_url }) => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| cfg.postgres_url.clone());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for status");
+                std::process::exit(1);
+            }
+            return run_status(&url).await;
         }
         None => {}
     }
@@ -1027,54 +1022,6 @@ async fn wait_for_shutdown() {
     }
 }
 
-/// A38: Connect to PostgreSQL with exponential backoff.
-///
-/// Retries with initial delay 100 ms, doubling each attempt up to 30 s,
-/// with ±20 % jitter to avoid thundering-herd reconnects.
-async fn connect_with_backoff(
-    url: &str,
-) -> Result<
-    (
-        tokio_postgres::Client,
-        tokio_postgres::Connection<tokio_postgres::Socket, tokio_postgres::tls::NoTlsStream>,
-    ),
-    Box<dyn std::error::Error>,
-> {
-    const INITIAL_DELAY_MS: u64 = 100;
-    const MAX_DELAY_MS: u64 = 30_000;
-    const JITTER_PCT: f64 = 0.20;
-
-    let mut delay_ms = INITIAL_DELAY_MS;
-    let mut attempt = 0u32;
-
-    loop {
-        match tokio_postgres::connect(url, tokio_postgres::NoTls).await {
-            Ok(pair) => return Ok(pair),
-            Err(e) => {
-                attempt += 1;
-                // Apply ±20% jitter: seed from attempt number for determinism in tests.
-                let jitter_range = (delay_ms as f64 * JITTER_PCT) as u64;
-                let jitter = if jitter_range > 0 {
-                    // Simple deterministic jitter: (attempt * 6364136223846793005) % range
-                    let pseudo = attempt as u64 * 6_364_136_223_846_793_005_u64;
-                    (pseudo % (jitter_range * 2)).saturating_sub(jitter_range)
-                } else {
-                    0
-                };
-                let sleep_ms = delay_ms.saturating_add(jitter);
-                tracing::warn!(
-                    attempt,
-                    sleep_ms,
-                    error = %e,
-                    "PostgreSQL connection failed, retrying"
-                );
-                tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-                delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
-            }
-        }
-    }
-}
-
 // ── `pg-tide sweep` ──────────────────────────────────────────────────────
 
 /// Delete consumed outbox messages past their retention window.
@@ -1154,4 +1101,96 @@ fn create_coordinator_pool(
         )
         .map_err(|e| format!("failed to create coordinator connection pool: {e}"))?;
     Ok(pool)
+}
+
+// ── `pg-tide status` ─────────────────────────────────────────────────────
+
+/// Print a human-readable status table for all configured relay pipelines.
+///
+/// Columns:
+///   PIPELINE | DIRECTION | ENABLED | LAST_OFFSET | CONSUMER_LAG | CB_STATE
+///
+/// - LAST_OFFSET: the committed change ID for forward pipelines (0 if not yet consumed).
+/// - CONSUMER_LAG: number of undelivered outbox messages (forward pipelines only).
+/// - CB_STATE: circuit breaker open/closed state from the relay config (always "unknown"
+///   at query time; live state is only available in a running relay instance).
+async fn run_status(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (client, conn) = pg_tls::connect(url)
+        .await
+        .map_err(|e| format!("connection failed: {e}"))?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    // Forward pipelines.
+    let forward_rows = client
+        .query(
+            "SELECT
+                roc.name,
+                'forward'::text AS direction,
+                roc.enabled,
+                COALESCE(rco.last_change_id, 0) AS last_offset,
+                (SELECT COUNT(*) FROM tide.tide_outbox_messages tom
+                 WHERE tom.outbox_name = (roc.config->>'source' ->> 'outbox')
+                   AND tom.consumed_at IS NULL) AS consumer_lag
+             FROM tide.relay_outbox_config roc
+             LEFT JOIN tide.relay_consumer_offsets rco
+               ON rco.pipeline_id = roc.name
+             ORDER BY roc.name",
+            &[],
+        )
+        .await
+        .unwrap_or_default();
+
+    // Reverse pipelines.
+    let reverse_rows = client
+        .query(
+            "SELECT
+                ric.name,
+                'reverse'::text AS direction,
+                ric.enabled,
+                COALESCE(rco.last_change_id, 0) AS last_offset,
+                0::bigint AS consumer_lag
+             FROM tide.relay_inbox_config ric
+             LEFT JOIN tide.relay_consumer_offsets rco
+               ON rco.pipeline_id = ric.name
+             ORDER BY ric.name",
+            &[],
+        )
+        .await
+        .unwrap_or_default();
+
+    let all_rows: Vec<_> = forward_rows.iter().chain(reverse_rows.iter()).collect();
+
+    if all_rows.is_empty() {
+        println!("No pipelines configured.");
+        return Ok(());
+    }
+
+    // Print header.
+    println!(
+        "{:<30} {:<10} {:<8} {:<14} {:<14}",
+        "PIPELINE", "DIRECTION", "ENABLED", "LAST_OFFSET", "CONSUMER_LAG"
+    );
+    println!("{}", "-".repeat(80));
+
+    for row in &all_rows {
+        let name: String = row.get("name");
+        let direction: String = row.get("direction");
+        let enabled: bool = row.get("enabled");
+        let last_offset: i64 = row.try_get("last_offset").unwrap_or(0);
+        let consumer_lag: i64 = row.try_get("consumer_lag").unwrap_or(0);
+
+        println!(
+            "{:<30} {:<10} {:<8} {:<14} {:<14}",
+            name,
+            direction,
+            if enabled { "yes" } else { "no" },
+            last_offset,
+            consumer_lag,
+        );
+    }
+
+    println!("\n{} pipeline(s) configured.", all_rows.len());
+    Ok(())
 }

@@ -3,7 +3,7 @@
 /// and hot-reload via LISTEN/NOTIFY.
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 use tokio::task::JoinHandle;
@@ -29,6 +29,7 @@ pub struct Coordinator {
     pool: deadpool_postgres::Pool,
     relay_group_id: String,
     metrics: Arc<RelayMetrics>,
+    #[allow(dead_code)]
     health: Arc<RwLock<HealthState>>,
     /// Pipeline ID → (cancellation sender, join handle).
     /// v0.15.0: JoinHandle stored for panic detection.
@@ -208,7 +209,10 @@ impl Coordinator {
     ///
     /// v0.15.0: Also checks for panicked/completed workers and cleans them up
     /// immediately rather than waiting up to `discovery_interval` seconds.
+    /// v0.16.0: Records reconcile duration and owned_pipelines gauge metrics.
     async fn reconcile(&mut self, db_url: &str, batch_size: i64) {
+        let reconcile_start = Instant::now();
+        let group_label = self.relay_group_id.clone();
         // v0.15.0: Detect panicked or unexpectedly completed worker tasks and
         // clean up their owned entries before loading the pipeline list.
         let panicked: Vec<_> = self
@@ -353,6 +357,16 @@ impl Coordinator {
 
             self.owned.insert(pipeline.name, (stop_tx, handle));
         }
+
+        // v0.16.0: Record owned_pipelines gauge and reconcile duration.
+        self.metrics
+            .owned_pipelines
+            .with_label_values(&[&group_label])
+            .set(self.owned.len() as i64);
+        self.metrics
+            .reconcile_duration_seconds
+            .with_label_values(&[&group_label])
+            .observe(reconcile_start.elapsed().as_secs_f64());
     }
 }
 
@@ -401,6 +415,16 @@ async fn run_pipeline_worker(
                 .pipeline_healthy
                 .with_label_values(&[&name, &tenant_label])
                 .set(0);
+            // v0.16.0: Record pipeline error by class.
+            let error_class = if e.is_transient() {
+                "transient"
+            } else {
+                "permanent"
+            };
+            metrics
+                .pipeline_errors_total
+                .with_label_values(&[&name, error_class])
+                .inc();
         }
     }
 }
@@ -453,6 +477,14 @@ async fn worker_inner(
 
     // v0.13.0: Wire-format factory — instantiate the configured wire format.
     let wire_format = crate::wire_format::from_config(&pipeline.config);
+
+    // v0.16.0: Schema evolution guard — tracks fingerprints and enforces
+    // the configured on_schema_change policy.
+    let mut schema_guard = crate::schema_evolution::SchemaEvolutionGuard::from_config(
+        &pipeline.name,
+        Arc::clone(&db),
+        &pipeline.config,
+    );
     tracing::info!(
         pipeline = %pipeline.name,
         wire_format = wire_format.name(),
@@ -546,6 +578,14 @@ async fn worker_inner(
                         consecutive_failures,
                         "transient poll error — backing off before retry"
                     );
+                    // v0.16.0: OTel span around backoff sleep.
+                    let backoff_span = tracing::info_span!(
+                        "relay.backoff.sleep",
+                        pipeline = %pipeline.name,
+                        sleep_ms,
+                        consecutive_failures,
+                    );
+                    let _enter = backoff_span.enter();
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
                         _ = stop_rx.changed() => { break; }
@@ -589,11 +629,20 @@ async fn worker_inner(
         }
 
         // v0.7.0: Apply JMESPath transforms (filter + payload projection).
-        let batch = match apply_transforms(&transform_config, batch) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(pipeline = %pipeline.name, error = %e, "transform error");
-                continue;
+        // v0.16.0: OTel span around transform evaluation.
+        let batch = {
+            let span = tracing::info_span!(
+                "relay.transform.evaluate",
+                pipeline = %pipeline.name,
+                batch_size = batch.len(),
+            );
+            let _enter = span.enter();
+            match apply_transforms(&transform_config, batch) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(pipeline = %pipeline.name, error = %e, "transform error");
+                    continue;
+                }
             }
         };
 
@@ -602,9 +651,68 @@ async fn worker_inner(
             continue;
         }
 
+        // v0.16.0: Schema evolution check — compare payload schema fingerprint
+        // against stored fingerprint and apply the configured policy.
+        {
+            let topic = batch
+                .first()
+                .map(|m| m.subject.as_str())
+                .unwrap_or("unknown");
+            let columns: Vec<String> = batch
+                .first()
+                .and_then(|m| m.payload.as_object())
+                .map(|obj| obj.keys().cloned().collect())
+                .unwrap_or_default();
+
+            let se_span = tracing::info_span!(
+                "relay.schema_evolution.check",
+                pipeline = %pipeline.name,
+                topic,
+            );
+            let _enter = se_span.enter();
+            match schema_guard.observe(topic, &columns).await {
+                Ok((
+                    crate::schema_evolution::SchemaChangeKind::Breaking,
+                    crate::schema_evolution::OnSchemaChange::Pause,
+                )) => {
+                    tracing::warn!(
+                        pipeline = %pipeline.name,
+                        topic,
+                        "breaking schema change detected — pausing pipeline per policy"
+                    );
+                    continue;
+                }
+                Ok((kind, policy)) => {
+                    if kind != crate::schema_evolution::SchemaChangeKind::NoChange
+                        && kind != crate::schema_evolution::SchemaChangeKind::Initial
+                    {
+                        tracing::warn!(
+                            pipeline = %pipeline.name,
+                            topic,
+                            change_kind = ?kind,
+                            policy = policy.as_str(),
+                            "schema change detected"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(pipeline = %pipeline.name, error = %e, "schema evolution check error — continuing");
+                }
+            }
+        }
+
         // v0.7.0: Apply content-based routing.
+        // v0.16.0: OTel span around routing evaluation.
         let mut batch = batch;
-        apply_routing(&routing_config, &mut batch);
+        {
+            let span = tracing::info_span!(
+                "relay.routing.apply",
+                pipeline = %pipeline.name,
+                batch_size = batch.len(),
+            );
+            let _enter = span.enter();
+            apply_routing(&routing_config, &mut batch);
+        }
 
         // v0.7.0: Dry-run mode — log what would be published, skip actual publish.
         if dry_run {
@@ -648,6 +756,14 @@ async fn worker_inner(
                         )
                     })
                     .collect();
+                // v0.16.0: OTel span around DLQ insert.
+                let dlq_span = tracing::info_span!(
+                    "relay.dlq.insert",
+                    pipeline = %pipeline.name,
+                    count = entries.len(),
+                    reason = "circuit_breaker_open",
+                );
+                let _enter = dlq_span.enter();
                 if let Err(e) = crate::dlq::insert_batch(&db, &entries).await {
                     tracing::warn!(pipeline = %pipeline.name, error = %e, "DLQ insert error");
                 } else {
@@ -770,6 +886,14 @@ async fn worker_inner(
                             )
                         })
                         .collect();
+                    // v0.16.0: OTel span around DLQ insert on max retries.
+                    let dlq_span = tracing::info_span!(
+                        "relay.dlq.insert",
+                        pipeline = %pipeline.name,
+                        count = entries.len(),
+                        reason = "max_retries_exceeded",
+                    );
+                    let _enter = dlq_span.enter();
                     match crate::dlq::insert_batch(&db, &entries).await {
                         Ok(()) => {
                             // v0.13.0: Ack source after durable DLQ write.
@@ -1589,6 +1713,7 @@ pub async fn build_sink_for_validation(
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]
