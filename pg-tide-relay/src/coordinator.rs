@@ -96,11 +96,13 @@ impl Coordinator {
         let rows = self
             .db
             .query(
-                "SELECT name, 'forward' AS direction, enabled, config
+                "SELECT name, 'forward' AS direction, enabled, config,
+                        COALESCE(tenant_name, 'default') AS tenant_name
                    FROM tide.relay_outbox_config
                   WHERE enabled = true
                  UNION ALL
-                 SELECT name, 'reverse' AS direction, enabled, config
+                 SELECT name, 'reverse' AS direction, enabled, config,
+                        COALESCE(tenant_name, 'default') AS tenant_name
                    FROM tide.relay_inbox_config
                   WHERE enabled = true",
                 &[],
@@ -113,6 +115,7 @@ impl Coordinator {
             let direction: String = row.get("direction");
             let enabled: bool = row.get("enabled");
             let config: serde_json::Value = row.get("config");
+            let tenant_name: String = row.get("tenant_name");
 
             pipelines.push(PipelineConfig {
                 name,
@@ -123,6 +126,7 @@ impl Coordinator {
                 },
                 enabled,
                 config,
+                tenant_name,
             });
         }
         Ok(pipelines)
@@ -275,6 +279,7 @@ impl Coordinator {
                 direction: pipeline.direction,
                 enabled: pipeline.enabled,
                 config: resolved_config,
+                tenant_name: pipeline.tenant_name.clone(),
             };
 
             tokio::spawn(run_pipeline_worker(
@@ -303,9 +308,13 @@ async fn run_pipeline_worker(
     mut stop_rx: watch::Receiver<bool>,
 ) {
     let name = pipeline.name.clone();
+    let tenant_label = pipeline.tenant_name.clone();
 
     // v0.13.0: Mark pipeline as healthy when worker starts.
-    metrics.pipeline_healthy.with_label_values(&[&name]).set(1);
+    metrics
+        .pipeline_healthy
+        .with_label_values(&[&name, &tenant_label])
+        .set(1);
 
     match worker_inner(
         pipeline,
@@ -320,12 +329,18 @@ async fn run_pipeline_worker(
         Ok(()) => {
             tracing::info!(pipeline = %name, "worker stopped");
             // Mark as 0 on clean stop.
-            metrics.pipeline_healthy.with_label_values(&[&name]).set(0);
+            metrics
+                .pipeline_healthy
+                .with_label_values(&[&name, &tenant_label])
+                .set(0);
         }
         Err(e) => {
             tracing::error!(pipeline = %name, error = %e, "worker exited with error");
             // Mark as 0 on error exit.
-            metrics.pipeline_healthy.with_label_values(&[&name]).set(0);
+            metrics
+                .pipeline_healthy
+                .with_label_values(&[&name, &tenant_label])
+                .set(0);
         }
     }
 }
@@ -408,6 +423,9 @@ async fn worker_inner(
         PipelineDirection::Reverse => "reverse".to_string(),
     };
 
+    // v0.14.0: Tenant label for per-tenant Prometheus dimension.
+    let tenant_label = pipeline.tenant_name.clone();
+
     tracing::info!(
         pipeline = %pipeline.name,
         direction = direction_label,
@@ -460,7 +478,7 @@ async fn worker_inner(
         // v0.13.0: Increment consumed counter after successful poll.
         metrics
             .messages_consumed
-            .with_label_values(&[&pipeline.name, &direction_label])
+            .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
             .inc_by(batch.len() as u64);
 
         // v0.13.0: Record the poll timestamp for end-to-end latency tracking.
@@ -513,7 +531,7 @@ async fn worker_inner(
             }
             metrics
                 .messages_published
-                .with_label_values(&[&pipeline.name, &direction_label])
+                .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                 .inc_by(batch.len() as u64);
             continue;
         }
@@ -548,7 +566,7 @@ async fn worker_inner(
                     }
                     metrics
                         .dlq_entries_written
-                        .with_label_values(&[&pipeline.name, &direction_label])
+                        .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                         .inc_by(entries.len() as u64);
                 }
             } else {
@@ -604,18 +622,18 @@ async fn worker_inner(
                 let latency_secs = poll_instant.elapsed().as_secs_f64();
                 metrics
                     .delivery_latency_seconds
-                    .with_label_values(&[&pipeline.name])
+                    .with_label_values(&[&pipeline.name, &tenant_label])
                     .observe(latency_secs);
 
                 // v0.13.0: Set pipeline_healthy gauge to 1 on success.
                 metrics
                     .pipeline_healthy
-                    .with_label_values(&[&pipeline.name])
+                    .with_label_values(&[&pipeline.name, &tenant_label])
                     .set(1);
 
                 metrics
                     .messages_published
-                    .with_label_values(&[&pipeline.name, &direction_label])
+                    .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                     .inc_by(batch.len() as u64);
             }
             Err(e) => {
@@ -632,12 +650,12 @@ async fn worker_inner(
                 // v0.13.0: Set pipeline_healthy gauge to 0 on error.
                 metrics
                     .pipeline_healthy
-                    .with_label_values(&[&pipeline.name])
+                    .with_label_values(&[&pipeline.name, &tenant_label])
                     .set(0);
 
                 metrics
                     .publish_errors
-                    .with_label_values(&[&pipeline.name, &direction_label])
+                    .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                     .inc();
 
                 // v0.7.0: Route to DLQ when max retries exceeded.
@@ -669,7 +687,11 @@ async fn worker_inner(
                             }
                             metrics
                                 .dlq_entries_written
-                                .with_label_values(&[&pipeline.name, &direction_label])
+                                .with_label_values(&[
+                                    &pipeline.name,
+                                    &direction_label,
+                                    &tenant_label,
+                                ])
                                 .inc_by(entries.len() as u64);
                         }
                         Err(dlq_err) => {
@@ -694,7 +716,7 @@ async fn worker_inner(
     // v0.13.0: Mark pipeline as healthy=0 on worker exit.
     metrics
         .pipeline_healthy
-        .with_label_values(&[&pipeline.name])
+        .with_label_values(&[&pipeline.name, &tenant_label])
         .set(0);
 
     let _ = source.close().await;

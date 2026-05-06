@@ -9,6 +9,7 @@
 
 use pgrx::prelude::*;
 
+mod backfill;
 mod error;
 mod inbox;
 mod outbox;
@@ -33,6 +34,14 @@ pgrx::extension_sql_file!(
     bootstrap
 );
 
+// v0.14.0: Load the incremental migration so that fresh installs and pgrx
+// test environments include all new tables, columns, and functions.
+pgrx::extension_sql_file!(
+    "../../sql/pg_tide--0.13.0--0.14.0.sql",
+    name = "pg_tide_tables_0_14",
+    requires = ["pg_tide_tables"]
+);
+
 /// Extension initialization — runs once when the extension is loaded.
 #[pg_guard]
 extern "C-unwind" fn _PG_init() {
@@ -41,6 +50,8 @@ extern "C-unwind" fn _PG_init() {
 }
 
 // Re-export all pg_extern functions so pgrx discovers them.
+#[allow(unused_imports)]
+use crate::backfill::*;
 #[allow(unused_imports)]
 use crate::inbox::*;
 #[allow(unused_imports)]

@@ -40,6 +40,13 @@ fn test_from_config_returns_debezium() {
     assert_eq!(fmt.name(), "debezium");
 }
 
+#[test]
+fn test_from_config_returns_cloudevents() {
+    let cfg = json!({"wire_format": "cloudevents"});
+    let fmt = wire_format::from_config(&cfg);
+    assert_eq!(fmt.name(), "cloudevents");
+}
+
 #[cfg(feature = "maxwell")]
 #[test]
 fn test_from_config_returns_maxwell() {
@@ -505,4 +512,78 @@ fn test_wire_error_schema_incompatible_message() {
     let e = WireError::schema_incompatible("my-topic", "field 'name' was removed");
     assert!(e.to_string().contains("my-topic"));
     assert!(e.to_string().contains("field 'name' was removed"));
+}
+
+// ── CloudEvents wire format ───────────────────────────────────────────────────
+
+#[test]
+fn test_cloudevents_encode_insert_roundtrip() {
+    use pg_tide_relay::wire_format::CloudEventsFormat;
+
+    let fmt = CloudEventsFormat::from_config(&json!({}));
+    let ctx = EncodeContext::default();
+    let row = OutboxRow {
+        outbox_id: 1,
+        stream_table: "orders".to_string(),
+        database: "app".to_string(),
+        schema_name: "public".to_string(),
+        op: "insert".to_string(),
+        new_row: Some(json!({"id": 1, "total": 99})),
+        old_row: None,
+        commit_ts: None,
+        source_lsn: None,
+    };
+    let batch = fmt.encode(&row, &ctx).unwrap();
+    assert_eq!(batch.messages.len(), 1);
+    let v: Value = serde_json::from_slice(batch.messages[0].value.as_ref().unwrap()).unwrap();
+    assert_eq!(v["specversion"], "1.0");
+    assert!(v.get("id").is_some());
+    assert_eq!(v["type"], "io.pgtide.insert");
+    assert_eq!(v["ce-op"], "insert");
+    assert_eq!(v["data"]["id"], 1);
+}
+
+#[test]
+fn test_cloudevents_decode_insert() {
+    use pg_tide_relay::wire_format::CloudEventsFormat;
+
+    let fmt = CloudEventsFormat::from_config(&json!({}));
+    let envelope = json!({
+        "specversion": "1.0",
+        "id": "evt-123",
+        "type": "app.orders.insert",
+        "source": "/pg-tide/app/orders",
+        "datacontenttype": "application/json",
+        "ce-op": "insert",
+        "data": {"id": 1, "total": 99},
+    });
+    let raw = RawMessage::from_json("app.orders", &envelope);
+    let row = fmt.decode(&raw).unwrap().unwrap();
+    assert_eq!(row.event_id, "evt-123");
+    assert_eq!(row.event_type, "app.orders.insert");
+    assert_eq!(row.op, "insert");
+    assert_eq!(row.payload["id"], 1);
+}
+
+#[test]
+fn test_cloudevents_wrong_specversion_errors() {
+    use pg_tide_relay::wire_format::CloudEventsFormat;
+
+    let fmt = CloudEventsFormat::from_config(&json!({}));
+    let envelope = json!({
+        "specversion": "0.3",
+        "id": "evt-999",
+        "type": "app.orders.insert",
+        "source": "/pg-tide/app/orders",
+        "data": {},
+    });
+    let raw = RawMessage::from_json("app.orders", &envelope);
+    assert!(fmt.decode(&raw).is_err());
+}
+
+#[test]
+fn test_from_config_returns_cloudevents_format_name() {
+    let cfg = json!({"wire_format": "cloudevents"});
+    let fmt = wire_format::from_config(&cfg);
+    assert_eq!(fmt.name(), "cloudevents");
 }

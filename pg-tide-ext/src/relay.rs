@@ -307,6 +307,65 @@ fn relay_list_configs_impl() -> Result<pgrx::JsonB, PgTideError> {
     Ok(pgrx::JsonB(serde_json::Value::Array(all)))
 }
 
+// ── TIDE-API: relay_set_tenant / relay_grant_tenant / relay_revoke_tenant ─
+
+/// Assign a relay pipeline to a named tenant.
+#[pg_extern(schema = "tide")]
+pub fn relay_set_tenant(p_name: &str, p_tenant: &str) {
+    relay_set_tenant_impl(p_name, p_tenant).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn relay_set_tenant_impl(name: &str, tenant: &str) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(name)?;
+    if !relay_exists(name) {
+        return Err(PgTideError::RelayNotFound(name.to_string()));
+    }
+    let _ = Spi::run_with_args(
+        "UPDATE tide.relay_outbox_config SET tenant_name = $2 WHERE name = $1",
+        &[name.into(), tenant.into()],
+    );
+    let _ = Spi::run_with_args(
+        "UPDATE tide.relay_inbox_config SET tenant_name = $2 WHERE name = $1",
+        &[name.into(), tenant.into()],
+    );
+    let _ = Spi::run_with_args(
+        "UPDATE tide.relay_consumer_offsets SET tenant_name = $2 WHERE pipeline_id = $1",
+        &[name.into(), tenant.into()],
+    );
+    Ok(())
+}
+
+/// Grant a role access to all pipelines in a named tenant.
+#[pg_extern(schema = "tide")]
+pub fn relay_grant_tenant(p_tenant: &str, p_role: &str) {
+    relay_grant_tenant_impl(p_tenant, p_role).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn relay_grant_tenant_impl(tenant: &str, role: &str) -> Result<(), PgTideError> {
+    Spi::run_with_args(
+        "INSERT INTO tide.relay_tenant_grants (tenant_name, role_name)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        &[tenant.into(), role.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("relay_grant_tenant: {e}")))?;
+    Ok(())
+}
+
+/// Revoke a role's access to a tenant.
+#[pg_extern(schema = "tide")]
+pub fn relay_revoke_tenant(p_tenant: &str, p_role: &str) {
+    relay_revoke_tenant_impl(p_tenant, p_role).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn relay_revoke_tenant_impl(tenant: &str, role: &str) -> Result<(), PgTideError> {
+    Spi::run_with_args(
+        "DELETE FROM tide.relay_tenant_grants WHERE tenant_name = $1 AND role_name = $2",
+        &[tenant.into(), role.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("relay_revoke_tenant: {e}")))?;
+    Ok(())
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(any(test, feature = "pg_test"))]
@@ -464,5 +523,58 @@ mod tests {
         // Enabling a non-existent pipeline with our implementation is a no-op
         // (no rows updated). Verify the function does not panic.
         crate::relay::relay_enable("does-not-exist");
+    }
+
+    // ── relay_set_tenant / relay_grant_tenant ──────────────────────────────
+
+    #[pg_test]
+    fn test_relay_set_tenant_updates_config() {
+        setup_outbox("tenant-relay-outbox");
+        crate::relay::relay_set_outbox(
+            "tenant-pipeline",
+            "tenant-relay-outbox",
+            "stdout",
+            pgrx::JsonB(serde_json::json!({})),
+            100,
+            true,
+        );
+        crate::relay::relay_set_tenant("tenant-pipeline", "acme");
+        let tenant: String = Spi::get_one(
+            "SELECT tenant_name FROM tide.relay_outbox_config WHERE name = 'tenant-pipeline'",
+        )
+        .unwrap()
+        .unwrap_or_default();
+        assert_eq!(
+            tenant, "acme",
+            "relay_set_tenant must update the tenant_name column"
+        );
+    }
+
+    #[pg_test]
+    fn test_relay_grant_tenant_inserts_row() {
+        crate::relay::relay_grant_tenant("acme", "acme_relay_role");
+        let exists: bool = Spi::get_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.relay_tenant_grants
+              WHERE tenant_name = 'acme' AND role_name = 'acme_relay_role')",
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(
+            exists,
+            "relay_grant_tenant must insert a row in relay_tenant_grants"
+        );
+    }
+
+    #[pg_test]
+    fn test_relay_revoke_tenant_removes_row() {
+        crate::relay::relay_grant_tenant("revoke-tenant", "revoke_role");
+        crate::relay::relay_revoke_tenant("revoke-tenant", "revoke_role");
+        let exists: bool = Spi::get_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.relay_tenant_grants
+              WHERE tenant_name = 'revoke-tenant' AND role_name = 'revoke_role')",
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(!exists, "relay_revoke_tenant must remove the row");
     }
 }

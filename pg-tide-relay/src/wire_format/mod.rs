@@ -40,7 +40,10 @@ pub mod canal;
 #[cfg(feature = "cdc-json")]
 pub mod cdc_json;
 
+pub mod cloudevents;
+
 // Re-export the canonical implementations for convenience.
+pub use cloudevents::CloudEventsFormat;
 pub use debezium::DebeziumFormat;
 pub use native::NativePgTideFormat;
 
@@ -348,6 +351,10 @@ pub fn from_config(config: &serde_json::Value) -> Box<dyn WireFormat> {
         "debezium" => {
             let wire_cfg = config.get("wire_config").cloned().unwrap_or_default();
             Box::new(DebeziumFormat::from_config(&wire_cfg))
+        }
+        "cloudevents" => {
+            let wire_cfg = config.get("wire_config").cloned().unwrap_or_default();
+            Box::new(CloudEventsFormat::from_config(&wire_cfg))
         }
         #[cfg(feature = "maxwell")]
         "maxwell" => {

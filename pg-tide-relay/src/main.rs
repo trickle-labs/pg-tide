@@ -33,7 +33,7 @@ use tokio::signal;
 use tokio::sync::{mpsc, watch, RwLock};
 use tracing_subscriber::EnvFilter;
 
-use cli::{Cli, Commands};
+use cli::{AsyncapiCommands, Cli, Commands, ReplayCommands};
 use config::{LogFormat, RelayConfig};
 use error::RelayError;
 
@@ -92,6 +92,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             return run_validate_config(&url, &pipeline).await;
+        }
+        Some(Commands::Replay(replay_cmd)) => {
+            return run_replay_command(replay_cmd, &cfg.postgres_url).await;
+        }
+        Some(Commands::Asyncapi(asyncapi_cmd)) => {
+            return run_asyncapi_command(asyncapi_cmd, &cfg.postgres_url).await;
         }
         None => {}
     }
@@ -398,6 +404,7 @@ async fn run_validate_config(url: &str, pipeline: &str) -> Result<(), Box<dyn st
         direction,
         enabled,
         config,
+        tenant_name: "default".to_string(),
     };
 
     let resolved = resolve_pipeline_secrets(pc.config.clone())
@@ -410,6 +417,7 @@ async fn run_validate_config(url: &str, pipeline: &str) -> Result<(), Box<dyn st
         direction: pc.direction,
         enabled: pc.enabled,
         config: resolved,
+        tenant_name: pc.tenant_name.clone(),
     };
 
     // Try to build source.
@@ -446,6 +454,500 @@ async fn run_validate_config(url: &str, pipeline: &str) -> Result<(), Box<dyn st
 
     println!("\nvalidate-config: pipeline '{pipeline}' configuration is valid.");
     Ok(())
+}
+
+// ── `pg-tide replay` ─────────────────────────────────────────────────────
+
+/// Dispatch replay workbench subcommands.
+async fn run_replay_command(
+    cmd: ReplayCommands,
+    default_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        ReplayCommands::Preview {
+            outbox,
+            from_id,
+            to_id,
+            limit,
+            postgres_url,
+        } => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| default_url.to_string());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for replay preview");
+                std::process::exit(1);
+            }
+            run_replay_preview(&url, &outbox, from_id, to_id, limit).await
+        }
+        ReplayCommands::DryRun {
+            pipeline,
+            from_id,
+            to_id,
+            limit,
+            postgres_url,
+        } => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| default_url.to_string());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for replay dry-run");
+                std::process::exit(1);
+            }
+            run_replay_dry_run(&url, &pipeline, from_id, to_id, limit).await
+        }
+        ReplayCommands::DlqResolve {
+            pipeline,
+            dedup_key,
+            postgres_url,
+        } => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| default_url.to_string());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for dlq-resolve");
+                std::process::exit(1);
+            }
+            run_dlq_resolve(&url, &pipeline, &dedup_key).await
+        }
+        ReplayCommands::DlqRequeue {
+            pipeline,
+            dedup_key,
+            postgres_url,
+        } => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| default_url.to_string());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for dlq-requeue");
+                std::process::exit(1);
+            }
+            run_dlq_requeue(&url, &pipeline, &dedup_key).await
+        }
+    }
+}
+
+/// `pg-tide replay preview` — print outbox messages in an ID range as JSONL.
+async fn run_replay_preview(
+    url: &str,
+    outbox: &str,
+    from_id: i64,
+    to_id: i64,
+    limit: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let rows = client
+        .query(
+            "SELECT id, outbox_name, payload, headers, created_at, consumed_at IS NOT NULL AS consumed
+             FROM tide.tide_outbox_messages
+             WHERE outbox_name = $1 AND id BETWEEN $2 AND $3
+             ORDER BY id
+             LIMIT $4",
+            &[&outbox, &from_id, &to_id, &(limit as i64)],
+        )
+        .await?;
+
+    for row in &rows {
+        let id: i64 = row.get("id");
+        let outbox_name: String = row.get("outbox_name");
+        let payload: serde_json::Value = row.get("payload");
+        let headers: serde_json::Value = row.get("headers");
+        let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
+        let consumed: bool = row.get("consumed");
+        let line = serde_json::json!({
+            "id": id,
+            "outbox_name": outbox_name,
+            "payload": payload,
+            "headers": headers,
+            "created_at": created_at.to_rfc3339(),
+            "consumed": consumed,
+        });
+        println!("{}", serde_json::to_string(&line)?);
+    }
+
+    eprintln!("{} message(s) previewed from outbox '{outbox}'", rows.len());
+    Ok(())
+}
+
+/// `pg-tide replay dry-run` — evaluate transforms without publishing.
+async fn run_replay_dry_run(
+    url: &str,
+    pipeline: &str,
+    from_id: i64,
+    to_id: i64,
+    limit: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    // Load pipeline config.
+    let row = client
+        .query_opt(
+            "SELECT config FROM tide.relay_outbox_config WHERE name = $1
+             UNION ALL
+             SELECT config FROM tide.relay_inbox_config WHERE name = $1
+             LIMIT 1",
+            &[&pipeline],
+        )
+        .await?;
+
+    let config: serde_json::Value = match row {
+        Some(r) => r.get(0),
+        None => {
+            eprintln!("error: pipeline '{pipeline}' not found");
+            std::process::exit(1);
+        }
+    };
+
+    let outbox = config
+        .pointer("/source/outbox")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let wire_fmt = pg_tide_relay::wire_format::from_config(&config);
+
+    let rows = client
+        .query(
+            "SELECT id, outbox_name, payload, headers
+             FROM tide.tide_outbox_messages
+             WHERE outbox_name = $1 AND id BETWEEN $2 AND $3
+             ORDER BY id
+             LIMIT $4",
+            &[&outbox, &from_id, &to_id, &(limit as i64)],
+        )
+        .await?;
+
+    eprintln!(
+        "Dry-run transform evaluation for pipeline '{pipeline}' ({} message(s)):",
+        rows.len()
+    );
+    for row in &rows {
+        let id: i64 = row.get("id");
+        let payload: serde_json::Value = row.get("payload");
+        let raw = pg_tide_relay::wire_format::RawMessage::from_json(outbox, &payload);
+        match wire_fmt.decode(&raw) {
+            Ok(Some(inbox_row)) => {
+                let out = serde_json::json!({
+                    "outbox_id": id,
+                    "event_id": inbox_row.event_id,
+                    "op": inbox_row.op,
+                    "payload": inbox_row.payload,
+                });
+                println!("{}", serde_json::to_string(&out)?);
+            }
+            Ok(None) => eprintln!("  [SKIP] id={id} (tombstone or filtered)"),
+            Err(e) => eprintln!("  [ERROR] id={id}: {e}"),
+        }
+    }
+
+    Ok(())
+}
+
+/// `pg-tide replay dlq-resolve` — mark a DLQ entry as resolved.
+async fn run_dlq_resolve(
+    url: &str,
+    pipeline: &str,
+    dedup_key: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let updated = client
+        .execute(
+            "UPDATE tide.relay_dlq
+             SET resolved = true, resolved_at = now(), resolved_by = current_user
+             WHERE pipeline_name = $1 AND dedup_key = $2 AND resolved = false",
+            &[&pipeline, &dedup_key],
+        )
+        .await?;
+
+    if updated == 0 {
+        eprintln!(
+            "warning: no active DLQ entry found for pipeline='{}' dedup_key='{}'",
+            pipeline, dedup_key
+        );
+    } else {
+        println!(
+            "DLQ entry resolved: pipeline='{}' dedup_key='{}'",
+            pipeline, dedup_key
+        );
+    }
+    Ok(())
+}
+
+/// `pg-tide replay dlq-requeue` — requeue a DLQ entry for another attempt.
+async fn run_dlq_requeue(
+    url: &str,
+    pipeline: &str,
+    dedup_key: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    // Mark the existing entry resolved.
+    let updated = client
+        .execute(
+            "UPDATE tide.relay_dlq
+             SET resolved = true, resolved_at = now(), resolved_by = current_user || ' (requeue)',
+                 attempt_count = 0
+             WHERE pipeline_name = $1 AND dedup_key = $2 AND resolved = false",
+            &[&pipeline, &dedup_key],
+        )
+        .await?;
+
+    if updated == 0 {
+        eprintln!(
+            "warning: no active DLQ entry found for pipeline='{}' dedup_key='{}'",
+            pipeline, dedup_key
+        );
+        return Ok(());
+    }
+
+    // Re-insert as a fresh pending entry.
+    client
+        .execute(
+            "INSERT INTO tide.relay_dlq (pipeline_name, dedup_key, payload, attempt_count, resolved)
+             SELECT pipeline_name, dedup_key, payload, 0, false
+             FROM tide.relay_dlq
+             WHERE pipeline_name = $1 AND dedup_key = $2
+               AND resolved = true
+             ORDER BY id DESC
+             LIMIT 1",
+            &[&pipeline, &dedup_key],
+        )
+        .await?;
+
+    println!(
+        "DLQ entry requeued: pipeline='{}' dedup_key='{}'",
+        pipeline, dedup_key
+    );
+    Ok(())
+}
+
+// ── `pg-tide asyncapi` ───────────────────────────────────────────────────
+
+/// Dispatch asyncapi subcommands.
+async fn run_asyncapi_command(
+    cmd: AsyncapiCommands,
+    default_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        AsyncapiCommands::Export {
+            format,
+            output,
+            postgres_url,
+        } => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| default_url.to_string());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for asyncapi export");
+                std::process::exit(1);
+            }
+            run_asyncapi_export(&url, &format, output.as_deref()).await
+        }
+    }
+}
+
+/// `pg-tide asyncapi export` — generate an AsyncAPI 3.0 document.
+async fn run_asyncapi_export(
+    url: &str,
+    format: &str,
+    output: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    // Load all relay pipelines.
+    let outbox_rows = client
+        .query(
+            "SELECT name, enabled, config FROM tide.relay_outbox_config ORDER BY name",
+            &[],
+        )
+        .await?;
+
+    let inbox_rows = client
+        .query(
+            "SELECT name, enabled, config FROM tide.relay_inbox_config ORDER BY name",
+            &[],
+        )
+        .await?;
+
+    // Build AsyncAPI 3.0 document.
+    let mut channels = serde_json::Map::new();
+    let mut operations = serde_json::Map::new();
+    let mut messages = serde_json::Map::new();
+
+    for row in &outbox_rows {
+        let name: String = row.get(0);
+        let _enabled: bool = row.get(1);
+        let config: serde_json::Value = row.get(2);
+
+        let sink_type = config
+            .get("sink_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let outbox_name = config
+            .pointer("/source/outbox")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&name);
+        let wire_format = config
+            .get("wire_format")
+            .and_then(|v| v.as_str())
+            .unwrap_or("native");
+
+        channels.insert(
+            format!("forward/{name}"),
+            serde_json::json!({
+                "address": format!("{}/{}", sink_type, name),
+                "description": format!("Forward relay: outbox '{}' → {}", outbox_name, sink_type),
+                "messages": {
+                    format!("{name}Message"): {
+                        "$ref": format!("#/components/messages/{name}Message")
+                    }
+                }
+            }),
+        );
+
+        messages.insert(
+            format!("{name}Message"),
+            serde_json::json!({
+                "name": format!("{name}Message"),
+                "contentType": "application/json",
+                "payload": {
+                    "type": "object",
+                    "description": format!("pg_tide outbox message (wire_format: {})", wire_format)
+                }
+            }),
+        );
+
+        operations.insert(
+            format!("send{}", to_pascal_case(&name)),
+            serde_json::json!({
+                "action": "send",
+                "channel": { "$ref": format!("#/channels/forward~1{name}") },
+                "description": format!("Publish messages from outbox '{}' to {}", outbox_name, sink_type)
+            }),
+        );
+    }
+
+    for row in &inbox_rows {
+        let name: String = row.get(0);
+        let _enabled: bool = row.get(1);
+        let config: serde_json::Value = row.get(2);
+
+        let source_type = config
+            .get("source_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let inbox_name = config
+            .pointer("/sink/inbox")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&name);
+        let wire_format = config
+            .get("wire_format")
+            .and_then(|v| v.as_str())
+            .unwrap_or("native");
+
+        channels.insert(
+            format!("reverse/{name}"),
+            serde_json::json!({
+                "address": format!("{}/{}", source_type, name),
+                "description": format!("Reverse relay: {} → inbox '{}'", source_type, inbox_name),
+                "messages": {
+                    format!("{name}InboxMessage"): {
+                        "$ref": format!("#/components/messages/{name}InboxMessage")
+                    }
+                }
+            }),
+        );
+
+        messages.insert(
+            format!("{name}InboxMessage"),
+            serde_json::json!({
+                "name": format!("{name}InboxMessage"),
+                "contentType": "application/json",
+                "payload": {
+                    "type": "object",
+                    "description": format!("Inbound message for inbox '{}' (wire_format: {})", inbox_name, wire_format)
+                }
+            }),
+        );
+
+        operations.insert(
+            format!("receive{}", to_pascal_case(&name)),
+            serde_json::json!({
+                "action": "receive",
+                "channel": { "$ref": format!("#/channels/reverse~1{name}") },
+                "description": format!("Consume messages from {} into inbox '{}'", source_type, inbox_name)
+            }),
+        );
+    }
+
+    let doc = serde_json::json!({
+        "asyncapi": "3.0.0",
+        "info": {
+            "title": "pg-tide Relay AsyncAPI",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "Auto-generated AsyncAPI 3.0 document from pg-tide relay catalog metadata.",
+        },
+        "channels": channels,
+        "operations": operations,
+        "components": {
+            "messages": messages,
+        }
+    });
+
+    let content = match format {
+        "json" => serde_json::to_string_pretty(&doc)?,
+        _ => {
+            // Simple YAML-ish output via serde_json → manual conversion.
+            // For a production-quality YAML serialiser, add the `serde_yaml` crate.
+            // Here we emit pretty-printed JSON with a YAML header comment so the
+            // output is valid JSON-compatible YAML.
+            format!(
+                "# AsyncAPI 3.0 document — generated by pg-tide v{}\n# Format: JSON (YAML-compatible)\n{}",
+                env!("CARGO_PKG_VERSION"),
+                serde_json::to_string_pretty(&doc)?
+            )
+        }
+    };
+
+    match output {
+        Some(path) => {
+            tokio::fs::write(path, content).await?;
+            eprintln!("AsyncAPI document written to '{path}'");
+        }
+        None => println!("{content}"),
+    }
+
+    Ok(())
+}
+
+/// Convert a kebab-case or snake_case string to PascalCase for AsyncAPI operation IDs.
+fn to_pascal_case(s: &str) -> String {
+    s.split(['-', '_'])
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let mut chars = p.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect()
 }
 
 fn init_tracing(cfg: &RelayConfig) {

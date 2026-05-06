@@ -112,4 +112,122 @@ pub enum Commands {
         #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
         postgres_url: Option<String>,
     },
+
+    /// Replay workbench: preview, execute, or resolve DLQ entries.
+    #[command(subcommand)]
+    Replay(ReplayCommands),
+
+    /// AsyncAPI document generation.
+    #[command(subcommand)]
+    Asyncapi(AsyncapiCommands),
+}
+
+/// Replay workbench subcommands.
+#[derive(Debug, Subcommand)]
+pub enum ReplayCommands {
+    /// Preview messages in an outbox ID range without consuming them.
+    ///
+    /// Prints the matching outbox messages as JSONL to stdout.
+    /// No offsets are advanced; this is a read-only operation.
+    Preview {
+        /// Outbox name to preview.
+        #[arg(long)]
+        outbox: String,
+
+        /// Start of the ID range (inclusive).
+        #[arg(long, default_value = "0")]
+        from_id: i64,
+
+        /// End of the ID range (inclusive).
+        #[arg(long, default_value = "9223372036854775807")]
+        to_id: i64,
+
+        /// Maximum number of messages to return.
+        #[arg(long, default_value = "100")]
+        limit: i32,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+
+    /// Dry-run a transform evaluation against a sampled set of outbox messages.
+    ///
+    /// Reads messages from the outbox, applies all configured transforms, and
+    /// prints the resulting envelopes to stdout without publishing them.
+    DryRun {
+        /// Pipeline name whose transforms should be evaluated.
+        #[arg(long)]
+        pipeline: String,
+
+        /// Start of the ID range (inclusive).
+        #[arg(long, default_value = "0")]
+        from_id: i64,
+
+        /// End of the ID range (inclusive).
+        #[arg(long, default_value = "9223372036854775807")]
+        to_id: i64,
+
+        /// Maximum number of messages to evaluate.
+        #[arg(long, default_value = "20")]
+        limit: i32,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+
+    /// Mark a DLQ entry as resolved (closed without requeue).
+    DlqResolve {
+        /// Pipeline name.
+        #[arg(long)]
+        pipeline: String,
+
+        /// Dedup key of the DLQ entry to resolve.
+        #[arg(long)]
+        dedup_key: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+
+    /// Requeue a DLQ entry for another relay attempt.
+    DlqRequeue {
+        /// Pipeline name.
+        #[arg(long)]
+        pipeline: String,
+
+        /// Dedup key of the DLQ entry to requeue.
+        #[arg(long)]
+        dedup_key: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+}
+
+/// AsyncAPI document generation subcommands.
+#[derive(Debug, Subcommand)]
+pub enum AsyncapiCommands {
+    /// Generate an AsyncAPI 3.0 document from relay catalog metadata.
+    ///
+    /// Reads all configured relay pipelines from PostgreSQL and emits an
+    /// AsyncAPI 3.0 YAML or JSON document describing the channels, messages,
+    /// schemas, and bindings.  Useful for API documentation and contract-first
+    /// development.
+    Export {
+        /// Output format: yaml or json.
+        #[arg(long, default_value = "yaml")]
+        format: String,
+
+        /// Output file path. Defaults to stdout when omitted.
+        #[arg(long)]
+        output: Option<String>,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
 }
