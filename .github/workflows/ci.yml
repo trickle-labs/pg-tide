@@ -296,12 +296,17 @@ jobs:
         run: |
           # Extract all metric name constants from metrics.rs
           METRICS=$(grep -o 'pg_tide_relay_[a-z_]*' pg-tide-relay/src/metrics.rs | sort -u)
-          # Extract metric names referenced in the Grafana dashboard
-          DASHBOARD_METRICS=$(grep -o 'pg_tide_relay_[a-z_]*' pg-tide/dashboards/relay-health.json 2>/dev/null | sort -u || true)
+          # Extract metric names referenced in the Grafana dashboard.
+          # Strip Prometheus histogram/summary suffixes (_bucket, _sum, _count)
+          # so that e.g. pg_tide_relay_delivery_latency_seconds_bucket maps to
+          # the base metric name pg_tide_relay_delivery_latency_seconds.
+          DASHBOARD_METRICS=$(grep -o 'pg_tide_relay_[a-z_]*' pg-tide/dashboards/relay-health.json 2>/dev/null \
+            | sed -E 's/_(bucket|sum|count)$//' \
+            | sort -u || true)
           echo "Metrics in metrics.rs:"
           echo "$METRICS"
           if [ -n "$DASHBOARD_METRICS" ]; then
-            echo "Metrics referenced in dashboard:"
+            echo "Metrics referenced in dashboard (normalised):"
             echo "$DASHBOARD_METRICS"
             # Check that every dashboard metric exists in metrics.rs
             UNKNOWN=""
