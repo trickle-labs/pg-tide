@@ -1,6 +1,10 @@
 # cargo-deny configuration (v0.13.0 supply-chain hardening)
 # https://embarkstudios.github.io/cargo-deny/
 
+# Exclude dev-only dependencies from all checks (they are not shipped to users).
+[graph]
+exclude-dev = true
+
 [advisories]
 # cargo-deny 0.19+ schema v2: vulnerability/unsound/notice fields removed;
 # they always fail. Only yanked and unmaintained are configurable.
@@ -22,6 +26,7 @@ allow = [
     "OpenSSL",
     "CC0-1.0",
     "MPL-2.0",
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]
