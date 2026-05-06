@@ -39,7 +39,8 @@ impl super::Sink for InboxSink {
         // v0.13.0: Batch insert via UNNEST for significantly lower round-trip overhead.
         // Extension-created inbox tables have columns: event_id, source, payload, headers.
         // msg.subject maps to source; headers are stored as a jsonb object.
-        let schema_table = format!("tide.{}", self.inbox_table);
+        // Quote the table name to handle pipeline names containing hyphens.
+        let schema_table = format!("tide.\"{}\"", self.inbox_table);
 
         // Build parallel arrays for UNNEST.
         let event_ids: Vec<&str> = messages.iter().map(|m| m.dedup_key.as_str()).collect();

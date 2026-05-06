@@ -198,7 +198,7 @@ jobs:
           key: ${{ runner.os }}-cargo-deny-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked --version "^0.16"
+        run: cargo install cargo-deny --locked
 
       - name: Run cargo-deny check
         run: cargo deny check
