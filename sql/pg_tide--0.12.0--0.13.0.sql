@@ -166,12 +166,28 @@ COMMENT ON TABLE tide.relay_schema_fingerprints IS
 
 -- Ensure the DLQ table has a unique index on (pipeline_name, dedup_key) so
 -- concurrent DLQ inserts are safely idempotent.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_relay_dlq_pipeline_dedup
-    ON tide.relay_dlq (pipeline_name, dedup_key)
-    WHERE resolved = false;
-
-COMMENT ON INDEX tide.uq_relay_dlq_pipeline_dedup IS
-    'TIDE-DLQ-1 (v0.13.0): Unique idempotency key for active DLQ entries.';
+-- Wrapped in a DO block so this migration is safe on installations that
+-- pre-date the DLQ table (e.g. unit-test databases seeded from v0.1.0).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'tide' AND table_name = 'relay_dlq'
+    ) THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = 'tide'
+              AND indexname = 'uq_relay_dlq_pipeline_dedup'
+        ) THEN
+            EXECUTE 'CREATE UNIQUE INDEX uq_relay_dlq_pipeline_dedup
+                     ON tide.relay_dlq (pipeline_name, dedup_key)
+                     WHERE resolved = false';
+            EXECUTE $c$COMMENT ON INDEX tide.uq_relay_dlq_pipeline_dedup IS
+                'TIDE-DLQ-1 (v0.13.0): Unique idempotency key for active DLQ entries.'$c$;
+        END IF;
+    END IF;
+END;
+$$;
 
 -- ── 5. Connection limit config ─────────────────────────────────────────────
 
