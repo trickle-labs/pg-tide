@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.12.0 — Contract Correctness & Operational Tooling](#0120--2026-05-05--contract-correctness--operational-tooling)
 - [0.11.0 — Pluggable Wire Formats: Debezium, Maxwell, Canal, Custom CDC JSON](#0110--2026-05-05--pluggable-wire-formats-debezium-maxwell-canal-custom-cdc-json)
 - [0.10.0 — Analytics Sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Iceberg, Delta Lake, DuckLake](#0100--2026-05-07--analytics-sinks-clickhouse-mongodb-snowflake-bigquery-iceberg-delta-lake-ducklake)
 - [0.9.0 — Connector Ecosystem Foundation (Singer, Airbyte, Fivetran)](#090--2026-05-06--connector-ecosystem-foundation-singer-airbyte-fivetran)
@@ -19,6 +20,90 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.12.0] — 2026-05-05 — Contract Correctness & Operational Tooling
+
+v0.12.0 fixes the critical seam breaks identified in the overall assessment
+between the SQL extension API, the relay catalog format, and runtime
+configuration. It also adds operational CLI tools, tightens identifier
+validation, and aligns documentation with actual behavior.
+
+### SQL ↔ Relay Contract Fixes
+
+- **`relay_set_outbox()` / `relay_set_inbox()`** now write the runtime-expected
+  JSON shape: `source_type`, `source.outbox`, `sink_type`, `sink.*`,
+  `batch_size`. Previously the stored JSON used `outbox`, `sink`, and `params`
+  which the relay coordinator could not parse.
+- **`relay_consumer_offsets`** schema migrated: `last_offset TEXT` replaced by
+  `last_change_id BIGINT NOT NULL DEFAULT 0` and `worker_id TEXT`. The relay
+  source already expected these typed columns; the SQL schema now matches.
+- **pg-inbox sink** fixed: inserts `(event_id, source, payload, headers)`
+  matching extension-created inbox tables. Previously inserted `event_type` and
+  `received_at` columns which did not exist.
+- **`outbox_publish()`** now enforces the `enabled` flag — returns an error for
+  disabled outboxes. Previously, `outbox_disable()` set the flag but publish
+  ignored it.
+- **`relay_list_configs()`** now returns full `{name, direction, enabled,
+  config}` objects and propagates SPI errors instead of silently defaulting to
+  empty data.
+
+### Identifier Validation
+
+- New `validation::validate_identifier()` function enforces PostgreSQL
+  safe-identifier rules (non-empty, ≤63 bytes, `[A-Za-z_][A-Za-z0-9_]*`) on
+  all dynamic SQL identifier paths: outbox names, inbox names, schema names,
+  relay pipeline names. Prevents SQL injection via dynamic DDL.
+
+### CLI & Observability Tooling
+
+- **`pg-tide doctor --postgres-url ...`** — new subcommand that validates
+  PostgreSQL connectivity, checks the `tide` schema and required tables exist,
+  verifies the v0.12.0 schema migration (typed offset column), and reports
+  configured pipeline counts. Exits 0 on success, 1 on any issue.
+- **`pg-tide validate-config --pipeline NAME`** — new subcommand that loads a
+  named pipeline from the catalog, resolves secrets, and instantiates source +
+  sink factories without processing any messages. Reports whether both sides can
+  be constructed successfully.
+
+### Grafana Dashboard
+
+- `pg-tide/dashboards/relay-health.json` regenerated with correct metric names
+  (`pg_tide_relay_*` prefix matching actual Prometheus metric registration).
+  Previously used `pgtide_relay_*` names that returned no data.
+
+### Infrastructure & Packaging
+
+- **Helm chart** `PG_TIDE_RELAY_POSTGRES_URL` → `PG_TIDE_POSTGRES_URL` (now
+  matches what the CLI actually reads). Chart `version` and `appVersion`
+  bumped to `0.12.0`.
+- **Release workflow** updated to build with `--all-features` so official
+  release artifacts include all documented sink/source backends.
+- **`sink_max_inflight`** configuration key now wired into a real `tokio::sync::Semaphore`
+  around each pipeline's publish operations. Previously documented but not
+  enforced.
+
+### Test Coverage
+
+- `tests/migration_test.rs` — sequential SQL migration upgrade test: installs
+  v0.1.0 schema, applies all 11 upgrade scripts in order, and asserts catalog
+  state at v0.12.0.
+- `tests/sql_api_test.rs` — SQL API test harness: verifies relay config JSON
+  shape, inbox table column shape, and end-to-end catalog round-trips using
+  testcontainers PostgreSQL.
+
+### Documentation
+
+- `docs/src/reference/version-compatibility.md` corrected:
+  - PostgreSQL 18+ only (was incorrectly claiming 14–18 support).
+  - Feature availability table corrected to match actual changelog.
+  - Feature gates table updated with actual per-backend gate names (replaces
+    fictional `cloud` and `analytics` aggregates).
+  - Upgrade path updated to include v0.12.0 migration script.
+- `README.md`: delivery semantics clarified from "exactly-once" to "transactional
+  publish + idempotent delivery primitives (at-least-once relay with dedup)".
+  Getting Started link updated to correct path.
 
 ---
 

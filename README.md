@@ -7,7 +7,7 @@
 
 pg_tide gives your PostgreSQL database a built-in messaging backbone. Publish events atomically within your existing transactions — no dual-writes, no distributed transactions, no message broker required at the database layer.
 
-When you're ready to fan out to Kafka, NATS, Redis Streams, or any other system, the `pg-tide` relay binary bridges the gap with exactly-once delivery semantics.
+When you're ready to fan out to Kafka, NATS, Redis Streams, or any other system, the `pg-tide` relay binary bridges the gap with transactional publish and idempotent delivery primitives (at-least-once relay with deduplication via unique event IDs).
 
 ## Features
 
@@ -74,7 +74,7 @@ docker pull ghcr.io/trickle-labs/pg-tide:latest
 
 Full documentation is available at **[trickle-labs.github.io/pg-tide](https://trickle-labs.github.io/pg-tide/)**.
 
-- [Getting Started](https://trickle-labs.github.io/pg-tide/getting-started/quickstart.html)
+- [Getting Started](https://trickle-labs.github.io/pg-tide/getting-started/first-pipeline.html)
 - [SQL API Reference](https://trickle-labs.github.io/pg-tide/sql-reference/outbox-api.html)
 - [Relay Configuration](https://trickle-labs.github.io/pg-tide/relay-guide/configuration.html)
 - [Architecture](https://trickle-labs.github.io/pg-tide/evaluate/architecture.html)

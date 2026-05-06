@@ -48,6 +48,8 @@ fn inbox_create_impl(
     processed_retention_hours: i32,
     dlq_retention_hours: i32,
 ) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(name)?;
+    crate::validation::validate_identifier(schema)?;
     if inbox_exists(name) {
         return Err(PgTideError::InboxAlreadyExists(name.to_string()));
     }

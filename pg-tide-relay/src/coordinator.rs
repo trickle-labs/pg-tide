@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, watch, RwLock};
+use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 use tokio_postgres::Client;
 
 use crate::circuit_breaker::CircuitBreaker;
@@ -319,6 +319,15 @@ async fn worker_inner(
         .unwrap_or(default_batch_size);
     let poll_interval_ms = pipeline.opt_i64(&["poll_interval_ms"]).unwrap_or(1_000) as u64;
 
+    // v0.12.0: sink_max_inflight — limits concurrent in-flight publish operations.
+    // 0 = unlimited (legacy behaviour).
+    let sink_max_inflight = pipeline.opt_i64(&["sink_max_inflight"]).unwrap_or(0) as usize;
+    let inflight_semaphore: Option<Arc<Semaphore>> = if sink_max_inflight > 0 {
+        Some(Arc::new(Semaphore::new(sink_max_inflight)))
+    } else {
+        None
+    };
+
     // v0.7.0: Parse operational config.
     let dry_run = pipeline.opt_bool(&["dry_run"]).unwrap_or(false);
     let dlq_config = DlqConfig::from_pipeline_config(&pipeline.config);
@@ -479,6 +488,14 @@ async fn worker_inner(
 
         // v0.7.0: Rate limiting — wait for tokens before publishing.
         rate_limiter.acquire(batch.len() as u32).await;
+
+        // v0.12.0: sink_max_inflight semaphore — acquire one permit per batch
+        // to bound the number of concurrent publish operations.
+        let _inflight_permit = if let Some(ref sem) = inflight_semaphore {
+            Some(Arc::clone(sem).acquire_owned().await.ok())
+        } else {
+            None
+        };
 
         match sink.publish(&batch).await {
             Ok(()) => {
@@ -1304,6 +1321,25 @@ async fn build_sink(
             reason: format!("unknown sink_type: {other}"),
         }),
     }
+}
+
+// ── Public factory wrappers for CLI validation ────────────────────────────
+
+/// Build a source for validation purposes (used by `pg-tide validate-config`).
+pub async fn build_source_for_validation(
+    pipeline: &PipelineConfig,
+    db: Arc<Client>,
+    relay_group_id: &str,
+) -> Result<Box<dyn crate::source::Source>, RelayError> {
+    build_source(pipeline, db, relay_group_id).await
+}
+
+/// Build a sink for validation purposes (used by `pg-tide validate-config`).
+pub async fn build_sink_for_validation(
+    pipeline: &PipelineConfig,
+    db: Arc<Client>,
+) -> Result<Box<dyn crate::sink::Sink>, RelayError> {
+    build_sink(pipeline, db).await
 }
 
 #[cfg(test)]

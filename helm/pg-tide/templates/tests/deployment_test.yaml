@@ -1,0 +1,33 @@
+suite: pg-tide deployment tests
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: should set PG_TIDE_POSTGRES_URL (not the old RELAY variant)
+    set:
+      postgres.url: "postgres://user:pass@localhost:5432/mydb"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PG_TIDE_POSTGRES_URL
+            value: "postgres://user:pass@localhost:5432/mydb"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PG_TIDE_RELAY_POSTGRES_URL
+
+  - it: should use existingSecret when configured
+    set:
+      postgres.existingSecret: "my-db-secret"
+      postgres.existingSecretKey: "url"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PG_TIDE_POSTGRES_URL
+            valueFrom:
+              secretKeyRef:
+                name: my-db-secret
+                key: url

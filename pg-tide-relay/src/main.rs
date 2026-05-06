@@ -31,7 +31,7 @@ use tokio::signal;
 use tokio::sync::{mpsc, watch, RwLock};
 use tracing_subscriber::EnvFilter;
 
-use cli::Cli;
+use cli::{Cli, Commands};
 use config::{LogFormat, RelayConfig};
 use error::RelayError;
 
@@ -48,12 +48,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // CLI args take precedence over file config.
-    if let Some(url) = cli.postgres_url {
+    if let Some(url) = cli.postgres_url.clone() {
         cfg.postgres_url = url;
     }
-    cfg.metrics_addr = cli.metrics_addr;
-    cfg.log_level = cli.log_level;
-    cfg.relay_group_id = cli.relay_group_id;
+    cfg.metrics_addr = cli.metrics_addr.clone();
+    cfg.log_level = cli.log_level.clone();
+    cfg.relay_group_id = cli.relay_group_id.clone();
     cfg.log_format = match cli.log_format.as_str() {
         "json" => LogFormat::Json,
         _ => LogFormat::Text,
@@ -65,6 +65,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialise tracing.
     init_tracing(&cfg);
+
+    // Dispatch subcommands before checking postgres_url.
+    match cli.command {
+        Some(Commands::Doctor { postgres_url }) => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| cfg.postgres_url.clone());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for doctor");
+                std::process::exit(1);
+            }
+            return run_doctor(&url).await;
+        }
+        Some(Commands::ValidateConfig {
+            pipeline,
+            postgres_url,
+        }) => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| cfg.postgres_url.clone());
+            if url.is_empty() {
+                eprintln!("error: --postgres-url is required for validate-config");
+                std::process::exit(1);
+            }
+            return run_validate_config(&url, &pipeline).await;
+        }
+        None => {}
+    }
 
     if cfg.postgres_url.is_empty() {
         eprintln!("error: --postgres-url is required (or set PG_TIDE_POSTGRES_URL)");
@@ -206,6 +234,215 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     coordinator.release_all_locks().await?;
 
     tracing::info!("pg-tide stopped");
+    Ok(())
+}
+
+// ── `pg-tide doctor` ─────────────────────────────────────────────────────
+
+/// Validate PostgreSQL connectivity, schema presence, and catalog health.
+async fn run_doctor(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("pg-tide doctor v{}", env!("CARGO_PKG_VERSION"));
+    println!("Connecting to PostgreSQL...");
+
+    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+        .await
+        .map_err(|e| format!("connection failed: {e}"))?;
+
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    println!("  [OK] Connected to PostgreSQL");
+
+    // Check schema exists.
+    let schema_exists: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'tide')",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(false);
+
+    if schema_exists {
+        println!("  [OK] Schema 'tide' exists");
+    } else {
+        println!("  [FAIL] Schema 'tide' not found — is pg_tide installed?");
+        std::process::exit(1);
+    }
+
+    // Check required tables.
+    let required_tables = [
+        "tide_outbox_config",
+        "tide_outbox_messages",
+        "tide_inbox_config",
+        "relay_outbox_config",
+        "relay_inbox_config",
+        "relay_consumer_offsets",
+    ];
+    let mut all_ok = true;
+    for table in &required_tables {
+        let exists: bool = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+                 WHERE table_schema = 'tide' AND table_name = $1)",
+                &[table],
+            )
+            .await
+            .map(|r| r.get(0))
+            .unwrap_or(false);
+        if exists {
+            println!("  [OK] Table tide.{table}");
+        } else {
+            println!("  [FAIL] Table tide.{table} missing");
+            all_ok = false;
+        }
+    }
+
+    // Check relay_consumer_offsets has the correct schema (v0.12.0 migration).
+    let has_change_id: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'tide' AND table_name = 'relay_consumer_offsets' \
+             AND column_name = 'last_change_id')",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(false);
+    if has_change_id {
+        println!("  [OK] relay_consumer_offsets.last_change_id column present");
+    } else {
+        println!("  [WARN] relay_consumer_offsets.last_change_id missing — run upgrade to v0.12.0");
+        all_ok = false;
+    }
+
+    // Count configured pipelines.
+    let outbox_count: i64 = client
+        .query_one("SELECT COUNT(*) FROM tide.relay_outbox_config", &[])
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(0);
+    let inbox_count: i64 = client
+        .query_one("SELECT COUNT(*) FROM tide.relay_inbox_config", &[])
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(0);
+    println!(
+        "  [INFO] {outbox_count} forward pipeline(s), {inbox_count} reverse pipeline(s) configured"
+    );
+
+    if all_ok {
+        println!("\npg-tide doctor: all checks passed.");
+        Ok(())
+    } else {
+        println!("\npg-tide doctor: one or more checks failed.");
+        std::process::exit(1);
+    }
+}
+
+// ── `pg-tide validate-config` ────────────────────────────────────────────
+
+/// Dry-run source and sink factories for a named pipeline.
+async fn run_validate_config(url: &str, pipeline: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use pg_tide_relay::config::{resolve_pipeline_secrets, PipelineConfig, PipelineDirection};
+
+    println!("pg-tide validate-config — pipeline: {pipeline}");
+
+    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+        .await
+        .map_err(|e| format!("connection failed: {e}"))?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    // Load pipeline from catalog (outbox config first, then inbox).
+    let row = client
+        .query_opt(
+            "SELECT config, 'forward'::text AS direction, enabled \
+             FROM tide.relay_outbox_config WHERE name = $1
+             UNION ALL
+             SELECT config, 'reverse'::text, enabled \
+             FROM tide.relay_inbox_config WHERE name = $1
+             LIMIT 1",
+            &[&pipeline],
+        )
+        .await?;
+
+    let row = match row {
+        Some(r) => r,
+        None => {
+            eprintln!("error: pipeline '{pipeline}' not found in catalog");
+            std::process::exit(1);
+        }
+    };
+
+    let config: serde_json::Value = row.get(0);
+    let direction_str: String = row.get(1);
+    let enabled: bool = row.get(2);
+
+    if !enabled {
+        println!("  [WARN] pipeline '{pipeline}' is disabled");
+    }
+
+    let direction = if direction_str == "forward" {
+        PipelineDirection::Forward
+    } else {
+        PipelineDirection::Reverse
+    };
+
+    let pc = PipelineConfig {
+        name: pipeline.to_string(),
+        direction,
+        enabled,
+        config,
+    };
+
+    let resolved = resolve_pipeline_secrets(pc.config.clone())
+        .map_err(|e| format!("secret resolution failed: {e}"))?;
+
+    println!("  [OK] Secrets resolved");
+
+    let resolved_pc = PipelineConfig {
+        name: pc.name.clone(),
+        direction: pc.direction,
+        enabled: pc.enabled,
+        config: resolved,
+    };
+
+    // Try to build source.
+    let (worker_client, worker_conn) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+        .await
+        .map_err(|e| format!("worker connection failed: {e}"))?;
+    tokio::spawn(async move {
+        let _ = worker_conn.await;
+    });
+    let db = Arc::new(worker_client);
+
+    match pg_tide_relay::coordinator::build_source_for_validation(
+        &resolved_pc,
+        Arc::clone(&db),
+        "validate",
+    )
+    .await
+    {
+        Ok(src) => println!("  [OK] Source '{}' instantiated", src.name()),
+        Err(e) => {
+            println!("  [FAIL] Source instantiation failed: {e}");
+            std::process::exit(1);
+        }
+    }
+
+    match pg_tide_relay::coordinator::build_sink_for_validation(&resolved_pc, Arc::clone(&db)).await
+    {
+        Ok(sink) => println!("  [OK] Sink '{}' instantiated", sink.name()),
+        Err(e) => {
+            println!("  [FAIL] Sink instantiation failed: {e}");
+            std::process::exit(1);
+        }
+    }
+
+    println!("\nvalidate-config: pipeline '{pipeline}' configuration is valid.");
     Ok(())
 }
 
