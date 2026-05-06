@@ -24,7 +24,9 @@ jobs:
             os: ubuntu-latest
             binary: pg-tide
             archive_ext: tar.gz
-            cargo_flags: --all-features
+            # kafka (rdkafka-sys) cross-compiles librdkafka with the host gcc producing x86_64
+            # objects; the aarch64 cross-linker then rejects them ("file in wrong format")
+            cargo_flags: --features nats,webhook,stdout,redis,sqs,pg-inbox,rabbitmq,elasticsearch,pubsub,kinesis,servicebus,mqtt,eventhubs,object-storage,schema-registry,otel,slack,discord,pagerduty,arrow-flight,singer,airbyte,clickhouse,mongodb,snowflake,bigquery,iceberg,delta,ducklake,debezium,maxwell,canal,cdc-json
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             binary: pg-tide.exe
