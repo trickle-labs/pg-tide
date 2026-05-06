@@ -538,7 +538,7 @@ fn test_cloudevents_encode_insert_roundtrip() {
     let v: Value = serde_json::from_slice(batch.messages[0].value.as_ref().unwrap()).unwrap();
     assert_eq!(v["specversion"], "1.0");
     assert!(v.get("id").is_some());
-    assert_eq!(v["type"], "app.orders.insert");
+    assert_eq!(v["type"], "io.pgtide.insert");
     assert_eq!(v["ce-op"], "insert");
     assert_eq!(v["data"]["id"], 1);
 }
