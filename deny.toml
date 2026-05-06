@@ -2,13 +2,11 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-# Warn on RUSTSEC advisories; do not error by default to avoid blocking CI on
-# advisories that have no fix yet.  Change `warn` to `deny` to enforce stricter
-# policy.
-vulnerability = "warn"
-unmaintained = "warn"
+# cargo-deny 0.19+ schema v2: vulnerability/unsound/notice fields removed;
+# they always fail. Only yanked and unmaintained are configurable.
+version = 2
 yanked = "warn"
-notice = "warn"
+unmaintained = "workspace"
 
 [licenses]
 # Allow standard permissive and weak-copyleft licences.
@@ -25,15 +23,6 @@ allow = [
     "CC0-1.0",
     "MPL-2.0",
 ]
-# Deny GPL-only licences (they are incompatible with Apache-2.0 distribution).
-deny = [
-    "GPL-2.0",
-    "GPL-3.0",
-    "LGPL-2.0",
-    "AGPL-3.0",
-]
-# Some crates ship dual-licensed; prefer the most permissive interpretation.
-confidence-threshold = 0.8
 
 [bans]
 # Warn on duplicate versions of the same crate (large version skews can hide
