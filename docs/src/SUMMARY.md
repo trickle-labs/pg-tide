@@ -187,6 +187,7 @@
 - [Prometheus + Grafana](integration/prometheus-grafana.md)
 - [Datadog](integration/datadog.md)
 - [OpenTelemetry Collector](integration/otel-collector.md)
+- [Microcks (AsyncAPI contract testing)](integration/microcks.md)
 
 ---
 
