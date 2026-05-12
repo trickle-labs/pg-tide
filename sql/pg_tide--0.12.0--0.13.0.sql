@@ -30,58 +30,11 @@ COMMENT ON TABLE tide.outbox_publishers IS
     'TIDE-SEC-3 (v0.13.0): Per-outbox publisher ACL.  When at least one row '
     'exists for an outbox_name, only listed roles may call outbox_publish().';
 
--- Convenience helper: grant a role publish access to a specific outbox.
-CREATE OR REPLACE FUNCTION tide.outbox_grant_publish(
-    p_outbox TEXT,
-    p_role   TEXT
-)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = tide, pg_catalog
-AS $$
-BEGIN
-    -- Validate outbox exists.
-    IF NOT EXISTS (
-        SELECT 1 FROM tide.tide_outbox_config WHERE outbox_name = p_outbox
-    ) THEN
-        RAISE EXCEPTION 'outbox "%" does not exist', p_outbox;
-    END IF;
-
-    INSERT INTO tide.outbox_publishers (outbox_name, role_name)
-    VALUES (p_outbox, p_role)
-    ON CONFLICT (outbox_name, role_name) DO NOTHING;
-
-    -- Record in audit log.
-    INSERT INTO tide.tide_security_audit (action, target_role, target_object, performed_by)
-    VALUES ('GRANT_OUTBOX_PUBLISH', p_role, p_outbox, current_user);
-END;
-$$;
-
-COMMENT ON FUNCTION tide.outbox_grant_publish(TEXT, TEXT) IS
-    'TIDE-SEC-3 (v0.13.0): Grant a role fine-grained publish access to a specific outbox.';
-
--- Convenience helper: revoke publish access.
-CREATE OR REPLACE FUNCTION tide.outbox_revoke_publish(
-    p_outbox TEXT,
-    p_role   TEXT
-)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = tide, pg_catalog
-AS $$
-BEGIN
-    DELETE FROM tide.outbox_publishers
-    WHERE outbox_name = p_outbox AND role_name = p_role;
-
-    INSERT INTO tide.tide_security_audit (action, target_role, target_object, performed_by)
-    VALUES ('REVOKE_OUTBOX_PUBLISH', p_role, p_outbox, current_user);
-END;
-$$;
-
-COMMENT ON FUNCTION tide.outbox_revoke_publish(TEXT, TEXT) IS
-    'TIDE-SEC-3 (v0.13.0): Revoke fine-grained publish access from a role for an outbox.';
+-- NOTE (v0.13.0): tide.outbox_grant_publish(text, text) and
+-- tide.outbox_revoke_publish(text, text) are implemented as Rust #[pg_extern]
+-- C-language functions in pg-tide-ext/src/outbox.rs.
+-- They are registered by pgrx during extension installation and must NOT be
+-- redefined here as PL/pgSQL (CREATE OR REPLACE cannot switch languages).
 
 -- ── 2. SECURITY DEFINER hardening ──────────────────────────────────────────
 

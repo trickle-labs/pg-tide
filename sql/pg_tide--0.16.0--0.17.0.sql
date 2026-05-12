@@ -58,6 +58,36 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- tide.outbox_grant_publish(text, text) and tide.outbox_revoke_publish(text, text)
+-- were plpgsql in the v0.12.0→0.13.0 migration but are now C-language #[pg_extern]
+-- functions provided by the Rust extension.  Drop any plpgsql residual so that
+-- the Rust runtime can register the C version cleanly.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM   pg_proc     p
+    JOIN   pg_namespace n ON n.oid = p.pronamespace
+    WHERE  n.nspname = 'tide'
+      AND  p.proname = 'outbox_grant_publish'
+      AND  p.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql')
+  ) THEN
+    DROP FUNCTION tide.outbox_grant_publish(text, text);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM   pg_proc     p
+    JOIN   pg_namespace n ON n.oid = p.pronamespace
+    WHERE  n.nspname = 'tide'
+      AND  p.proname = 'outbox_revoke_publish'
+      AND  p.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql')
+  ) THEN
+    DROP FUNCTION tide.outbox_revoke_publish(text, text);
+  END IF;
+END $$;
+
 -- ── 2. Harden SECURITY DEFINER functions ────────────────────────────────────
 --
 -- Fresh installs (via pg_tide--0.1.0.sql) already include
