@@ -132,8 +132,8 @@ Deprecated flags continue to work until the next major version.  A
 
 | Old (pre-0.17.0) | New | Notes |
 |-------------------|-----|-------|
-| `PGTRICKLE_RELAY_POSTGRES_URL` | `PG_TIDE_POSTGRES_URL` | Old name no longer recognised |
 | `PG_TIDE_RELAY_POSTGRES_URL` | `PG_TIDE_POSTGRES_URL` | Old name no longer recognised |
+| Pre-v0.17 legacy env var | `PG_TIDE_POSTGRES_URL` | See CHANGELOG v0.17.0 for details |
 
 ---
 
