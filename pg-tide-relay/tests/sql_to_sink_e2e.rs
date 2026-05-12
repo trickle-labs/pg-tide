@@ -139,17 +139,21 @@ async fn test_sql_to_file_sink_e2e() {
     let client = connect_retry(&db_url).await;
     apply_full_schema(&client).await;
 
-    // ── 3. Create outbox + pipeline config ───────────────────────────────
-    // Create the outbox entry.
+    // ── 3. Create per-outbox table + pipeline config ──────────────────────
+    //
+    // The relay coordinator reads from a per-outbox table named
+    // `tide.outbox_{name}`.  We create this table directly (without the Rust
+    // extension) and set `payload_mode = "raw"` so the coordinator forwards
+    // the raw JSONB payload without expecting a pg_trickle v:1 envelope.
     client
-        .execute(
-            "INSERT INTO tide.tide_outbox_config \
-             (outbox_name, retention_hours, inline_threshold) \
-             VALUES ('e2e-outbox', 24, 10000)",
-            &[],
+        .batch_execute(
+            "CREATE TABLE tide.outbox_e2e_outbox ( \
+               id      BIGSERIAL PRIMARY KEY, \
+               payload JSONB NOT NULL \
+             )",
         )
         .await
-        .expect("create outbox config");
+        .expect("create per-outbox table");
 
     // Temp file for the file sink.
     let tmp_path = std::env::temp_dir().join(format!(
@@ -161,11 +165,11 @@ async fn test_sql_to_file_sink_e2e() {
     ));
     let tmp_path_str = tmp_path.to_string_lossy().to_string();
 
-    // Configure the pipeline — this is the exact JSON shape that
-    // tide.relay_set_outbox() writes, locking in the SQL/relay contract.
+    // Configure the pipeline — mirrors the JSON shape that tide.relay_set_outbox()
+    // writes.  `payload_mode = "raw"` bypasses the v:1 envelope expectation.
     let pipeline_config = serde_json::json!({
         "source_type": "outbox",
-        "source": { "outbox": "e2e-outbox" },
+        "source": { "outbox": "e2e_outbox", "payload_mode": "raw" },
         "sink_type": "file",
         "sink": {
             "path": tmp_path_str,
@@ -220,9 +224,7 @@ async fn test_sql_to_file_sink_e2e() {
     let payload_json = tokio_postgres::types::Json(&test_payload);
     client
         .execute(
-            "INSERT INTO tide.tide_outbox_messages \
-             (outbox_name, payload, headers) \
-             VALUES ('e2e-outbox', $1, '{}'::jsonb)",
+            "INSERT INTO tide.outbox_e2e_outbox (payload) VALUES ($1)",
             &[&payload_json],
         )
         .await
