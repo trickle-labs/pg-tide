@@ -565,7 +565,9 @@ async fn worker_inner(
                     consecutive_failures += 1;
                     let jitter_range = (poll_backoff_ms as f64 * 0.20) as u64;
                     let jitter = if jitter_range > 0 {
-                        let pseudo = consecutive_failures as u64 * 6_364_136_223_846_793_005_u64;
+                        // SAFETY: wrapping_mul is intentional — LCG constant requires wrap.
+                        let pseudo = (consecutive_failures as u64)
+                            .wrapping_mul(6_364_136_223_846_793_005_u64);
                         (pseudo % (jitter_range * 2)).saturating_sub(jitter_range)
                     } else {
                         0

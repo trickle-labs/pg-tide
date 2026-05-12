@@ -217,13 +217,13 @@ async fn test_sql_to_file_sink_e2e() {
         "order_id": "e2e-42",
         "test": "sql_to_sink_e2e"
     });
-    let payload_str = serde_json::to_string(&test_payload).unwrap();
+    let payload_json = tokio_postgres::types::Json(&test_payload);
     client
         .execute(
             "INSERT INTO tide.tide_outbox_messages \
              (outbox_name, payload, headers) \
-             VALUES ('e2e-outbox', $1::jsonb, '{}'::jsonb)",
-            &[&payload_str],
+             VALUES ('e2e-outbox', $1, '{}'::jsonb)",
+            &[&payload_json],
         )
         .await
         .expect("insert outbox message");
