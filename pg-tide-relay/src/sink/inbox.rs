@@ -16,12 +16,15 @@ pub struct InboxSink {
 }
 
 impl InboxSink {
-    pub fn new(db: Arc<Client>, inbox_table: impl Into<String>) -> Self {
-        Self {
+    pub fn new(db: Arc<Client>, inbox_table: impl Into<String>) -> Result<Self, RelayError> {
+        let table: String = inbox_table.into();
+        // v0.18.0: Defence-in-depth identifier validation (overall_assessment_3 §2.2).
+        crate::config::validate_relay_identifier(&table)?;
+        Ok(Self {
             db,
-            inbox_table: inbox_table.into(),
+            inbox_table: table,
             dedup_count: 0,
-        }
+        })
     }
 }
 

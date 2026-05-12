@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.18.0 — Security Completeness, LISTEN Hot-Reload & API Polish](#0180--2026-05-13--security-completeness-listen-hot-reload--api-polish)
 - [0.17.0 — Catalog Integrity, DLQ Reliability & Contract Correctness](#0170--2026-05-12--catalog-integrity-dlq-reliability--contract-correctness)
 - [0.16.0 — Developer Experience & Observability](#0160--2026-05-11--developer-experience--observability)
 - [0.15.0 — TLS Enforcement, Resilience & Outbox Sweep](#0150--2026-05-10--tls-enforcement-resilience--outbox-sweep)
@@ -25,6 +26,64 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.18.0] — 2026-05-13 — Security Completeness, LISTEN Hot-Reload & API Polish
+
+v0.18.0 completes the SSRF guard for all HTTP-based sinks, adds a
+`--postgres-url-file` flag for secure credential injection, polishes the
+SQL API with `relay_set_outbox_v2()` and boolean returns for
+`relay_enable`/`relay_disable`, and refactors the relay binary into focused
+`cmd/` modules for better maintainability. No breaking changes.
+
+### Security
+
+- **SSRF guard for ClickHouse, Elasticsearch, and Arrow Flight sinks** — a
+  new shared validator (`http_util::validate_url`) blocks requests to loopback
+  addresses (`127.x`, `::1`), link-local ranges (`169.254.x`, `fe80::`),
+  private RFC 1918 ranges (`10.x`, `172.16–31.x`, `192.168.x`), and cloud
+  instance-metadata endpoints (`169.254.169.254`, `fd00:ec2::`). HTTPS is
+  required by default; set `allow_http = true` only for on-premises
+  deployments. Set `ssrf_protection = false` to opt out for trusted private
+  networks.
+- **`--postgres-url-file` / `PG_TIDE_POSTGRES_URL_FILE`** — reads the
+  PostgreSQL connection URL from a file instead of a command-line argument,
+  preventing credential exposure in `/proc/<pid>/cmdline`. Takes precedence
+  over `--postgres-url`.
+
+### SQL API
+
+- **`tide.relay_set_outbox_v2(config JSONB)`** — new single-JSONB-parameter
+  form symmetric with `relay_set_inbox_v2()`. Accepted keys: `name`, `outbox`,
+  `sink_type`, `config`, `batch_size`, `enabled`.
+- **`tide.relay_enable(name text) → boolean`** — now returns `TRUE` if the
+  pipeline was found and modified, `FALSE` if the pipeline was not found.
+  Previously returned `void`; callers that ignored the return value are
+  unaffected.
+- **`tide.relay_disable(name text) → boolean`** — same semantics as
+  `relay_enable`.
+
+### Relay — Code Quality
+
+- **`cmd/` module split** — `doctor`, `validate-config`, `replay`, `asyncapi`,
+  `sweep`, and `status` subcommands are now implemented in dedicated modules
+  under `pg-tide-relay/src/cmd/`. `main.rs` shrinks to under 280 lines.
+- **Identifier validation at construction time** — `InboxSink` and
+  `PgInboxSink` now call `validate_relay_identifier()` in `new()`, returning
+  `Err` immediately for malformed identifiers rather than failing at first use.
+- **Proper jitter for retry back-off** — replaced the inline LCG PRNG with
+  `rand::rng().random_range()` (the `rand = "0.9"` crate).
+- **`route_to_dlq()` helper** — DLQ insert paths in the worker loop are now
+  unified through a single helper that correctly classifies transient vs
+  permanent errors and increments the `pg_tide_relay_dlq_write_errors_total`
+  metric on permanent failure.
+
+### Testing
+
+- 164 relay library unit tests pass (`cargo test --package pg-tide-relay --lib`).
+- ClickHouse test fixtures updated for `allow_http` / `ssrf_protection` fields.
+- Batch-inbox test updated for `InboxSink::new() → Result`.
 
 ---
 

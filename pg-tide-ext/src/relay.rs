@@ -1,6 +1,7 @@
 //! Relay Catalog API for pg_tide.
 //!
-//! Provides `tide.relay_set_outbox()`, `tide.relay_set_inbox()`,
+//! Provides `tide.relay_set_outbox()`, `tide.relay_set_outbox_v2()`,
+//! `tide.relay_set_inbox()`, `tide.relay_set_inbox_v2()`,
 //! `tide.relay_enable()`, `tide.relay_disable()`, `tide.relay_delete()`,
 //! `tide.relay_list_configs()` in the `tide` schema.
 //!
@@ -74,6 +75,92 @@ fn relay_set_outbox_impl(
     .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_outbox_config: {e}")))?;
 
     // Notify relay binary.
+    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
+
+    Ok(())
+}
+
+// ── TIDE-API: relay_set_outbox_v2 (v0.18.0) ──────────────────────────────
+
+/// Configure a forward relay pipeline using a single JSONB config parameter.
+///
+/// This is the v0.18.0 single-parameter form of `relay_set_outbox()` for
+/// symmetric API ergonomics with `relay_set_inbox_v2()`.
+/// The config object accepts the following keys:
+///
+/// - `name`        TEXT  (required) Pipeline name.
+/// - `outbox`      TEXT  (required) Source outbox name.
+/// - `sink_type`   TEXT  (required) Sink backend type (e.g. `"nats"`, `"stdout"`).
+/// - `config`      JSONB (default: `{}`) Sink-specific configuration.
+/// - `batch_size`  INT   (default: 100)
+/// - `enabled`     BOOL  (default: true)
+/// - `wire_format` TEXT  (default: `"native"`)
+///
+/// The 6-positional-parameter `relay_set_outbox()` is **deprecated** and will
+/// be removed in a future major version; migrate to this form.
+#[pg_extern(schema = "tide")]
+pub fn relay_set_outbox_v2(p_config: pgrx::JsonB) {
+    relay_set_outbox_v2_impl(p_config).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
+    let obj = &config.0;
+
+    let name = obj["name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            PgTideError::InvalidArgument(
+                r#"relay_set_outbox_v2: config must include a non-empty "name" key"#.to_string(),
+            )
+        })?;
+    let outbox = obj["outbox"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            PgTideError::InvalidArgument(
+                r#"relay_set_outbox_v2: config must include a non-empty "outbox" key"#.to_string(),
+            )
+        })?;
+    let sink_type = obj["sink_type"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            PgTideError::InvalidArgument(
+                r#"relay_set_outbox_v2: config must include a non-empty "sink_type" key"#
+                    .to_string(),
+            )
+        })?;
+
+    let sink_config = obj
+        .get("config")
+        .cloned()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+    let batch_size = obj["batch_size"].as_i64().unwrap_or(100) as i32;
+    let enabled = obj["enabled"].as_bool().unwrap_or(true);
+
+    crate::validation::validate_identifier(name)?;
+    crate::validation::validate_identifier(outbox)?;
+
+    let full_config = serde_json::json!({
+        "source_type": "outbox",
+        "source": { "outbox": outbox },
+        "sink_type": sink_type,
+        "sink": sink_config,
+        "batch_size": batch_size,
+    });
+    let full_str = serde_json::to_string(&full_config)
+        .map_err(|e| PgTideError::SpiError(format!("serialize config: {e}")))?;
+
+    Spi::run_with_args(
+        "INSERT INTO tide.relay_outbox_config (name, enabled, config) \
+         VALUES ($1, $2, $3::jsonb) \
+         ON CONFLICT (name) DO UPDATE \
+         SET enabled = EXCLUDED.enabled, config = EXCLUDED.config",
+        &[name.into(), enabled.into(), full_str.as_str().into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_outbox_config: {e}")))?;
+
     let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
 
     Ok(())
@@ -235,17 +322,16 @@ fn relay_set_inbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
 
 /// Enable a relay pipeline.
 ///
-/// If the pipeline does not exist, this function is a **silent no-op** — the
-/// caller is not required to verify existence first.  Sends a
-/// `pg_notify('tide_relay_config')` to wake up any listening relay instances.
+/// Returns `TRUE` if a row was modified, `FALSE` if the pipeline did not exist.
+/// Sends a `pg_notify('tide_relay_config')` to wake up any listening relay instances.
 #[pg_extern(schema = "tide")]
-pub fn relay_enable(p_name: &str) {
+pub fn relay_enable(p_name: &str) -> bool {
     relay_enable_impl(p_name).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
-fn relay_enable_impl(name: &str) -> Result<(), PgTideError> {
+fn relay_enable_impl(name: &str) -> Result<bool, PgTideError> {
     if !relay_exists(name)? {
-        return Ok(()); // no-op — pipeline may have been deleted concurrently
+        return Ok(false); // pipeline not found — return false, no-op
     }
     let _ = Spi::run_with_args(
         "UPDATE tide.relay_outbox_config SET enabled = true WHERE name = $1",
@@ -256,22 +342,21 @@ fn relay_enable_impl(name: &str) -> Result<(), PgTideError> {
         &[name.into()],
     );
     let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
-    Ok(())
+    Ok(true)
 }
 
 /// Disable a relay pipeline.
 ///
-/// If the pipeline does not exist, this function is a **silent no-op** — the
-/// caller is not required to verify existence first.  Sends a
-/// `pg_notify('tide_relay_config')` to wake up any listening relay instances.
+/// Returns `TRUE` if a row was modified, `FALSE` if the pipeline did not exist.
+/// Sends a `pg_notify('tide_relay_config')` to wake up any listening relay instances.
 #[pg_extern(schema = "tide")]
-pub fn relay_disable(p_name: &str) {
+pub fn relay_disable(p_name: &str) -> bool {
     relay_disable_impl(p_name).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
-fn relay_disable_impl(name: &str) -> Result<(), PgTideError> {
+fn relay_disable_impl(name: &str) -> Result<bool, PgTideError> {
     if !relay_exists(name)? {
-        return Ok(()); // no-op — pipeline may have been deleted concurrently
+        return Ok(false); // pipeline not found — return false, no-op
     }
     let _ = Spi::run_with_args(
         "UPDATE tide.relay_outbox_config SET enabled = false WHERE name = $1",
@@ -282,7 +367,7 @@ fn relay_disable_impl(name: &str) -> Result<(), PgTideError> {
         &[name.into()],
     );
     let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
-    Ok(())
+    Ok(true)
 }
 
 /// Delete a relay pipeline.

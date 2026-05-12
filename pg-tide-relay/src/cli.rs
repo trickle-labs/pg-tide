@@ -19,6 +19,20 @@ pub struct Cli {
     #[arg(long, env = "PG_TIDE_POSTGRES_URL", help = "PostgreSQL connection URL")]
     pub postgres_url: Option<String>,
 
+    /// Path to a file containing the PostgreSQL connection string.
+    ///
+    /// Preferred over --postgres-url for production deployments to prevent
+    /// credentials appearing in `/proc/<pid>/cmdline` or shell history.
+    /// The file must contain a single line with the connection URL.
+    /// If both --postgres-url and --postgres-url-file are provided,
+    /// --postgres-url-file takes precedence.
+    #[arg(
+        long,
+        env = "PG_TIDE_POSTGRES_URL_FILE",
+        help = "Path to a file containing the PostgreSQL connection URL"
+    )]
+    pub postgres_url_file: Option<String>,
+
     /// Prometheus metrics + health endpoint address.
     #[arg(
         long,

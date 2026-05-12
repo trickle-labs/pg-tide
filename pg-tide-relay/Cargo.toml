@@ -124,6 +124,8 @@ mongodb = { version = "3", optional = true }
 # v0.13.0 always-on: schema evolution fingerprinting + SSRF guard
 hex = "0.4"
 regex-lite = "0.1"
+# v0.18.0: proper random jitter for backoff
+rand = "0.9"
 
 [dev-dependencies]
 testcontainers = "0.27"
