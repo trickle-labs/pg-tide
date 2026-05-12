@@ -764,8 +764,26 @@ async fn worker_inner(
                     reason = "circuit_breaker_open",
                 );
                 let _enter = dlq_span.enter();
+                // v0.17.0: Pause pipeline on permanent DLQ write failure.
                 if let Err(e) = crate::dlq::insert_batch(&db, &entries).await {
-                    tracing::warn!(pipeline = %pipeline.name, error = %e, "DLQ insert error");
+                    if e.is_transient() {
+                        tracing::warn!(
+                            pipeline = %pipeline.name,
+                            error = %e,
+                            "transient DLQ insert error — will retry"
+                        );
+                    } else {
+                        metrics
+                            .dlq_write_errors
+                            .with_label_values(&[&pipeline.name])
+                            .inc();
+                        tracing::error!(
+                            pipeline = %pipeline.name,
+                            error = %e,
+                            "permanent DLQ insert error — pausing pipeline"
+                        );
+                        return Err(e);
+                    }
                 } else {
                     // v0.13.0: Ack source after durable DLQ write; increment DLQ metric.
                     if let Some(last) = batch.last() {
@@ -910,11 +928,25 @@ async fn worker_inner(
                                 .inc_by(entries.len() as u64);
                         }
                         Err(dlq_err) => {
-                            tracing::warn!(
-                                pipeline = %pipeline.name,
-                                error = %dlq_err,
-                                "DLQ insert error"
-                            );
+                            // v0.17.0: Pause pipeline on permanent DLQ write failure.
+                            if dlq_err.is_transient() {
+                                tracing::warn!(
+                                    pipeline = %pipeline.name,
+                                    error = %dlq_err,
+                                    "transient DLQ insert error — will retry"
+                                );
+                            } else {
+                                metrics
+                                    .dlq_write_errors
+                                    .with_label_values(&[&pipeline.name])
+                                    .inc();
+                                tracing::error!(
+                                    pipeline = %pipeline.name,
+                                    error = %dlq_err,
+                                    "permanent DLQ insert error — pausing pipeline"
+                                );
+                                return Err(dlq_err);
+                            }
                         }
                     }
                     consecutive_failures = 0;

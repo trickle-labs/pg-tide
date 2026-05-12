@@ -13,7 +13,7 @@ The relay needs a PostgreSQL connection. Provide it via CLI flag or environment 
 ```bash
 pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
 # or
-export PGTRICKLE_RELAY_POSTGRES_URL="postgres://..."
+export PG_TIDE_POSTGRES_URL="postgres://..."
 pg-tide
 ```
 

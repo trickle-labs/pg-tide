@@ -152,6 +152,7 @@ jobs:
         run: |
           cargo test --package pg-tide-relay --test migration_test -- --test-threads=1
           cargo test --package pg-tide-relay --test sql_api_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test sql_to_sink_e2e -- --test-threads=1
           cargo test --package pg-tide-relay --test wire_format_test -- --test-threads=1
           cargo test --package pg-tide-relay --test wire_format_proptest -- --test-threads=1
 
@@ -323,3 +324,42 @@ jobs:
           else
             echo "No pg_tide_relay_* metrics in dashboard — skipping check."
           fi
+
+  # v0.17.0: Guard against stale PGTRICKLE_RELAY_* env-var references in docs.
+  # All references must use the current PG_TIDE_* prefix.
+  no-stale-env-vars:
+    name: No Stale PGTRICKLE_RELAY_* References
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert no docs reference PGTRICKLE_ prefix
+        run: |
+          # CHANGELOG.md may document the historical rename; check only active docs.
+          if grep -r 'PGTRICKLE_' docs/ README.md 2>/dev/null | grep -v "^Binary file"; then
+            echo "ERROR: Found stale PGTRICKLE_ env-var references — rename to PG_TIDE_*"
+            exit 1
+          fi
+          echo "OK: No stale PGTRICKLE_ references found."
+
+  # v0.17.0: SQL → relay → file-sink E2E test — verifies the SQL/relay contract.
+  test-e2e:
+    name: SQL → relay → sink E2E test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run SQL → relay → sink E2E test
+        run: cargo test --package pg-tide-relay --test sql_to_sink_e2e -- --test-threads=1

@@ -369,6 +369,54 @@ async fn run_doctor(url: &str) -> Result<(), Box<dyn std::error::Error>> {
         println!("  [WARN] tide.outbox_truncate_delivered() missing — upgrade to v0.15.0");
     }
 
+    // v0.17.0: Check (a) DLQ INSERT privilege.
+    let dlq_writable: bool = client
+        .query_one(
+            "SELECT has_table_privilege('tide.relay_dlq', 'INSERT')",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(false);
+    if dlq_writable {
+        println!("  [OK] Current role has INSERT on tide.relay_dlq");
+    } else {
+        println!("  [FAIL] Current role lacks INSERT on tide.relay_dlq — DLQ writes will fail");
+        all_ok = false;
+    }
+
+    // v0.17.0: Check (b) advisory lock acquisition under relay_group_id 1 (default group).
+    let lock_ok: bool = client
+        .query_one(
+            "SELECT pg_try_advisory_lock(hashtext('pg_tide_relay_group_default'))",
+            &[],
+        )
+        .await
+        .map(|r| r.get::<_, bool>(0))
+        .unwrap_or(false);
+    if lock_ok {
+        // Release the test lock immediately.
+        let _ = client
+            .execute(
+                "SELECT pg_advisory_unlock(hashtext('pg_tide_relay_group_default'))",
+                &[],
+            )
+            .await;
+        println!("  [OK] Advisory lock acquisition succeeded");
+    } else {
+        println!("  [WARN] Advisory lock acquisition failed — another relay instance may hold it");
+    }
+
+    // v0.17.0: Check (c) LISTEN permission for tide_relay_config.
+    let listen_ok = client.execute("LISTEN tide_relay_config", &[]).await;
+    if listen_ok.is_ok() {
+        let _ = client.execute("UNLISTEN tide_relay_config", &[]).await;
+        println!("  [OK] LISTEN on tide_relay_config permitted");
+    } else {
+        println!("  [FAIL] LISTEN on tide_relay_config denied — hot-reload will not function");
+        all_ok = false;
+    }
+
     if all_ok {
         println!("\npg-tide doctor: all checks passed.");
         Ok(())

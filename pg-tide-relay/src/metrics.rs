@@ -17,6 +17,8 @@ pub const METRIC_DELIVERY_LATENCY: &str = "pg_tide_relay_delivery_latency_second
 pub const METRIC_OWNED_PIPELINES: &str = "pg_tide_relay_owned_pipelines";
 pub const METRIC_RECONCILE_DURATION: &str = "pg_tide_relay_reconcile_duration_seconds";
 pub const METRIC_PIPELINE_ERRORS: &str = "pg_tide_relay_pipeline_errors_total";
+/// v0.17.0: DLQ write error counter (permanent DLQ failures that pause the pipeline).
+pub const METRIC_DLQ_WRITE_ERRORS: &str = "pg_tide_relay_dlq_write_errors_total";
 
 /// Shared relay metrics.
 pub struct RelayMetrics {
@@ -37,6 +39,8 @@ pub struct RelayMetrics {
     pub reconcile_duration_seconds: HistogramVec,
     /// v0.16.0: Pipeline errors labelled by error class (transient/permanent).
     pub pipeline_errors_total: IntCounterVec,
+    /// v0.17.0: DLQ write errors that caused a pipeline pause.
+    pub dlq_write_errors: IntCounterVec,
     registry: Registry,
 }
 
@@ -134,6 +138,15 @@ impl RelayMetrics {
             &["pipeline", "error_class"],
         )?;
 
+        // v0.17.0: DLQ write errors counter.
+        let dlq_write_errors = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_DLQ_WRITE_ERRORS,
+                "Total DLQ write failures that caused a pipeline pause"
+            ),
+            &["pipeline"],
+        )?;
+
         registry.register(Box::new(messages_published.clone()))?;
         registry.register(Box::new(messages_consumed.clone()))?;
         registry.register(Box::new(publish_errors.clone()))?;
@@ -145,6 +158,7 @@ impl RelayMetrics {
         registry.register(Box::new(owned_pipelines.clone()))?;
         registry.register(Box::new(reconcile_duration_seconds.clone()))?;
         registry.register(Box::new(pipeline_errors_total.clone()))?;
+        registry.register(Box::new(dlq_write_errors.clone()))?;
 
         Ok(Arc::new(Self {
             messages_published,
@@ -158,6 +172,7 @@ impl RelayMetrics {
             owned_pipelines,
             reconcile_duration_seconds,
             pipeline_errors_total,
+            dlq_write_errors,
             registry,
         }))
     }
@@ -255,12 +270,31 @@ mod tests {
             .messages_published
             .with_label_values(&["test-pipeline", "forward", "default"])
             .inc();
+        // v0.16.0: touch coordinator metrics so they appear in render output.
+        metrics
+            .owned_pipelines
+            .with_label_values(&["test-group"])
+            .set(0);
+        metrics
+            .reconcile_duration_seconds
+            .with_label_values(&["test-group"])
+            .observe(0.001);
+        metrics
+            .pipeline_errors_total
+            .with_label_values(&["test-pipeline", "transient"])
+            .inc();
         let rendered = metrics.render().unwrap();
         assert!(rendered.contains(METRIC_MESSAGES_PUBLISHED));
         // v0.16.0: verify new coordinator metrics are registered.
         assert!(rendered.contains(METRIC_OWNED_PIPELINES));
         assert!(rendered.contains(METRIC_RECONCILE_DURATION));
-        assert!(rendered.contains(METRIC_PIPELINE_ERRORS));
+        // v0.17.0: verify DLQ write errors metric is registered.
+        metrics
+            .dlq_write_errors
+            .with_label_values(&["test-pipeline"])
+            .inc();
+        let rendered2 = metrics.render().unwrap();
+        assert!(rendered2.contains(METRIC_DLQ_WRITE_ERRORS));
     }
 
     #[test]

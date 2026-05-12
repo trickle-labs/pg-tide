@@ -52,8 +52,7 @@ fn backfill_create_impl(
     crate::validation::validate_identifier(outbox_name)?;
 
     // Validate outbox exists.
-    let exists = crate::outbox::outbox_exists(outbox_name);
-    if !exists {
+    if !crate::outbox::outbox_exists(outbox_name)? {
         return Err(PgTideError::OutboxNotFound(outbox_name.to_string()));
     }
 

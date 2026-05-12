@@ -261,6 +261,7 @@ CREATE OR REPLACE FUNCTION tide.grant_publish(p_role TEXT, p_outbox TEXT)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = tide, pg_catalog
 AS $$
 BEGIN
     IF NOT EXISTS (
@@ -287,6 +288,7 @@ CREATE OR REPLACE FUNCTION tide.revoke_publish(p_role TEXT, p_outbox TEXT)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = tide, pg_catalog
 AS $$
 BEGIN
     EXECUTE format(

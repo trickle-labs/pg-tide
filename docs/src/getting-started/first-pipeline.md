@@ -41,9 +41,9 @@ services:
       - postgres
       - nats
     environment:
-      PGTRICKLE_RELAY_POSTGRES_URL: "postgres://postgres:postgres@postgres:5432/app"
-      PGTRICKLE_RELAY_LOG_FORMAT: "json"
-      PGTRICKLE_RELAY_LOG_LEVEL: "info"
+      PG_TIDE_POSTGRES_URL: "postgres://postgres:postgres@postgres:5432/app"
+      PG_TIDE_LOG_FORMAT: "json"
+      PG_TIDE_LOG_LEVEL: "info"
     ports:
       - "9090:9090"   # Metrics + health
 

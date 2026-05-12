@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.17.0 — Catalog Integrity, DLQ Reliability & Contract Correctness](#0170--2026-05-12--catalog-integrity-dlq-reliability--contract-correctness)
 - [0.16.0 — Developer Experience & Observability](#0160--2026-05-11--developer-experience--observability)
 - [0.15.0 — TLS Enforcement, Resilience & Outbox Sweep](#0150--2026-05-10--tls-enforcement-resilience--outbox-sweep)
 - [0.14.0 — Replay Workbench, CloudEvents, Tenant Scale & Managed Backfill](#0140--2026-05-09--replay-workbench-cloudevents-tenant-scale--managed-backfill)
@@ -24,6 +25,78 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.17.0] — 2026-05-12 — Catalog Integrity, DLQ Reliability & Contract Correctness
+
+v0.17.0 closes a set of correctness and reliability gaps identified in the
+v0.16.0 review cycle. There are no breaking SQL API changes — all changes are
+backward-compatible at the SQL level.
+
+### SQL API
+
+- **`tide.grant_publish` / `tide.revoke_publish`** — `SECURITY DEFINER`
+  functions now include `SET search_path = tide, pg_catalog` to prevent
+  search-path injection attacks (OWASP A03). The upgrade migration applies
+  `ALTER FUNCTION ... SET search_path` to existing databases.
+
+### Extension SQL Correctness
+
+- Removed residual plpgsql duplicates of `outbox_truncate_delivered`,
+  `outbox_create_if_not_exists`, and `relay_set_inbox_v2` that were shadowing
+  the canonical Rust `#[pg_extern]` implementations in upgrade paths.
+- The `pg_tide--0.16.0--0.17.0.sql` upgrade script defensively drops any
+  plpgsql copies of these functions (safe no-op if already absent).
+
+### Relay — Error Handling
+
+- **`exists()` helpers return `Result<bool>`** — `outbox_exists`,
+  `inbox_exists`, and `relay_exists` now return `Result<bool, PgTideError>`
+  instead of plain `bool`. SPI errors are propagated rather than silently
+  returning `false` (which previously masked catalog access failures).
+
+### Relay — DLQ Reliability
+
+- **DLQ write failures pause the pipeline** — if a DLQ write fails with a
+  permanent error, the worker now returns `Err` instead of silently swallowing
+  the failure. The coordinator marks the pipeline as failed and stops retrying,
+  preventing silent message loss.
+- **New metric `pg_tide_relay_dlq_write_errors_total`** — counts permanent DLQ
+  write failures labelled by `pipeline`. Visible in the Prometheus endpoint.
+
+### Relay — `pg-tide doctor`
+
+- Three new pre-flight checks added to `pg-tide doctor`:
+  1. **DLQ INSERT privilege** — verifies the relay role can write to
+     `tide.relay_dlq`; reports FAIL if missing.
+  2. **Advisory lock availability** — tests `pg_try_advisory_lock` for the
+     relay group key; reports WARN if another process holds the lock.
+  3. **LISTEN permission** — checks that `LISTEN tide_relay_config` succeeds;
+     reports FAIL if denied.
+
+### Testing
+
+- **SQL → relay → file-sink E2E test** (`sql_to_sink_e2e.rs`) — a new
+  end-to-end integration test spins up a real PostgreSQL 18 container, applies
+  the full migration chain, creates an outbox and pipeline, starts a live
+  Coordinator, publishes a message, and asserts delivery to a file sink.
+
+### CI
+
+- **`no-stale-env-vars` CI job** — fails the build if any documentation file
+  in `docs/` or `README.md` references the deprecated `PGTRICKLE_` env-var
+  prefix.
+- **SQL → relay → sink E2E job** — the new `sql_to_sink_e2e` test runs as a
+  dedicated CI job (`test-e2e`) in addition to being part of the core
+  integration test group.
+
+### Documentation
+
+- All occurrences of `PGTRICKLE_RELAY_*` in docs renamed to `PG_TIDE_*` to
+  match the current binary env-var prefix.
+- `examples/cnpg/cluster.yaml` updated: image tag bumped to `0.17.0` and
+  `PG_TIDE_RELAY_POSTGRES_URL` renamed to `PG_TIDE_POSTGRES_URL`.
 
 ---
 

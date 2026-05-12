@@ -20,13 +20,13 @@ use pgrx::prelude::*;
 // ── Internal helpers ──────────────────────────────────────────────────────
 
 /// Check if an outbox with the given name exists in tide_outbox_config.
-pub fn outbox_exists(outbox_name: &str) -> bool {
+pub fn outbox_exists(outbox_name: &str) -> Result<bool, PgTideError> {
     Spi::get_one_with_args::<bool>(
         "SELECT EXISTS(SELECT 1 FROM tide.tide_outbox_config WHERE outbox_name = $1)",
         &[outbox_name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(false)
+    .map(|r| r.unwrap_or(false))
+    .map_err(|e| PgTideError::SpiError(format!("outbox_exists SPI error: {e}")))
 }
 
 /// Get the retention_hours for a named outbox (returns None if not found).
@@ -61,7 +61,7 @@ fn outbox_create_impl(
     inline_threshold: i32,
 ) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(name)?;
-    if outbox_exists(name) {
+    if outbox_exists(name)? {
         return Err(PgTideError::OutboxAlreadyExists(name.to_string()));
     }
 
@@ -100,7 +100,7 @@ fn outbox_create_if_not_exists_impl(
     inline_threshold: i32,
 ) -> Result<bool, PgTideError> {
     crate::validation::validate_identifier(name)?;
-    if outbox_exists(name) {
+    if outbox_exists(name)? {
         return Ok(false);
     }
 
@@ -224,7 +224,7 @@ pub fn outbox_drop(p_name: &str, p_if_exists: default!(bool, false)) {
 }
 
 fn outbox_drop_impl(name: &str, if_exists: bool) -> Result<(), PgTideError> {
-    if !outbox_exists(name) {
+    if !outbox_exists(name)? {
         if if_exists {
             return Ok(());
         }
@@ -268,7 +268,7 @@ pub fn outbox_status(p_name: &str) -> pgrx::JsonB {
 }
 
 fn outbox_status_impl(name: &str) -> Result<pgrx::JsonB, PgTideError> {
-    if !outbox_exists(name) {
+    if !outbox_exists(name)? {
         return Err(PgTideError::OutboxNotFound(name.to_string()));
     }
 
@@ -414,7 +414,7 @@ fn create_consumer_group_impl(
     auto_offset_reset: &str,
     if_not_exists: bool,
 ) -> Result<(), PgTideError> {
-    if !outbox_exists(outbox) {
+    if !outbox_exists(outbox)? {
         return Err(PgTideError::OutboxNotFound(outbox.to_string()));
     }
 
@@ -518,7 +518,7 @@ pub fn outbox_grant_publish(p_outbox: &str, p_role: &str) {
 
 fn outbox_grant_publish_impl(outbox: &str, role: &str) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(outbox)?;
-    if !outbox_exists(outbox) {
+    if !outbox_exists(outbox)? {
         return Err(PgTideError::OutboxNotFound(outbox.to_string()));
     }
     Spi::run_with_args(
@@ -583,7 +583,7 @@ mod tests {
     #[pg_test]
     fn test_outbox_create_and_exists() {
         crate::outbox::outbox_create("smoke-create", 24, 10_000);
-        assert!(crate::outbox::outbox_exists("smoke-create"));
+        assert!(crate::outbox::outbox_exists("smoke-create").unwrap());
     }
 
     #[pg_test]
@@ -640,9 +640,9 @@ mod tests {
     #[pg_test]
     fn test_outbox_drop_removes_config() {
         crate::outbox::outbox_create("drop-me", 24, 10_000);
-        assert!(crate::outbox::outbox_exists("drop-me"));
+        assert!(crate::outbox::outbox_exists("drop-me").unwrap());
         crate::outbox::outbox_drop("drop-me", false);
-        assert!(!crate::outbox::outbox_exists("drop-me"));
+        assert!(!crate::outbox::outbox_exists("drop-me").unwrap());
     }
 
     #[pg_test]
