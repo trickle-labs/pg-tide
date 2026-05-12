@@ -218,6 +218,18 @@ pub async fn start_metrics_server(
         health: Arc::clone(&health),
     };
 
+    async fn health_handler(State(s): State<AppState>) -> (StatusCode, String) {
+        let h = s.health.read().await;
+        if h.is_healthy() {
+            (StatusCode::OK, "healthy".to_string())
+        } else {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("unhealthy: {:?}", h.unhealthy_pipelines),
+            )
+        }
+    }
+
     let app = Router::new()
         .route(
             "/metrics",
@@ -228,20 +240,10 @@ pub async fn start_metrics_server(
                 }
             }),
         )
-        .route(
-            "/health",
-            get(|State(s): State<AppState>| async move {
-                let h = s.health.read().await;
-                if h.is_healthy() {
-                    (StatusCode::OK, "healthy".to_string())
-                } else {
-                    (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        format!("unhealthy: {:?}", h.unhealthy_pipelines),
-                    )
-                }
-            }),
-        )
+        // v0.19.0: /healthz is the Kubernetes-standard liveness/readiness path;
+        // /health is kept for backwards compatibility.
+        .route("/health", get(health_handler))
+        .route("/healthz", get(health_handler))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr)

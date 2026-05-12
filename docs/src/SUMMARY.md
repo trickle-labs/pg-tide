@@ -41,6 +41,7 @@
 # Relay Guide
 
 - [Configuration](relay-guide/configuration.md)
+- [Catalog vs. TOML](relay-guide/catalog-vs-toml.md)
 - [CLI Reference](relay-guide/cli-reference.md)
 - [Backends](relay-guide/backends.md)
 - [Error Handling](relay-guide/error-handling-guide.md)
@@ -148,6 +149,13 @@
 - [Monitoring Cookbook](operations/monitoring-cookbook.md)
 - [Troubleshooting](operations/troubleshooting.md)
 - [Troubleshooting Guide](operations/troubleshooting-guide.md)
+
+## Runbooks
+
+- [Crash Recovery](operations/runbook-crash-recovery.md)
+- [DLQ Replay](operations/runbook-dlq-replay.md)
+- [Schema Migration](operations/runbook-schema-migration.md)
+- [Relay Upgrade](operations/runbook-relay-upgrade.md)
 
 ---
 

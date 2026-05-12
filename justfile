@@ -75,3 +75,20 @@ bench:
 
 # Default: fmt + lint + test-unit
 all: fmt lint test-unit
+
+# Bump version atomically across Cargo.toml, pg_tide.control, and Helm chart.
+# Usage: just bump-version 0.19.0
+bump-version VERSION:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OLD=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+    echo "Bumping ${OLD} → {{VERSION}}"
+    # Cargo workspace version
+    sed -i.bak "s/^version = \"${OLD}\"/version = \"{{VERSION}}\"/" Cargo.toml && rm Cargo.toml.bak
+    # pg_tide.control default_version (root and extension copy)
+    sed -i.bak "s/default_version = '${OLD}'/default_version = '{{VERSION}}'/" pg_tide.control && rm pg_tide.control.bak
+    sed -i.bak "s/default_version = '${OLD}'/default_version = '{{VERSION}}'/" pg-tide-ext/pg_tide.control && rm pg-tide-ext/pg_tide.control.bak
+    # Helm chart version and appVersion
+    sed -i.bak "s/^version: ${OLD}/version: {{VERSION}}/" helm/pg-tide/Chart.yaml && rm helm/pg-tide/Chart.yaml.bak
+    sed -i.bak "s/^appVersion: \"${OLD}\"/appVersion: \"{{VERSION}}\"/" helm/pg-tide/Chart.yaml && rm helm/pg-tide/Chart.yaml.bak
+    echo "Done. Don't forget to create sql/pg_tide--${OLD}--{{VERSION}}.sql and update CHANGELOG.md"

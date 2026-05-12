@@ -1,0 +1,77 @@
+# pg-tide relay — example configuration file
+# Copy this file to /etc/pg-tide/pg-tide.toml (or pass --config /path/to/pg-tide.toml)
+# and customise the values below.
+#
+# The catalog (SQL functions in the `tide` schema) is the single source of
+# truth for pipeline configuration.  This file controls only the relay
+# process itself — credentials, resource limits, and logging.
+#
+# See https://github.com/trickle-labs/pg-tide/blob/main/docs/src/relay-guide/configuration.md
+# for the complete reference.
+
+# ── PostgreSQL connection ─────────────────────────────────────────────────
+#
+# The relay connects here to read pipeline configs and poll the outbox.
+# Prefer the env var PG_TIDE_POSTGRES_URL or --postgres-url-file to avoid
+# credentials appearing in /proc/<pid>/cmdline.
+postgres_url = "postgresql://postgres:password@localhost:5432/mydb?sslmode=require"
+
+# ── Relay identity ────────────────────────────────────────────────────────
+#
+# Logical group name used for advisory lock namespacing.  All relay instances
+# in the same group share ownership of pipelines via PostgreSQL advisory locks.
+relay_group_id = "default"
+
+# ── Concurrency limits ────────────────────────────────────────────────────
+#
+# Maximum number of pipeline workers this instance will own simultaneously.
+# Each owned pipeline holds one PostgreSQL connection from the pool.
+max_owned_pipelines = 50
+
+# Maximum total PostgreSQL connections in the connection pool.
+max_connections = 100
+
+# ── Polling ───────────────────────────────────────────────────────────────
+#
+# How often the coordinator polls the catalog for new/changed pipelines
+# (in addition to instant hot-reload via LISTEN/NOTIFY).
+discovery_interval_secs = 30
+
+# Default message batch size fetched per poll cycle.
+default_batch_size = 100
+
+# ── Observability ─────────────────────────────────────────────────────────
+#
+# Address for the Prometheus /metrics, /health, and /healthz endpoints.
+metrics_addr = "0.0.0.0:9090"
+
+# Logging level: "trace", "debug", "info" (default), "warn", "error"
+log_level = "info"
+
+# Log output format: "text" (human-readable) or "json" (structured, for log
+# aggregators such as Datadog, Loki, or CloudWatch).
+log_format = "text"
+
+# ── Graceful shutdown ─────────────────────────────────────────────────────
+#
+# How long (seconds) to wait for in-flight batches to finish before forcing
+# a hard stop on SIGTERM / Ctrl-C.
+drain_timeout_secs = 30
+
+# ── Example: forward pipeline (outbox → NATS JetStream) ──────────────────
+#
+# Pipeline configuration lives in the database, not here.  Use the SQL API:
+#
+#   SELECT tide.relay_set_outbox_v2('{
+#     "name":      "orders-to-nats",
+#     "outbox":    "orders",
+#     "sink_type": "nats",
+#     "config": {
+#       "url":     "nats://nats.default.svc.cluster.local:4222",
+#       "subject": "orders.{event_type}"
+#     },
+#     "batch_size": 50,
+#     "enabled":    true
+#   }'::jsonb);
+#
+# See docs/src/relay-guide/configuration.md for all supported sink types.

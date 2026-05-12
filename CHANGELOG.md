@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.19.0 — Supply Chain, Observability & Operational Docs](#0190--2026-05-14--supply-chain-observability--operational-docs)
 - [0.18.0 — Security Completeness, LISTEN Hot-Reload & API Polish](#0180--2026-05-13--security-completeness-listen-hot-reload--api-polish)
 - [0.17.0 — Catalog Integrity, DLQ Reliability & Contract Correctness](#0170--2026-05-12--catalog-integrity-dlq-reliability--contract-correctness)
 - [0.16.0 — Developer Experience & Observability](#0160--2026-05-11--developer-experience--observability)
@@ -26,6 +27,79 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.19.0] — 2026-05-14 — Supply Chain, Observability & Operational Docs
+
+v0.19.0 completes the supply-chain story with SBOM generation and Trivy
+vulnerability scanning, adds the `/healthz` Kubernetes-standard liveness
+endpoint, expands the Grafana dashboard with a Coordinator row, bakes a
+fully-commented example TOML into Docker images, adds four operations
+runbooks, and ships a `just bump-version` recipe that eliminates future
+version-drift risk. No breaking changes; no schema migrations required.
+
+### Supply Chain & Release Automation
+
+- **SBOM generation** — the release workflow now runs Syft and attaches a
+  CycloneDX JSON SBOM (`pg-tide-sbom.cyclonedx.json`) to every GitHub
+  release. Required for SOC 2 / FedRAMP buyers.
+- **Trivy image scan** — Trivy scans the final Docker image for `CRITICAL`
+  CVEs after the multi-arch manifest is merged. Results are uploaded to the
+  GitHub Security tab as SARIF. The release job fails if any unfixed
+  CRITICAL CVE is found.
+- **`just bump-version VERSION` recipe** — single command that updates the
+  Cargo.toml workspace version, both `pg_tide.control` files,
+  and `helm/pg-tide/Chart.yaml` `version` / `appVersion` atomically,
+  eliminating version-drift risk in future releases.
+
+### Relay — Observability
+
+- **`/healthz` HTTP endpoint** — the metrics server now serves `/healthz`
+  as a Kubernetes-standard alias for the existing `/health` endpoint.
+  Both return `200 OK` when no unhealthy pipelines are tracked, or
+  `503 Service Unavailable` otherwise. Enables native Kubernetes liveness
+  and readiness probes without external tooling.
+- **Coordinator HealthState wired** — the coordinator's `health:
+  Arc<RwLock<HealthState>>` field (previously `#[allow(dead_code)]`) is
+  now updated at the end of each reconcile cycle to reflect the set of
+  currently owned pipelines.
+
+### Observability
+
+- **Grafana dashboard — Coordinator row** — `pg-tide/dashboards/relay-health.json`
+  gains a new "Coordinator" row with three panels: `pg_tide_relay_owned_pipelines`
+  stat gauge, `pg_tide_relay_reconcile_duration_seconds` histogram (heatmap
+  view), and `pg_tide_relay_pipeline_errors_total` by `error_class` time-series.
+
+### Packaging
+
+- **Example TOML in Docker images** — `/etc/pg-tide/pg-tide.example.toml`
+  is now baked into both `:latest` and `:latest-full` images, providing a
+  fully-commented starting configuration that operators can `docker cp` without
+  consulting external docs.
+
+### Configuration Clarity
+
+- **Canonical config documentation** — new page
+  `docs/src/relay-guide/catalog-vs-toml.md` declares the catalog (SQL) as
+  the single source of truth for pipeline configuration and documents the
+  expected role of the TOML file (process config only). Startup warning
+  behaviour for TOML-only pipelines is documented.
+
+### Operations Runbooks
+
+Four new runbooks added under `docs/src/operations/`:
+
+- **Crash recovery** — explains the at-least-once guarantee, how to identify
+  and clear a stuck pipeline, and stale advisory lock resolution.
+- **DLQ replay** — step-by-step guide for draining a flooded DLQ using
+  `pg-tide replay dlq-requeue` and `tide.dlq_requeue()`, with monitoring
+  guidance.
+- **Schema migration** — how to apply `ALTER EXTENSION pg_tide UPDATE`
+  without relay downtime, including CNPG-specific notes.
+- **Relay upgrade** — rolling upgrade procedure for Kubernetes and
+  Docker/systemd deployments with multiple relay instances.
 
 ---
 

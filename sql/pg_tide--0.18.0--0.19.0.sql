@@ -1,0 +1,36 @@
+-- pg_tide 0.18.0 → 0.19.0
+--
+-- Summary of changes:
+--
+--   • /healthz HTTP endpoint added to the relay metrics server — serves the
+--     same 200 OK / 503 Service Unavailable response as /health, providing
+--     Kubernetes-standard liveness/readiness probe support.  No schema changes.
+--
+--   • Supply-chain: SBOM (CycloneDX via Syft) and Trivy vulnerability scan
+--     added to the release workflow.  No schema changes.
+--
+--   • `just bump-version VERSION` recipe added — atomically bumps
+--     Cargo.toml, pg_tide.control, and Helm Chart.yaml.  No schema changes.
+--
+--   • Grafana dashboard updated with "Coordinator" row (owned_pipelines gauge,
+--     reconcile_duration heatmap, pipeline_errors_total by error_class).
+--     No schema changes.
+--
+--   • Example TOML baked into Docker images at /etc/pg-tide/pg-tide.example.toml.
+--     No schema changes.
+--
+--   • Operations runbooks added:
+--       docs/src/operations/runbook-crash-recovery.md
+--       docs/src/operations/runbook-dlq-replay.md
+--       docs/src/operations/runbook-schema-migration.md
+--       docs/src/operations/runbook-relay-upgrade.md
+--
+--   • Canonical config documentation added at
+--       docs/src/relay-guide/catalog-vs-toml.md
+--
+-- No database schema changes are required for this release.
+-- The upgrade script is intentionally a no-op.
+
+-- Record the upgrade in the comment of the extension (optional, informational):
+COMMENT ON EXTENSION pg_tide IS
+  'Transactional outbox, idempotent inbox, and relay catalog for PostgreSQL — v0.19.0';
