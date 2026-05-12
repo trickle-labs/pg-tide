@@ -37,6 +37,11 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /pg-tide /usr/local/bin/pg-tide
 
+# v0.19.0: Bake example TOML into the image so operators can
+# `docker cp` a working starting config without consulting external docs.
+RUN mkdir -p /etc/pg-tide
+COPY pg-tide.example.toml /etc/pg-tide/pg-tide.example.toml
+
 # Metrics + health endpoint.
 EXPOSE 9090
 

@@ -29,7 +29,7 @@ pub struct Coordinator {
     pool: deadpool_postgres::Pool,
     relay_group_id: String,
     metrics: Arc<RelayMetrics>,
-    #[allow(dead_code)]
+    /// v0.19.0: Shared health state updated on pipeline start/stop.
     health: Arc<RwLock<HealthState>>,
     /// Pipeline ID → (cancellation sender, join handle).
     /// v0.15.0: JoinHandle stored for panic detection.
@@ -367,6 +367,14 @@ impl Coordinator {
             .reconcile_duration_seconds
             .with_label_values(&[&group_label])
             .observe(reconcile_start.elapsed().as_secs_f64());
+
+        // v0.19.0: Update shared HealthState so /healthz reflects live pipeline state.
+        let mut h = self.health.write().await;
+        h.healthy_pipelines = self.owned.keys().cloned().collect();
+        // Pipelines are unhealthy once their metric is 0 — for coordinator
+        // purposes we only track ownership; worker errors are reflected by the
+        // pipeline_healthy gauge and visible via the metrics endpoint.
+        h.unhealthy_pipelines.clear();
     }
 }
 
