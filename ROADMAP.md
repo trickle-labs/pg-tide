@@ -181,11 +181,87 @@
 - **Dependency review** — evaluate `jmespath` crate alternatives; track `prometheus-client` migration path.
 - **Cosign signing** — add keyless cosign signing to Docker images and release binary artifacts in the release workflow.
 
+### Contract Integrity, Security & Operational Maturity (v0.17.x – v0.19.x)
+
+| Version | Theme | Status | Scope | Full details |
+|---------|-------|--------|-------|--------------|
+| v0.17.0 | Catalog integrity, DLQ reliability & contract correctness: fix fresh-install vs upgrade schema drift, deduplicate plpgsql/Rust function definitions, pause pipelines on DLQ write failure, land the SQL→relay→sink E2E test, fix CNPG example, rename PGTRICKLE_RELAY_* docs | 🔜 Planned | Medium | [plans/overall_assessment_3.md](plans/overall_assessment_3.md) |
+| v0.18.0 | Security completeness, LISTEN hot-reload & API polish: shared SSRF validator for HTTP sinks, identifier validation in inbox sinks, coordinator subscribes to `tide_relay_config` NOTIFY for instant hot-reload, `relay_set_outbox_v2()`, extended `pg-tide doctor` checks, DLQ fault-injection tests, property tests for JMESPath/routing, jitter fix, code structure cleanup | 🔜 Planned | Medium | [plans/overall_assessment_3.md](plans/overall_assessment_3.md) |
+| v0.19.0 | Supply chain, observability completeness & operational docs: SBOM + Trivy scan, automated `just bump-version` recipe, canonical config documentation (catalog over TOML), bake example TOML into Docker images, operations runbooks (crash recovery, DLQ replay, schema migration, relay upgrade), expand Grafana dashboard with coordinator metrics panel | 🔜 Planned | Small | [plans/overall_assessment_3.md](plans/overall_assessment_3.md) |
+
+#### v0.17.0 — Catalog Integrity, DLQ Reliability & Contract Correctness (detail)
+
+**Extension catalog integrity**
+- **Fix `extension_sql_file!()` chain** — replace the two-file `pg_tide--0.1.0.sql` + `pg_tide--0.13.0--0.14.0.sql` pgrx include with an ordered chain covering every `sql/pg_tide--*.sql` migration, so that a fresh `CREATE EXTENSION pg_tide` and an `ALTER EXTENSION … UPDATE` chain produce identical catalog schemas. Add a CI test that diffs `pg_dump --schema-only` of both paths.
+- **Deduplicate plpgsql vs Rust function definitions** — `outbox_truncate_delivered`, `outbox_create_if_not_exists`, and `relay_set_inbox_v2` currently exist both as `#[pg_extern]` in Rust and as `CREATE OR REPLACE FUNCTION` in migration scripts, with divergent signatures. Remove the plpgsql duplicates from the migration scripts and declare Rust as the single source of truth. Add a unit test that asserts each function name resolves to exactly one signature.
+- **Harden base SQL `SECURITY DEFINER` functions** — the `grant_publish()` / `revoke_publish()` in `pg_tide--0.1.0.sql` are missing `SET search_path = tide, pg_catalog`. Fix in the base file so fresh installs get the hardened definitions, not just upgrade paths.
+- **Convert `outbox_exists()` / `inbox_exists()` / `relay_exists()` to `Result<bool, PgTideError>`** — replace the silent `unwrap_or(None).unwrap_or(false)` chains with proper SPI error propagation.
+
+**DLQ reliability**
+- **Pause pipelines on DLQ write failure** — a failed `dlq::insert_batch()` currently logs at WARN and continues, causing a tight loop on poisoned batches. Classify DLQ write errors via `RelayError::is_transient()` and pause the worker on permanent failures. Add `pg_tide_relay_dlq_write_errors_total` counter labelled by `pipeline`.
+- **Extend `pg-tide doctor`** — validate: (a) `tide.relay_dlq` INSERT privilege; (b) advisory-lock acquisition under the configured `relay_group_id`; (c) LISTEN permission for `tide_relay_config`.
+
+**Test coverage**
+- **SQL → relay → sink end-to-end test** — `tests/sql_to_sink_e2e.rs`: spawn coordinator task → `tide.relay_set_outbox(…, 'stdout', …)` via SQL → `tide.outbox_publish(…)` → assert message captured by the stdout sink. This test permanently locks in the v0.12.0 SQL/relay contract.
+- **Schema diff CI check** — assert fresh-install and upgrade-chain `pg_dump` outputs are identical.
+
+**Documentation & examples**
+- **Rename `PGTRICKLE_RELAY_*` → `PG_TIDE_*`** across all docs (~20 references in `docs/src/getting-started/first-pipeline.md`, `operations/troubleshooting.md`, `operations/deployment-guide.md`, `relay-guide/configuration.md`). Add a CI assertion that blocks any future reintroduction of the old prefix.
+- **Fix `examples/cnpg/cluster.yaml`** — bump image tag from `0.1.0` to current release; rename env var from `PG_TIDE_RELAY_POSTGRES_URL` to `PG_TIDE_POSTGRES_URL`.
+
+#### v0.18.0 — Security Completeness, LISTEN Hot-Reload & API Polish (detail)
+
+**Security**
+- **Shared SSRF validator for HTTP sinks** — extract `webhook::validate_ssrf()` into a shared `relay::http::validate_url()` helper and apply it to ClickHouse (`sink/clickhouse.rs`), Apache Arrow Flight (`sink/arrow_flight.rs`), and Elasticsearch (`sink/elasticsearch.rs`) sinks. Add `ssrf_protection: bool` (default `true`) to each. Mitigates SSRF via compromised catalog entries.
+- **Identifier validation in inbox sinks** — call `validate_relay_identifier()` at construction time in `InboxSink` (`sink/inbox.rs`) and `PgInboxSink` (`sink/pg_outbox.rs`) to close the defence-in-depth gap identified in overall_assessment_3 §2.2.
+- **`--postgres-url-file` CLI flag** — add alongside `--postgres-url` and document `PG_TIDE_POSTGRES_URL` as the preferred form to avoid credential exposure in `/proc/<pid>/cmdline`.
+
+**Coordinator hot-reload**
+- **Subscribe to `tide_relay_config` LISTEN channel** — the PostgreSQL trigger `relay_config_notify()` has been emitting `pg_notify('tide_relay_config', name)` since v0.1.0; the coordinator has never listened. Wire an async LISTEN loop that triggers an immediate reconcile on receipt, reducing config-change propagation from up to 30 s to sub-second. Keep the existing 30 s poll timer as a safety net.
+
+**SQL API**
+- **`tide.relay_set_outbox_v2(config JSONB)`** — single-JSONB-parameter counterpart to `relay_set_inbox_v2()` for symmetric API ergonomics. Accepts keys: `name`, `outbox`, `sink_type`, `config`, `batch_size`, `enabled`, `wire_format`. Mark the 6-positional-parameter `relay_set_outbox()` as deprecated in the SQL comment and changelog.
+- **`relay_enable()` / `relay_disable()` — return affected row count** — change from silent no-op to returning `BOOLEAN` (`TRUE` if a row was modified, `FALSE` if the pipeline didn't exist), matching the `outbox_create_if_not_exists()` pattern.
+
+**Code quality**
+- **Replace pseudo-random jitter** — substitute the LCG-based `consecutive_failures * 6_364_136_223_846_793_005_u64` jitter calculation in `coordinator.rs` with `rand::thread_rng().gen_range(…)` so that concurrent pipelines failing at the same instant do not choose identical backoff offsets.
+- **Extract `worker_inner()` helpers** — split the ~507-line function into `process_batch()`, `publish_with_circuit_breaker()`, and `route_to_dlq()`, each independently unit-testable.
+- **Split `main.rs` into `cmd/` modules** — move each subcommand implementation (`run_doctor`, `run_validate_config`, `run_sweep`, `run_status`, `run_replay_*`, `run_asyncapi_export`) into `cmd/doctor.rs`, `cmd/status.rs`, etc.; keep `main.rs` under 150 lines.
+
+**Test coverage**
+- **DLQ fault-injection test** — revoke INSERT on `tide.relay_dlq`; assert the worker pauses (permanent error path) rather than looping at WARN.
+- **Property tests for JMESPath, identifier validation, and routing** — extend `proptest` to cover `JmespathTransform::evaluate`, `validate_relay_identifier`, and `routing::apply_routing` with randomised inputs.
+
+#### v0.19.0 — Supply Chain, Observability & Operational Docs (detail)
+
+**Supply chain & release automation**
+- **SBOM generation** — add a Syft step to the release workflow to produce a CycloneDX or SPDX SBOM and attach it to GitHub releases. Required for SOC 2 / FedRAMP buyers.
+- **Trivy image scan** — add Trivy vulnerability scanning to the release workflow; fail on `CRITICAL` CVEs in the final Docker images.
+- **`just bump-version VERSION` recipe** — single command that updates `Cargo.toml` workspace version, `pg_tide.control` `default_version`, and `helm/pg-tide/Chart.yaml` `version` / `appVersion` atomically, eliminating future version-drift risk.
+
+**Configuration clarity**
+- **Canonical config documentation** — add a page to `docs/src/relay-guide/` declaring the catalog (SQL) as the single source of truth for pipeline configuration. When a TOML file configures pipelines that are not present in the catalog, emit a startup warning and document the expected resolution workflow.
+- **`/healthz` HTTP endpoint** — wire the existing `health: Arc<RwLock<HealthState>>` field (currently `#[allow(dead_code)]`) to a minimal Axum route that returns `200 OK` / `503 Service Unavailable` based on coordinator state, enabling Kubernetes liveness probes without external tooling.
+
+**Observability**
+- **Grafana dashboard coordinator panel** — add a "Coordinator" row to `pg-tide/dashboards/relay-health.json` with three panels: `pg_tide_relay_owned_pipelines` gauge, `pg_tide_relay_reconcile_duration_seconds` heatmap, and `pg_tide_relay_pipeline_errors_total` by `error_class`. Regenerate via the existing Rust-constant-backed codegen CI check.
+
+**Packaging**
+- **Bake example TOML into Docker images** — add `/etc/pg-tide/pg-tide.example.toml` (fully commented) to both `:latest` and `:latest-full` images so operators can `docker cp` a working starting config without consulting external docs.
+
+**Operations runbooks**
+- **Crash recovery** — document what happens when the relay crashes mid-batch (at-least-once guarantee; no action needed beyond restart), including how to identify and clear a stuck pipeline.
+- **DLQ replay** — step-by-step guide for using `pg-tide replay dlq-requeue` and `tide.dlq_requeue()` to drain a flooded DLQ, including how to monitor progress with `pg_tide_relay_dlq_entries_written_total`.
+- **Schema migration** — guide for applying `ALTER EXTENSION pg_tide UPDATE` without relay downtime.
+- **Relay upgrade** — rolling upgrade procedure for HA deployments with multiple relay instances.
+
+---
+
 ### Production GA & Extended Ecosystems (v1.0+)
 
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
-| v1.0.0 | Production GA: encryption envelope with KMS integration, pipeline template library, delivery receipt log, outbox table partitioning by time | 🔜 Planned | Medium | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) · [plans/overall_assessment_2.md](plans/overall_assessment_2.md) |
-| v1.1.0 | Scale & exactly-once: connection pooling graduation, Kafka exactly-once via transactions, multi-outbox fan-in pipelines, extended connector ecosystems (dlt, Redpanda Connect / Benthos, AMQP 1.0, webhook flavors) | 🔜 Future | Large | [plans/overall_assessment_2.md](plans/overall_assessment_2.md) |
-| v1.2.0 | Plugin extensibility & CDC sources: WASM transform plugin system with deterministic resource limits and stable `RelayMessage` ABI; logical-replication source (CDC without polling via `pgoutput`); pipeline dependency DAG | 🔜 Future | Large | [plans/overall_assessment_2.md](plans/overall_assessment_2.md) |
+| v1.0.0 | Production GA: encryption envelope with KMS integration, pipeline template library, delivery receipt log, outbox table partitioning by time, claim-check native pathway (or explicit pg_trickle-only scope), canonical config path enforcement | 🔜 Planned | Medium | [plans/relay-cli-phase3.md](plans/relay-cli-phase3.md) · [plans/overall_assessment_3.md](plans/overall_assessment_3.md) |
+| v1.1.0 | Scale & exactly-once: logical-replication source (CDC without polling via `pgoutput`, accelerated from v1.2), Kafka exactly-once via transactions, multi-outbox fan-in pipelines, per-tenant relay groups with per-tenant DB roles, extended connector ecosystems (dlt, Redpanda Connect / Benthos, AMQP 1.0, webhook flavors) | 🔜 Future | Large | [plans/overall_assessment_3.md](plans/overall_assessment_3.md) |
+| v1.2.0 | Plugin extensibility & advanced CDC: WASM transform plugin system with deterministic resource limits and stable `RelayMessage` ABI; pipeline dependency DAG; outbox table range-partitioning switchover tooling | 🔜 Future | Large | [plans/overall_assessment_2.md](plans/overall_assessment_2.md) |
 | v1.3.0 | Web UI control plane: embedded Axum-served SPA (HTMX) for pipeline management, DLQ resolution, consumer lag monitoring, and replay — authenticated via PostgreSQL roles | 🔜 Future | XL | [plans/overall_assessment_2.md](plans/overall_assessment_2.md) |
