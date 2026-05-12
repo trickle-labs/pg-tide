@@ -126,9 +126,9 @@ The official Docker image is lightweight (~20 MB, Alpine-based) and runs as a no
 ```bash
 docker run -d \
   --name pg-tide-relay \
-  -e PGTRICKLE_RELAY_POSTGRES_URL="postgres://user:pass@host.docker.internal:5432/mydb" \
-  -e PGTRICKLE_RELAY_LOG_FORMAT="json" \
-  -e PGTRICKLE_RELAY_GROUP_ID="production" \
+  -e PG_TIDE_POSTGRES_URL="postgres://user:pass@host.docker.internal:5432/mydb" \
+  -e PG_TIDE_LOG_FORMAT="json" \
+  -e PG_TIDE_GROUP_ID="production" \
   -p 9090:9090 \
   ghcr.io/trickle-labs/pg-tide:latest
 ```
@@ -149,11 +149,11 @@ All relay configuration can be passed via environment variables:
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `PGTRICKLE_RELAY_POSTGRES_URL` | PostgreSQL connection string | Yes |
-| `PGTRICKLE_RELAY_METRICS_ADDR` | Metrics endpoint (default: `0.0.0.0:9090`) | No |
-| `PGTRICKLE_RELAY_LOG_FORMAT` | `text` or `json` | No |
-| `PGTRICKLE_RELAY_LOG_LEVEL` | `error`, `warn`, `info`, `debug`, `trace` | No |
-| `PGTRICKLE_RELAY_GROUP_ID` | Relay group ID for HA coordination | No |
+| `PG_TIDE_POSTGRES_URL` | PostgreSQL connection string | Yes |
+| `PG_TIDE_METRICS_ADDR` | Metrics endpoint (default: `0.0.0.0:9090`) | No |
+| `PG_TIDE_LOG_FORMAT` | `text` or `json` | No |
+| `PG_TIDE_LOG_LEVEL` | `error`, `warn`, `info`, `debug`, `trace` | No |
+| `PG_TIDE_GROUP_ID` | Relay group ID for HA coordination | No |
 
 ### Docker Compose (complete development environment)
 
@@ -189,9 +189,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      PGTRICKLE_RELAY_POSTGRES_URL: "postgres://postgres:postgres@postgres:5432/app"
-      PGTRICKLE_RELAY_LOG_FORMAT: "json"
-      PGTRICKLE_RELAY_LOG_LEVEL: "info"
+      PG_TIDE_POSTGRES_URL: "postgres://postgres:postgres@postgres:5432/app"
+      PG_TIDE_LOG_FORMAT: "json"
+      PG_TIDE_LOG_LEVEL: "info"
     ports:
       - "9090:9090"
     healthcheck:
@@ -250,14 +250,14 @@ spec:
         - name: relay
           image: ghcr.io/trickle-labs/pg-tide:0.1.0
           env:
-            - name: PGTRICKLE_RELAY_POSTGRES_URL
+            - name: PG_TIDE_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
                   name: pg-tide-secrets
                   key: postgres-url
-            - name: PGTRICKLE_RELAY_LOG_FORMAT
+            - name: PG_TIDE_LOG_FORMAT
               value: "json"
-            - name: PGTRICKLE_RELAY_GROUP_ID
+            - name: PG_TIDE_GROUP_ID
               value: "production"
           ports:
             - containerPort: 9090
@@ -328,7 +328,7 @@ spec:
     - name: pg-tide-relay
       image: ghcr.io/trickle-labs/pg-tide:0.1.0
       env:
-        - name: PGTRICKLE_RELAY_POSTGRES_URL
+        - name: PG_TIDE_POSTGRES_URL
           valueFrom:
             secretKeyRef:
               name: my-cluster-app

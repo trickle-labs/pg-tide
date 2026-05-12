@@ -10,20 +10,20 @@
 use crate::error::PgTideError;
 use pgrx::prelude::*;
 
-fn relay_exists(name: &str) -> bool {
+fn relay_exists(name: &str) -> Result<bool, PgTideError> {
     let in_outbox = Spi::get_one_with_args::<bool>(
         "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = $1)",
         &[name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(false);
+    .map(|r| r.unwrap_or(false))
+    .map_err(|e| PgTideError::SpiError(format!("relay_exists SPI error: {e}")))?;
     let in_inbox = Spi::get_one_with_args::<bool>(
         "SELECT EXISTS(SELECT 1 FROM tide.relay_inbox_config WHERE name = $1)",
         &[name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(false);
-    in_outbox || in_inbox
+    .map(|r| r.unwrap_or(false))
+    .map_err(|e| PgTideError::SpiError(format!("relay_exists SPI error: {e}")))?;
+    Ok(in_outbox || in_inbox)
 }
 
 // ── TIDE-API: relay_set_outbox ────────────────────────────────────────────
@@ -244,7 +244,7 @@ pub fn relay_enable(p_name: &str) {
 }
 
 fn relay_enable_impl(name: &str) -> Result<(), PgTideError> {
-    if !relay_exists(name) {
+    if !relay_exists(name)? {
         return Ok(()); // no-op — pipeline may have been deleted concurrently
     }
     let _ = Spi::run_with_args(
@@ -270,7 +270,7 @@ pub fn relay_disable(p_name: &str) {
 }
 
 fn relay_disable_impl(name: &str) -> Result<(), PgTideError> {
-    if !relay_exists(name) {
+    if !relay_exists(name)? {
         return Ok(()); // no-op — pipeline may have been deleted concurrently
     }
     let _ = Spi::run_with_args(
@@ -292,7 +292,7 @@ pub fn relay_delete(p_name: &str) {
 }
 
 fn relay_delete_impl(name: &str) -> Result<(), PgTideError> {
-    if !relay_exists(name) {
+    if !relay_exists(name)? {
         return Err(PgTideError::RelayNotFound(name.to_string()));
     }
     let _ = Spi::run_with_args(
@@ -406,7 +406,7 @@ pub fn relay_set_tenant(p_name: &str, p_tenant: &str) {
 
 fn relay_set_tenant_impl(name: &str, tenant: &str) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(name)?;
-    if !relay_exists(name) {
+    if !relay_exists(name)? {
         return Err(PgTideError::RelayNotFound(name.to_string()));
     }
     let _ = Spi::run_with_args(

@@ -8,13 +8,13 @@ use pgrx::prelude::*;
 
 // ── Internal helpers ──────────────────────────────────────────────────────
 
-fn inbox_exists(name: &str) -> bool {
+fn inbox_exists(name: &str) -> Result<bool, PgTideError> {
     Spi::get_one_with_args::<bool>(
         "SELECT EXISTS(SELECT 1 FROM tide.tide_inbox_config WHERE inbox_name = $1)",
         &[name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(false)
+    .map(|r| r.unwrap_or(false))
+    .map_err(|e| PgTideError::SpiError(format!("inbox_exists SPI error: {e}")))
 }
 
 // ── TIDE-API: inbox_create ────────────────────────────────────────────────
@@ -50,7 +50,7 @@ fn inbox_create_impl(
 ) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(name)?;
     crate::validation::validate_identifier(schema)?;
-    if inbox_exists(name) {
+    if inbox_exists(name)? {
         return Err(PgTideError::InboxAlreadyExists(name.to_string()));
     }
 
@@ -100,7 +100,7 @@ pub fn inbox_drop(p_name: &str, p_if_exists: default!(bool, false)) {
 }
 
 fn inbox_drop_impl(name: &str, if_exists: bool) -> Result<(), PgTideError> {
-    if !inbox_exists(name) {
+    if !inbox_exists(name)? {
         if if_exists {
             return Ok(());
         }
@@ -137,7 +137,7 @@ pub fn inbox_mark_processed(p_name: &str, p_event_id: &str) {
 }
 
 fn inbox_mark_processed_impl(name: &str, event_id: &str) -> Result<(), PgTideError> {
-    if !inbox_exists(name) {
+    if !inbox_exists(name)? {
         return Err(PgTideError::InboxNotFound(name.to_string()));
     }
 
@@ -168,7 +168,7 @@ pub fn inbox_mark_failed(p_name: &str, p_event_id: &str, p_error: &str) {
 }
 
 fn inbox_mark_failed_impl(name: &str, event_id: &str, error: &str) -> Result<(), PgTideError> {
-    if !inbox_exists(name) {
+    if !inbox_exists(name)? {
         return Err(PgTideError::InboxNotFound(name.to_string()));
     }
 
@@ -203,7 +203,7 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
     // If a specific name is given, return status for that inbox.
     // Otherwise return a summary of all inboxes.
     if let Some(n) = name {
-        if !inbox_exists(n) {
+        if !inbox_exists(n)? {
             return Err(PgTideError::InboxNotFound(n.to_string()));
         }
         let schema: String = Spi::get_one_with_args::<String>(
@@ -281,7 +281,7 @@ pub fn replay_inbox_messages(p_name: &str, p_event_ids: Vec<String>) -> i64 {
 }
 
 fn replay_inbox_messages_impl(name: &str, event_ids: Vec<String>) -> Result<i64, PgTideError> {
-    if !inbox_exists(name) {
+    if !inbox_exists(name)? {
         return Err(PgTideError::InboxNotFound(name.to_string()));
     }
 

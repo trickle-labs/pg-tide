@@ -3,7 +3,7 @@
 The `pg-tide` relay binary is configured through three layers, applied in order of increasing priority:
 
 1. **Default values** — sensible defaults built into the binary
-2. **TOML config file** — specified via `--config` or `PGTRICKLE_RELAY_CONFIG`
+2. **TOML config file** — specified via `--config` or `PG_TIDE_CONFIG`
 3. **CLI flags / environment variables** — highest precedence
 
 Pipeline configuration (outbox sources, sink destinations, batch sizes) lives **in PostgreSQL** — not in the TOML file. The relay loads pipeline config from the `tide.relay_outbox_config` and `tide.relay_inbox_config` catalog tables at startup and reloads dynamically via `LISTEN/NOTIFY`.
@@ -21,10 +21,10 @@ pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
 For production, use environment variables:
 
 ```bash
-export PGTRICKLE_RELAY_POSTGRES_URL="postgres://relay:${DB_PASSWORD}@pghost:5432/app"
-export PGTRICKLE_RELAY_METRICS_ADDR="0.0.0.0:9090"
-export PGTRICKLE_RELAY_LOG_FORMAT="json"
-export PGTRICKLE_RELAY_GROUP_ID="prod-relay"
+export PG_TIDE_POSTGRES_URL="postgres://relay:${DB_PASSWORD}@pghost:5432/app"
+export PG_TIDE_METRICS_ADDR="0.0.0.0:9090"
+export PG_TIDE_LOG_FORMAT="json"
+export PG_TIDE_GROUP_ID="prod-relay"
 
 pg-tide
 ```
@@ -57,16 +57,16 @@ pg-tide --config relay.toml
 
 | Parameter | CLI Flag | Environment Variable | Default | Description |
 |-----------|----------|---------------------|---------|-------------|
-| `postgres_url` | `--postgres-url` | `PGTRICKLE_RELAY_POSTGRES_URL` | *(required)* | PostgreSQL connection URL |
-| `metrics_addr` | `--metrics-addr` | `PGTRICKLE_RELAY_METRICS_ADDR` | `0.0.0.0:9090` | Prometheus metrics + health endpoint bind address |
-| `log_format` | `--log-format` | `PGTRICKLE_RELAY_LOG_FORMAT` | `text` | Log output format: `text` or `json` |
-| `log_level` | `--log-level` | `PGTRICKLE_RELAY_LOG_LEVEL` | `info` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace` |
-| `relay_group_id` | `--relay-group-id` | `PGTRICKLE_RELAY_GROUP_ID` | `default` | Relay group identifier for advisory lock namespacing |
+| `postgres_url` | `--postgres-url` | `PG_TIDE_POSTGRES_URL` | *(required)* | PostgreSQL connection URL |
+| `metrics_addr` | `--metrics-addr` | `PG_TIDE_METRICS_ADDR` | `0.0.0.0:9090` | Prometheus metrics + health endpoint bind address |
+| `log_format` | `--log-format` | `PG_TIDE_LOG_FORMAT` | `text` | Log output format: `text` or `json` |
+| `log_level` | `--log-level` | `PG_TIDE_LOG_LEVEL` | `info` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace` |
+| `relay_group_id` | `--relay-group-id` | `PG_TIDE_GROUP_ID` | `default` | Relay group identifier for advisory lock namespacing |
 | `discovery_interval_secs` | — | — | `30` | Seconds between pipeline discovery polls |
 | `default_batch_size` | — | — | `100` | Default messages per batch when not specified per-pipeline |
 | `sink_max_inflight` | — | — | `1000` | Maximum in-flight messages before upstream polling pauses. `0` = unlimited |
 | — | `--drain-timeout` | `PG_TIDE_DRAIN_TIMEOUT` | `30` | Seconds to wait for in-flight messages to drain on SIGTERM |
-| — | `--config` | `PGTRICKLE_RELAY_CONFIG` | — | Path to TOML config file |
+| — | `--config` | `PG_TIDE_CONFIG` | — | Path to TOML config file |
 
 ---
 
