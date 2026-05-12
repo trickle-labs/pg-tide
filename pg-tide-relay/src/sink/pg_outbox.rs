@@ -17,6 +17,9 @@ impl PgInboxSink {
         postgres_url: &str,
         inbox_table: impl Into<String>,
     ) -> Result<Self, RelayError> {
+        let table: String = inbox_table.into();
+        // v0.18.0: Defence-in-depth identifier validation (overall_assessment_3 §2.2).
+        crate::config::validate_relay_identifier(&table)?;
         // v0.15.0: Use pg_tls::connect to honour sslmode from the URL.
         let (client, conn) = crate::pg_tls::connect(postgres_url).await?;
 
@@ -28,7 +31,7 @@ impl PgInboxSink {
 
         Ok(Self {
             client,
-            inbox_table: inbox_table.into(),
+            inbox_table: table,
             dedup_count: 0,
         })
     }

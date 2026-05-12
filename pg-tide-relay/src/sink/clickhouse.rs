@@ -24,6 +24,10 @@ pub struct ClickHouseConfig {
     pub username: Option<String>,
     /// Optional password.
     pub password: Option<String>,
+    /// v0.18.0: Allow plain HTTP connections (default: false — HTTPS only).
+    pub allow_http: bool,
+    /// v0.18.0: Enable SSRF protection (default: true).
+    pub ssrf_protection: bool,
 }
 
 impl ClickHouseConfig {
@@ -50,7 +54,16 @@ pub struct ClickHouseSink {
 #[cfg(feature = "clickhouse")]
 impl ClickHouseSink {
     /// Create a new ClickHouseSink.
+    ///
+    /// v0.18.0: Applies the shared SSRF validator to the ClickHouse URL.
     pub fn new(config: ClickHouseConfig) -> Result<Self, RelayError> {
+        // v0.18.0: SSRF guard — reject link-local, loopback, private-range URLs.
+        crate::http_util::validate_url(
+            &config.url,
+            "clickhouse",
+            config.allow_http,
+            config.ssrf_protection,
+        )?;
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()

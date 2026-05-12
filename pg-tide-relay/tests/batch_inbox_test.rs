@@ -27,7 +27,7 @@ async fn make_inbox_sink(db: &PgTideTestDb, inbox_name: &str) -> InboxSink {
         let _ = conn.await;
     });
 
-    InboxSink::new(Arc::new(client), format!("{inbox_name}_inbox"))
+    InboxSink::new(Arc::new(client), format!("{inbox_name}_inbox")).expect("create InboxSink")
 }
 
 #[tokio::test]

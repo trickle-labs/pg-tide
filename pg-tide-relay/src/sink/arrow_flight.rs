@@ -46,11 +46,20 @@ pub struct ArrowFlightSink {
 
 #[cfg(feature = "arrow-flight")]
 impl ArrowFlightSink {
+    /// Create a new Arrow Flight sink.
+    ///
+    /// v0.18.0: Applies the shared SSRF validator to the gRPC endpoint URL.
+    /// Set `allow_http = true` and `ssrf_protection = false` for dev/test.
     pub fn new(
         url: impl Into<String>,
         auth_token: Option<String>,
         descriptor_path: Vec<String>,
-    ) -> Self {
+        allow_http: bool,
+        ssrf_protection: bool,
+    ) -> Result<Self, RelayError> {
+        let url_str: String = url.into();
+        // v0.18.0: SSRF guard — reject link-local, loopback, private-range URLs.
+        crate::http_util::validate_url(&url_str, "arrow-flight", allow_http, ssrf_protection)?;
         let schema = Arc::new(Schema::new(vec![
             Field::new("dedup_key", DataType::Utf8, false),
             Field::new("subject", DataType::Utf8, false),
@@ -59,13 +68,13 @@ impl ArrowFlightSink {
             Field::new("outbox_id", DataType::Int64, true),
         ]));
 
-        Self {
-            url: url.into(),
+        Ok(Self {
+            url: url_str,
             auth_token,
             descriptor_path,
             schema,
             channel: None,
-        }
+        })
     }
 
     /// Establish the gRPC channel if not already connected.
@@ -190,7 +199,14 @@ mod tests {
     use crate::envelope::RelayMessage;
 
     fn make_sink() -> ArrowFlightSink {
-        ArrowFlightSink::new("http://localhost:50051", None, vec!["pg-tide".to_string()])
+        ArrowFlightSink::new(
+            "http://localhost:50051",
+            None,
+            vec!["pg-tide".to_string()],
+            true,  // allow_http
+            false, // ssrf_protection disabled for localhost test
+        )
+        .expect("create test ArrowFlightSink")
     }
 
     fn make_msg(op: &str, order_id: i64) -> RelayMessage {

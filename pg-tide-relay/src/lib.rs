@@ -13,6 +13,7 @@ pub mod coordinator;
 pub mod dlq;
 pub mod envelope;
 pub mod error;
+pub mod http_util;
 pub mod jmespath_transform;
 pub mod metrics;
 pub mod otel;

@@ -24,17 +24,30 @@ impl ElasticsearchSink {
     ///
     /// `base_url`: e.g. `"http://localhost:9200"` or `"https://my-cluster.es.io"`
     /// `index_template`: e.g. `"pg-tide-{stream_table}"` — supports `{stream_table}`, `{op}`, `{outbox_id}`
+    ///
+    /// v0.18.0: Applies the shared SSRF validator to the Elasticsearch URL.
+    /// Set `allow_http = true` and `ssrf_protection = false` for dev/test.
     pub fn new(
         base_url: impl Into<String>,
         index_template: impl Into<String>,
+        allow_http: bool,
+        ssrf_protection: bool,
     ) -> Result<Self, RelayError> {
+        let base_url_str: String = base_url.into();
+        // v0.18.0: SSRF guard — reject link-local, loopback, private-range URLs.
+        crate::http_util::validate_url(
+            &base_url_str,
+            "elasticsearch",
+            allow_http,
+            ssrf_protection,
+        )?;
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| RelayError::sink("elasticsearch", e))?;
         Ok(Self {
             client,
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            base_url: base_url_str.trim_end_matches('/').to_string(),
             index_template: index_template.into(),
         })
     }

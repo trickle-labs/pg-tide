@@ -66,6 +66,8 @@ fn test_clickhouse_config_table_for_subject() {
         table_template: "{stream_table}".to_string(),
         username: None,
         password: None,
+        allow_http: true,
+        ssrf_protection: false,
     };
 
     assert_eq!(cfg.table_for("orders.insert"), "orders.insert");
@@ -82,6 +84,8 @@ fn test_clickhouse_config_insert_query() {
         table_template: "{stream_table}".to_string(),
         username: None,
         password: None,
+        allow_http: true,
+        ssrf_protection: false,
     };
 
     let query = cfg.insert_query("orders");
@@ -106,6 +110,8 @@ fn test_clickhouse_jsonl_body_contains_required_fields() {
         table_template: "{stream_table}".to_string(),
         username: None,
         password: None,
+        allow_http: true,
+        ssrf_protection: false,
     };
 
     let sink = ClickHouseSink::new(cfg).expect("failed to create ClickHouseSink");
@@ -130,6 +136,8 @@ fn test_clickhouse_jsonl_body_encodes_message_fields() {
         table_template: "{stream_table}".to_string(),
         username: None,
         password: None,
+        allow_http: true,
+        ssrf_protection: false,
     };
 
     let sink = ClickHouseSink::new(cfg).expect("create sink");
@@ -208,6 +216,8 @@ async fn test_clickhouse_sink_posts_to_mock_server() {
         table_template: "{stream_table}".to_string(),
         username: None,
         password: None,
+        allow_http: true,
+        ssrf_protection: false,
     };
 
     let mut sink = ClickHouseSink::new(cfg).expect("create sink");

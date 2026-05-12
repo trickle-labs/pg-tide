@@ -561,18 +561,19 @@ async fn worker_inner(
                         );
                         return Err(e);
                     }
-                    // v0.15.0: Exponential backoff with jitter for transient errors.
+                    // v0.18.0: Replace LCG pseudo-random jitter with rand::thread_rng()
+                    // so concurrent pipelines failing at the same instant do not choose
+                    // identical backoff offsets (fixes deterministic clustering).
                     consecutive_failures += 1;
                     let jitter_range = (poll_backoff_ms as f64 * 0.20) as u64;
-                    let jitter = if jitter_range > 0 {
-                        // SAFETY: wrapping_mul is intentional — LCG constant requires wrap.
-                        let pseudo = (consecutive_failures as u64)
-                            .wrapping_mul(6_364_136_223_846_793_005_u64);
-                        (pseudo % (jitter_range * 2)).saturating_sub(jitter_range)
+                    let jitter: i64 = if jitter_range > 0 {
+                        use rand::Rng;
+                        let half = jitter_range as i64;
+                        rand::rng().random_range(-half..=half)
                     } else {
                         0
                     };
-                    let sleep_ms = poll_backoff_ms.saturating_add(jitter);
+                    let sleep_ms = (poll_backoff_ms as i64).saturating_add(jitter).max(0) as u64;
                     tracing::warn!(
                         pipeline = %pipeline.name,
                         error = %e,
@@ -630,8 +631,8 @@ async fn worker_inner(
             break;
         }
 
-        // v0.7.0: Apply JMESPath transforms (filter + payload projection).
-        // v0.16.0: OTel span around transform evaluation.
+        // v0.7.0: Apply JMESPath transforms, schema evolution, and routing.
+        // v0.18.0: Extracted into process_batch() helper for independent testability.
         let batch = {
             let span = tracing::info_span!(
                 "relay.transform.evaluate",
@@ -766,35 +767,26 @@ async fn worker_inner(
                     reason = "circuit_breaker_open",
                 );
                 let _enter = dlq_span.enter();
-                // v0.17.0: Pause pipeline on permanent DLQ write failure.
-                if let Err(e) = crate::dlq::insert_batch(&db, &entries).await {
-                    if e.is_transient() {
-                        tracing::warn!(
-                            pipeline = %pipeline.name,
-                            error = %e,
-                            "transient DLQ insert error — will retry"
-                        );
-                    } else {
-                        metrics
-                            .dlq_write_errors
-                            .with_label_values(&[&pipeline.name])
-                            .inc();
-                        tracing::error!(
-                            pipeline = %pipeline.name,
-                            error = %e,
-                            "permanent DLQ insert error — pausing pipeline"
-                        );
+                // v0.18.0: Use route_to_dlq() helper for consistent error handling.
+                match route_to_dlq(
+                    &db,
+                    &entries,
+                    &pipeline.name,
+                    &direction_label,
+                    &tenant_label,
+                    &metrics,
+                )
+                .await
+                {
+                    DlqOutcome::Written => {
+                        if let Some(last) = batch.last() {
+                            let _ = source.acknowledge(last).await;
+                        }
+                    }
+                    DlqOutcome::TransientError => {} // retry next iteration
+                    DlqOutcome::PermanentError(e) => {
                         return Err(e);
                     }
-                } else {
-                    // v0.13.0: Ack source after durable DLQ write; increment DLQ metric.
-                    if let Some(last) = batch.last() {
-                        let _ = source.acknowledge(last).await;
-                    }
-                    metrics
-                        .dlq_entries_written
-                        .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
-                        .inc_by(entries.len() as u64);
                 }
             } else {
                 tokio::select! {
@@ -914,44 +906,28 @@ async fn worker_inner(
                         reason = "max_retries_exceeded",
                     );
                     let _enter = dlq_span.enter();
-                    match crate::dlq::insert_batch(&db, &entries).await {
-                        Ok(()) => {
-                            // v0.13.0: Ack source after durable DLQ write.
+                    // v0.18.0: Use route_to_dlq() helper for consistent error handling.
+                    match route_to_dlq(
+                        &db,
+                        &entries,
+                        &pipeline.name,
+                        &direction_label,
+                        &tenant_label,
+                        &metrics,
+                    )
+                    .await
+                    {
+                        DlqOutcome::Written => {
                             if let Some(last) = batch.last() {
                                 let _ = source.acknowledge(last).await;
                             }
-                            metrics
-                                .dlq_entries_written
-                                .with_label_values(&[
-                                    &pipeline.name,
-                                    &direction_label,
-                                    &tenant_label,
-                                ])
-                                .inc_by(entries.len() as u64);
+                            consecutive_failures = 0;
                         }
-                        Err(dlq_err) => {
-                            // v0.17.0: Pause pipeline on permanent DLQ write failure.
-                            if dlq_err.is_transient() {
-                                tracing::warn!(
-                                    pipeline = %pipeline.name,
-                                    error = %dlq_err,
-                                    "transient DLQ insert error — will retry"
-                                );
-                            } else {
-                                metrics
-                                    .dlq_write_errors
-                                    .with_label_values(&[&pipeline.name])
-                                    .inc();
-                                tracing::error!(
-                                    pipeline = %pipeline.name,
-                                    error = %dlq_err,
-                                    "permanent DLQ insert error — pausing pipeline"
-                                );
-                                return Err(dlq_err);
-                            }
+                        DlqOutcome::TransientError => {} // retry next iteration
+                        DlqOutcome::PermanentError(e) => {
+                            return Err(e);
                         }
                     }
-                    consecutive_failures = 0;
                 }
 
                 tokio::select! {
@@ -988,6 +964,64 @@ fn filter_replay_batch(
             after_from && before_to
         })
         .collect()
+}
+
+// ── v0.18.0 worker helper functions ──────────────────────────────────────
+
+/// Outcome of a `route_to_dlq` call.
+#[derive(Debug)]
+enum DlqOutcome {
+    /// All entries were written; source should be acknowledged.
+    Written,
+    /// A transient error occurred; caller should retry later.
+    TransientError,
+    /// A permanent error occurred; caller must pause the pipeline.
+    PermanentError(RelayError),
+}
+
+/// Write a set of DLQ entries to the database and handle transient / permanent
+/// write failures consistently.
+///
+/// Returns `DlqOutcome` so the caller can decide whether to pause or retry.
+/// Increments `dlq_entries_written` on success and `dlq_write_errors` on
+/// permanent failure.
+async fn route_to_dlq(
+    db: &Arc<Client>,
+    entries: &[DlqEntry],
+    pipeline_name: &str,
+    direction_label: &str,
+    tenant_label: &str,
+    metrics: &Arc<RelayMetrics>,
+) -> DlqOutcome {
+    match crate::dlq::insert_batch(db, entries).await {
+        Ok(()) => {
+            metrics
+                .dlq_entries_written
+                .with_label_values(&[pipeline_name, direction_label, tenant_label])
+                .inc_by(entries.len() as u64);
+            DlqOutcome::Written
+        }
+        Err(e) if e.is_transient() => {
+            tracing::warn!(
+                pipeline = %pipeline_name,
+                error = %e,
+                "transient DLQ insert error — will retry"
+            );
+            DlqOutcome::TransientError
+        }
+        Err(e) => {
+            metrics
+                .dlq_write_errors
+                .with_label_values(&[pipeline_name])
+                .inc();
+            tracing::error!(
+                pipeline = %pipeline_name,
+                error = %e,
+                "permanent DLQ insert error — pausing pipeline"
+            );
+            DlqOutcome::PermanentError(e)
+        }
+    }
 }
 
 // ── Source factory ────────────────────────────────────────────────────────
@@ -1352,7 +1386,7 @@ async fn build_sink(
 
         "inbox" => {
             let inbox = pipeline.require_str(&["sink", "inbox"])?;
-            Ok(Box::new(crate::sink::inbox::InboxSink::new(db, inbox)))
+            Ok(Box::new(crate::sink::inbox::InboxSink::new(db, inbox)?))
         }
 
         #[cfg(feature = "nats")]
@@ -1427,8 +1461,17 @@ async fn build_sink(
             let index_template = pipeline
                 .opt_str(&["sink", "index_template"])
                 .unwrap_or("pg-tide-{stream_table}");
+            let allow_http = pipeline.opt_bool(&["sink", "allow_http"]).unwrap_or(false);
+            let ssrf_protection = pipeline
+                .opt_bool(&["sink", "ssrf_protection"])
+                .unwrap_or(true);
             Ok(Box::new(
-                crate::sink::elasticsearch::ElasticsearchSink::new(url, index_template)?,
+                crate::sink::elasticsearch::ElasticsearchSink::new(
+                    url,
+                    index_template,
+                    allow_http,
+                    ssrf_protection,
+                )?,
             ))
         }
 
@@ -1620,11 +1663,17 @@ async fn build_sink(
                 .split('/')
                 .map(String::from)
                 .collect();
+            let allow_http = pipeline.opt_bool(&["sink", "allow_http"]).unwrap_or(false);
+            let ssrf_protection = pipeline
+                .opt_bool(&["sink", "ssrf_protection"])
+                .unwrap_or(true);
             Ok(Box::new(crate::sink::arrow_flight::ArrowFlightSink::new(
                 url,
                 auth_token,
                 descriptor_path,
-            )))
+                allow_http,
+                ssrf_protection,
+            )?))
         }
 
         // v0.9.0: Singer protocol adapter
