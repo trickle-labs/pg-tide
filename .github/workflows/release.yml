@@ -119,19 +119,23 @@ jobs:
 
       - name: Build and push image digest
         id: build
-        uses: docker/build-push-action@v7
+        uses: Wandalen/wretry.action@v3
         with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=ghcr.io/trickle-labs/pg-tide,push-by-digest=true,name-canonical=true,push=true
+          action: docker/build-push-action@v7
+          attempt_limit: 3
+          attempt_delay: 20000
+          with: |
+            context: .
+            file: Dockerfile
+            push: true
+            platforms: ${{ matrix.platform }}
+            labels: ${{ steps.meta.outputs.labels }}
+            outputs: type=image,name=ghcr.io/trickle-labs/pg-tide,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
+          digest="${{ fromJSON(steps.build.outputs.outputs).digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
@@ -297,21 +301,24 @@ jobs:
 
       - name: Build and push full image digest
         id: build-full
-        uses: docker/build-push-action@v7
+        uses: Wandalen/wretry.action@v3
         with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: ${{ matrix.platform }}
-          build-args: |
-            CARGO_FLAGS=--all-features
-          labels: ${{ steps.meta-full.outputs.labels }}
-          outputs: type=image,name=ghcr.io/trickle-labs/pg-tide,push-by-digest=true,name-canonical=true,push=true
+          action: docker/build-push-action@v7
+          attempt_limit: 3
+          attempt_delay: 20000
+          with: |
+            context: .
+            file: Dockerfile
+            push: true
+            platforms: ${{ matrix.platform }}
+            build-args: CARGO_FLAGS=--all-features
+            labels: ${{ steps.meta-full.outputs.labels }}
+            outputs: type=image,name=ghcr.io/trickle-labs/pg-tide,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export full digest
         run: |
           mkdir -p /tmp/digests-full
-          digest="${{ steps.build-full.outputs.digest }}"
+          digest="${{ fromJSON(steps.build-full.outputs.outputs).digest }}"
           touch "/tmp/digests-full/${digest#sha256:}"
 
       - name: Upload full digest
