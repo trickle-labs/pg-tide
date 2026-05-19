@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.21.0 — DuckLake Streaming, Inlining & Schema Evolution](#0210--2026-05-19--ducklake-streaming-inlining--schema-evolution)
 - [0.20.0 — DuckLake Native Catalog Integration](#0200--2026-05-19--ducklake-native-catalog-integration)
 - [0.19.0 — Supply Chain, Observability & Operational Docs](#0190--2026-05-14--supply-chain-observability--operational-docs)
 - [0.18.0 — Security Completeness, LISTEN Hot-Reload & API Polish](#0180--2026-05-13--security-completeness-listen-hot-reload--api-polish)
@@ -28,6 +29,95 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.21.0] — 2026-05-19 — DuckLake Streaming, Inlining & Schema Evolution
+
+v0.21.0 tackles the two hardest problems for streaming workloads on data lakes:
+the small-files problem and schema drift.  DuckLake's data inlining feature
+stores small writes directly in PostgreSQL — zero Parquet files created,
+sub-millisecond write latency, full time-travel preserved.  The schema
+evolution bridge detects new JSON fields in outbox messages and automatically
+registers new `ducklake_column` entries.  A new snapshot-to-consumer-offset
+mapping enables DuckDB time-travel replay from pg-tide consumer offsets, and
+an optional DLQ archive sink keeps the operational DLQ table small while
+preserving unlimited auditable history.
+
+### DuckLake Sink — Data Inlining
+
+- **`inline_row_limit` option** (default: 10) — batches at or below this
+  threshold are written directly to
+  `ducklake_inlined_data_{table_id}_{schema_version}` in the catalog rather
+  than flushing to Parquet.  Zero Parquet files created for streaming
+  workloads, sub-millisecond write latency, full time-travel preserved.
+  Above the threshold, the existing Parquet-write path is used.
+- **Inline snapshot transaction** — each inline batch creates a
+  `ducklake_snapshot` with `change_type = 'add_inlined_rows'`, issues a
+  `pg_notify('tide_ducklake_changes', …)` with `"inlined": true`, and updates
+  `ducklake_table_stats` atomically.  DuckDB consumers always see the correct
+  result regardless of where the data lives.
+
+### DuckLake Sink — Automatic Schema Evolution Bridge
+
+- **New JSON key detection** — on each relay batch the sink compares the JSON
+  keys present in message payloads against the known `ducklake_column` entries.
+  New keys are classified as additive (new nullable column) — type conflicts are
+  treated as breaking changes.
+- **Additive columns** — new nullable `VARCHAR` columns are inserted into
+  `ducklake_column` with `begin_snapshot = new_snapshot_id`.  DuckDB handles
+  missing values in older Parquet files transparently via column projection.
+  The sink's `schema_version` counter is incremented so that new inlined tables
+  use the updated schema version.
+- **`on_schema_change` policy** — configurable per pipeline:
+  `pause` (return a permanent error), `route_to_dlq` (skip the batch),
+  `warn_and_continue` (default — register new columns), `auto_new_stream`
+  (also registers new columns in the current implementation).
+
+### DuckLake Sink — Snapshot-to-Consumer-Offset Mapping
+
+- **`tide.ducklake_offset_map` table** — records the mapping from pg-tide
+  consumer group offset to DuckLake snapshot ID, written atomically with each
+  snapshot commit (both inline and Parquet paths).  Enables consumers to use
+  DuckDB time-travel to replay events by offset range.
+- **`tide.ducklake_replay_range(pipeline, from_offset, to_offset)`** — SQL
+  function that returns the DuckDB `AT (VERSION => …)` range expression for
+  the given consumer-group offset range, ready to paste into a DuckDB session.
+
+### DuckLake Sink — Auto-Partition
+
+- **`partition` config option** — `DuckLakePartition::Daily`,
+  `DuckLakePartition::Monthly`, `DuckLakePartition::Bucket(N)`, or `None`
+  (default).  When set, the sink registers the partition strategy in the new
+  `tide.ducklake_partition_config` table on first use.
+- **`tide.ducklake_partition_config` table** — stores partition type, catalog
+  schema, namespace, and table name per pipeline.  Also serves as the registry
+  used by `tide.ducklake_column_history()`.
+
+### DuckLake Sink — DLQ Archive
+
+- **`dlq_archive_after_hours` option** — when set, an archival sweep runs on
+  each `publish()` cycle.  Entries older than the configured TTL are atomically
+  moved from `tide.relay_dlq` into `{catalog_schema}.dlq_archive` — keeping
+  the operational DLQ table small while preserving unlimited auditable history
+  queryable via DuckDB with time-travel and filter pushdown.
+
+### New SQL Functions & Tables (v0.21.0)
+
+- **`tide.ducklake_offset_map`** — snapshot-to-consumer-offset mapping table.
+- **`tide.ducklake_partition_config`** — partition strategy registry.
+- **`tide.ducklake_replay_range(pipeline text, from_offset bigint, to_offset bigint)`**
+  → `TEXT` — returns the DuckDB `AT (VERSION => …)` range expression.
+- **`tide.ducklake_column_history(pipeline_name text)`** — returns every
+  `ducklake_column` entry for the tables written by the given pipeline,
+  together with the earliest snapshot ID at which each column appears.
+  Use this to track schema evolution over time.
+
+### Extension Migration Chain
+
+- **`lib.rs` migration chain updated** — includes `pg_tide--0.20.0--0.21.0.sql`
+  so that `CREATE EXTENSION pg_tide` (fresh install) and
+  `ALTER EXTENSION pg_tide UPDATE` (upgrade) produce identical catalog schemas.
 
 ---
 

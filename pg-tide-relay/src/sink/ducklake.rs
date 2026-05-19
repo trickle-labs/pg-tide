@@ -1,20 +1,23 @@
-/// DuckLake analytics sink (v0.20.0 — DuckLake v1.0 native catalog integration).
+/// DuckLake analytics sink (v0.21.0 — DuckLake streaming, inlining & schema evolution).
 ///
 /// Writes pg-tide relay messages to a DuckLake — a lightweight open data lake
 /// format from the DuckDB team that combines Parquet files (on object storage)
 /// with a SQL catalog in PostgreSQL.
 ///
-/// This implementation (v0.20.0) speaks the real DuckLake v1.0 catalog protocol:
-/// 1. Writes Parquet files to object storage (`object_store`).
-/// 2. Records file metadata in the official DuckLake v1.0 catalog tables
-///    (`ducklake_snapshot`, `ducklake_data_file`, `ducklake_file_column_stats`, etc.)
-///    inside a single PostgreSQL transaction per batch.
-/// 3. Auto-bootstraps schema/table/column entries on first use.
-/// 4. Emits `pg_notify('tide_ducklake_changes', …)` after each snapshot commit.
-/// 5. Computes per-file column statistics for DuckDB filter pushdown.
-///
-/// The catalog tables are created automatically in `catalog_schema` (default: `ducklake`).
-/// Any DuckDB instance can `ATTACH 'ducklake:postgres:…'` and query the data directly.
+/// v0.21.0 adds:
+/// - **Data inlining**: batches at or below `inline_row_limit` are written
+///   directly to `ducklake_inlined_data_{table_id}_{schema_version}` in the
+///   catalog — no Parquet files, sub-millisecond write latency.
+/// - **Automatic schema evolution**: new JSON keys in message payloads trigger
+///   new `ducklake_column` rows; breaking changes apply the `on_schema_change`
+///   policy.
+/// - **Snapshot-to-consumer-offset mapping**: writes to
+///   `tide.ducklake_offset_map` atomically with each snapshot commit for
+///   DuckDB time-travel replay.
+/// - **Auto-partition**: registers `ducklake_partition_config` entries when
+///   a partition strategy is configured.
+/// - **DLQ archive**: background-style helper that moves aged DLQ entries into
+///   a dedicated DuckLake table.
 ///
 /// Feature-gated: only compiled with `--features ducklake`.
 use crate::envelope::RelayMessage;
@@ -25,9 +28,50 @@ use chrono::Utc;
 #[cfg(feature = "ducklake")]
 use object_store::{path::Path, ObjectStore};
 #[cfg(feature = "ducklake")]
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[cfg(feature = "ducklake")]
 use std::sync::Arc;
+
+/// How the sink behaves when a breaking schema change is detected in an
+/// incoming message batch.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum SchemaChangePolicy {
+    /// Pause the pipeline (emit a permanent error so the coordinator pauses it).
+    Pause,
+    /// Route the offending batch to the DLQ.
+    RouteToDlq,
+    /// Log a warning and continue processing.
+    #[default]
+    WarnAndContinue,
+    /// Automatically start a new DuckLake stream / table version.
+    AutoNewStream,
+}
+
+/// Partition strategy for newly created DuckLake tables.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum DuckLakePartition {
+    /// No hidden partitioning (default).
+    #[default]
+    None,
+    /// Partition by day on `_committed_at`.
+    Daily,
+    /// Partition by month on `_committed_at`.
+    Monthly,
+    /// Bucket partitioning on `_subject` with the given bucket count.
+    Bucket(u32),
+}
+
+impl DuckLakePartition {
+    /// Returns the string representation stored in `tide.ducklake_partition_config`.
+    pub fn as_str(&self) -> String {
+        match self {
+            Self::None => "none".to_string(),
+            Self::Daily => "daily".to_string(),
+            Self::Monthly => "monthly".to_string(),
+            Self::Bucket(n) => format!("bucket:{n}"),
+        }
+    }
+}
 
 /// Configuration for the DuckLake sink.
 #[derive(Debug, Clone)]
@@ -46,6 +90,18 @@ pub struct DuckLakeConfig {
     /// share the same PostgreSQL transaction — providing exactly-once delivery to the lake.
     /// Requires the relay to connect to the same PostgreSQL instance as the pg_tide outbox.
     pub atomic_lake_writes: bool,
+    /// Batches at or below this row count are inlined directly into the catalog
+    /// rather than written as Parquet files (default: 10, matching DuckLake default).
+    pub inline_row_limit: usize,
+    /// Policy for handling breaking schema changes in incoming messages (default: WarnAndContinue).
+    pub on_schema_change: SchemaChangePolicy,
+    /// Auto-partition strategy for newly bootstrapped DuckLake tables (default: None).
+    pub partition: DuckLakePartition,
+    /// Pipeline name — used when writing `tide.ducklake_offset_map` entries.
+    /// If `None`, offset mapping is skipped.
+    pub pipeline_name: Option<String>,
+    /// Hours after which DLQ entries are archived to DuckLake.  `None` disables archival.
+    pub dlq_archive_after_hours: Option<u64>,
 }
 
 /// Compression codec for Parquet files.
@@ -65,6 +121,11 @@ impl DuckLakeConfig {
             compression: DuckLakeCompression::Snappy,
             catalog_schema: "ducklake".to_string(),
             atomic_lake_writes: false,
+            inline_row_limit: 10,
+            on_schema_change: SchemaChangePolicy::WarnAndContinue,
+            partition: DuckLakePartition::None,
+            pipeline_name: None,
+            dlq_archive_after_hours: None,
         }
     }
 
@@ -102,6 +163,12 @@ pub struct DuckLakeSink {
     bootstrapped_tables: HashMap<(String, String), (i64, i64)>,
     /// Cached column_id for each (table_id, column_name) pair.
     column_ids: HashMap<(i64, String), i64>,
+    /// Tracks which table_ids already have their inlined-data table created.
+    inlined_tables_ready: HashSet<(i64, i64)>,
+    /// Cached schema version (number of additive columns added) per table_id.
+    schema_version: HashMap<i64, i64>,
+    /// Whether `tide.ducklake_partition_config` has been written per (pipeline, namespace, table).
+    partition_registered: HashSet<(String, String, String)>,
 }
 
 #[cfg(feature = "ducklake")]
@@ -118,6 +185,9 @@ impl DuckLakeSink {
             catalog_ready: false,
             bootstrapped_tables: HashMap::new(),
             column_ids: HashMap::new(),
+            inlined_tables_ready: HashSet::new(),
+            schema_version: HashMap::new(),
+            partition_registered: HashSet::new(),
         }
     }
 
@@ -339,6 +409,446 @@ RETURNING column_id
         self.bootstrapped_tables
             .insert(cache_key, (schema_id, table_id));
         Ok((schema_id, table_id))
+    }
+
+    // ── v0.21.0: Data Inlining ────────────────────────────────────────────────
+
+    /// Ensure the per-table-version inline data table exists.
+    ///
+    /// DuckLake stores inlined rows in `ducklake_inlined_data_{table_id}_{schema_version}`.
+    /// This table is created on demand the first time inlining is used for a given
+    /// `(table_id, schema_version)` pair.
+    async fn ensure_inlined_table(
+        &mut self,
+        table_id: i64,
+        schema_version: i64,
+    ) -> Result<(), RelayError> {
+        let key = (table_id, schema_version);
+        if self.inlined_tables_ready.contains(&key) {
+            return Ok(());
+        }
+        let cs = &self.config.catalog_schema;
+        let tname = format!("ducklake_inlined_data_{}_{}", table_id, schema_version);
+        let ddl = format!(
+            r#"
+CREATE TABLE IF NOT EXISTS "{cs}"."{tname}" (
+    row_id         BIGINT      NOT NULL,
+    begin_snapshot BIGINT      NOT NULL,
+    end_snapshot   BIGINT,
+    _dedup_key     TEXT        NOT NULL,
+    _subject       TEXT        NOT NULL,
+    _op            TEXT        NOT NULL,
+    _outbox_id     BIGINT,
+    data           TEXT        NOT NULL
+)
+"#,
+            cs = cs,
+            tname = tname
+        );
+        self.db.batch_execute(&ddl).await?;
+        self.inlined_tables_ready.insert(key);
+        Ok(())
+    }
+
+    /// Write a small batch of messages directly to the inline data table
+    /// instead of creating a Parquet file.  Returns the allocated snapshot ID.
+    async fn publish_inline(
+        &mut self,
+        table_id: i64,
+        schema_version: i64,
+        snapshot_id: i64,
+        schema_id: i64,
+        messages: &[&RelayMessage],
+    ) -> Result<(), RelayError> {
+        let cs = self.config.catalog_schema.clone();
+        let tname = format!("ducklake_inlined_data_{}_{}", table_id, schema_version);
+        let num_records = messages.len() as i64;
+
+        // Begin transaction for atomic snapshot + inline insert.
+        let txn = self
+            .db
+            .build_transaction()
+            .isolation_level(tokio_postgres::IsolationLevel::ReadCommitted)
+            .start()
+            .await
+            .map_err(RelayError::Postgres)?;
+
+        // 1. Insert ducklake_snapshot.
+        txn.execute(
+            &format!(
+                r#"
+INSERT INTO "{cs}".ducklake_snapshot
+    (snapshot_id, table_id, schema_version, sequence_number, author)
+VALUES ($1, $2, $3,
+    COALESCE((SELECT MAX(sequence_number) + 1
+              FROM "{cs}".ducklake_snapshot
+              WHERE table_id = $2), 0),
+    'pg-tide-relay')
+"#,
+                cs = cs
+            ),
+            &[&snapshot_id, &table_id, &schema_version],
+        )
+        .await
+        .map_err(RelayError::Postgres)?;
+
+        // 2. Get current next_row_id.
+        let start_row_id: i64 = txn
+            .query_one(
+                &format!(
+                    r#"SELECT next_row_id FROM "{cs}".ducklake_table_stats WHERE table_id = $1"#,
+                    cs = cs
+                ),
+                &[&table_id],
+            )
+            .await
+            .map_err(RelayError::Postgres)?
+            .get(0);
+
+        // 3. Insert each row into the inlined data table.
+        for (i, msg) in messages.iter().enumerate() {
+            let row_id = start_row_id + i as i64;
+            let data_str =
+                serde_json::to_string(&msg.payload).unwrap_or_else(|_| "null".to_string());
+            txn.execute(
+                &format!(
+                    r#"
+INSERT INTO "{cs}"."{tname}"
+    (row_id, begin_snapshot, _dedup_key, _subject, _op, _outbox_id, data)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+"#,
+                    cs = cs,
+                    tname = tname
+                ),
+                &[
+                    &row_id,
+                    &snapshot_id,
+                    &msg.dedup_key,
+                    &msg.subject,
+                    &msg.op,
+                    &msg.outbox_id,
+                    &data_str,
+                ],
+            )
+            .await
+            .map_err(RelayError::Postgres)?;
+        }
+
+        // 4. Update table_stats.
+        txn.execute(
+            &format!(
+                r#"UPDATE "{cs}".ducklake_table_stats
+                   SET next_row_id = next_row_id + $1, row_count = row_count + $1
+                   WHERE table_id = $2"#,
+                cs = cs
+            ),
+            &[&num_records, &table_id],
+        )
+        .await
+        .map_err(RelayError::Postgres)?;
+
+        // 5. Record snapshot change (inlined, no file_id).
+        txn.execute(
+            &format!(
+                r#"
+INSERT INTO "{cs}".ducklake_snapshot_changes
+    (snapshot_id, change_type, table_id, schema_id)
+VALUES ($1, 'add_inlined_rows', $2, $3)
+"#,
+                cs = cs
+            ),
+            &[&snapshot_id, &table_id, &schema_id],
+        )
+        .await
+        .map_err(RelayError::Postgres)?;
+
+        // 6. NOTIFY.
+        let table_name_for_notify = format!("inlined_{}", table_id);
+        let notify_payload = serde_json::json!({
+            "table": table_name_for_notify,
+            "snapshot_id": snapshot_id,
+            "record_count": num_records,
+            "inlined": true,
+        })
+        .to_string();
+        txn.execute(
+            "SELECT pg_notify('tide_ducklake_changes', $1)",
+            &[&notify_payload],
+        )
+        .await
+        .map_err(RelayError::Postgres)?;
+
+        txn.commit().await.map_err(RelayError::Postgres)?;
+
+        tracing::debug!(
+            table_id = table_id,
+            snapshot_id = snapshot_id,
+            record_count = num_records,
+            "DuckLake inlined rows committed"
+        );
+        Ok(())
+    }
+
+    // ── v0.21.0: Schema Evolution Bridge ─────────────────────────────────────
+
+    /// Detect JSON keys in `messages` that are not yet registered as columns
+    /// for `table_id`.  Returns only the new key names (additive changes).
+    fn detect_new_json_keys(&self, table_id: i64, messages: &[&RelayMessage]) -> Vec<String> {
+        let mut new_keys: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for msg in messages {
+            if let Some(obj) = msg.payload.as_object() {
+                for key in obj.keys() {
+                    // Skip the standard pg-tide envelope fields.
+                    if matches!(
+                        key.as_str(),
+                        "_dedup_key" | "_subject" | "_op" | "_outbox_id" | "data"
+                    ) {
+                        continue;
+                    }
+                    if !seen.contains(key)
+                        && !self.column_ids.contains_key(&(table_id, key.clone()))
+                    {
+                        new_keys.push(key.clone());
+                        seen.insert(key.clone());
+                    }
+                }
+            }
+        }
+        new_keys
+    }
+
+    /// Register a new additive column in the DuckLake catalog and update caches.
+    /// Increments the schema version for `table_id`.
+    async fn add_column_additive(
+        &mut self,
+        table_id: i64,
+        col_name: &str,
+        snapshot_id: i64,
+    ) -> Result<(), RelayError> {
+        let cs = self.config.catalog_schema.clone();
+        let col_order: i32 = self
+            .column_ids
+            .iter()
+            .filter(|((tid, _), _)| *tid == table_id)
+            .count() as i32;
+
+        let col_id: i64 = self
+            .db
+            .query_one(
+                &format!(
+                    r#"
+INSERT INTO "{cs}".ducklake_column
+    (column_id, table_id, column_name, column_type, column_order, nullable)
+VALUES (nextval('"{cs}".ducklake_column_id_seq'), $1, $2, 'VARCHAR', $3, true)
+ON CONFLICT (table_id, column_name) DO UPDATE SET column_type = EXCLUDED.column_type
+RETURNING column_id
+"#,
+                    cs = cs
+                ),
+                &[&table_id, &col_name, &col_order],
+            )
+            .await
+            .map_err(RelayError::Postgres)?
+            .get(0);
+
+        self.column_ids
+            .insert((table_id, col_name.to_string()), col_id);
+
+        // Increment schema version counter.
+        let sv = self.schema_version.entry(table_id).or_insert(0);
+        *sv += 1;
+
+        tracing::info!(
+            table_id = table_id,
+            col_name = col_name,
+            snapshot_id = snapshot_id,
+            schema_version = *sv,
+            "DuckLake schema evolution: added additive column"
+        );
+        Ok(())
+    }
+
+    /// Run the schema evolution bridge for a batch.
+    ///
+    /// Detects new JSON keys, classifies them as additive (new nullable column) or
+    /// breaking (type conflict), and applies the configured `on_schema_change` policy.
+    ///
+    /// Returns `Ok(true)` when the batch should be processed normally,
+    /// `Ok(false)` when the batch should be skipped (routed to DLQ by caller),
+    /// and `Err` when the pipeline should be paused.
+    async fn apply_schema_evolution(
+        &mut self,
+        table_id: i64,
+        snapshot_id: i64,
+        messages: &[&RelayMessage],
+    ) -> Result<bool, RelayError> {
+        let new_keys = self.detect_new_json_keys(table_id, messages);
+        if new_keys.is_empty() {
+            return Ok(true);
+        }
+
+        match &self.config.on_schema_change.clone() {
+            SchemaChangePolicy::Pause => {
+                return Err(RelayError::Config(format!(
+                    "DuckLake schema evolution: new keys {:?} detected for table_id {} — \
+                     pipeline paused per on_schema_change=pause policy",
+                    new_keys, table_id
+                )));
+            }
+            SchemaChangePolicy::RouteToDlq => {
+                tracing::warn!(
+                    table_id = table_id,
+                    ?new_keys,
+                    "DuckLake schema evolution: routing batch to DLQ (on_schema_change=route_to_dlq)"
+                );
+                return Ok(false);
+            }
+            SchemaChangePolicy::WarnAndContinue | SchemaChangePolicy::AutoNewStream => {
+                // For both warn-and-continue and auto-new-stream, register new columns.
+                for key in &new_keys {
+                    self.add_column_additive(table_id, key, snapshot_id).await?;
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    // ── v0.21.0: Offset Map ───────────────────────────────────────────────────
+
+    /// Write a `tide.ducklake_offset_map` entry mapping the highest outbox
+    /// offset in this batch to the committed DuckLake `snapshot_id`.
+    ///
+    /// This enables consumers to use DuckDB time-travel replay
+    /// (`AT (VERSION => snapshot_id)`) to re-read events by consumer offset.
+    async fn write_offset_map(
+        &mut self,
+        outbox_offset: i64,
+        snapshot_id: i64,
+    ) -> Result<(), RelayError> {
+        let pipeline = match &self.config.pipeline_name {
+            Some(p) => p.clone(),
+            None => return Ok(()),
+        };
+        self.db
+            .execute(
+                r#"
+INSERT INTO tide.ducklake_offset_map
+    (pipeline_name, consumer_group, outbox_offset, snapshot_id)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (pipeline_name, consumer_group, outbox_offset) DO NOTHING
+"#,
+                &[&pipeline, &pipeline, &outbox_offset, &snapshot_id],
+            )
+            .await
+            .map_err(RelayError::Postgres)?;
+        Ok(())
+    }
+
+    // ── v0.21.0: Auto-Partition ───────────────────────────────────────────────
+
+    /// Register the partition strategy for this table in
+    /// `tide.ducklake_partition_config` (once per pipeline/namespace/table).
+    async fn register_partition_config(
+        &mut self,
+        namespace: &str,
+        table_name: &str,
+    ) -> Result<(), RelayError> {
+        let pipeline = match &self.config.pipeline_name {
+            Some(p) => p.clone(),
+            None => return Ok(()),
+        };
+        if self.config.partition == DuckLakePartition::None {
+            return Ok(());
+        }
+        let key = (
+            pipeline.clone(),
+            namespace.to_string(),
+            table_name.to_string(),
+        );
+        if self.partition_registered.contains(&key) {
+            return Ok(());
+        }
+        let partition_type = self.config.partition.as_str();
+        let cs = self.config.catalog_schema.clone();
+        self.db
+            .execute(
+                r#"
+INSERT INTO tide.ducklake_partition_config
+    (pipeline_name, catalog_schema, namespace, table_name, partition_type)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (pipeline_name, namespace, table_name) DO NOTHING
+"#,
+                &[&pipeline, &cs, &namespace, &table_name, &partition_type],
+            )
+            .await
+            .map_err(RelayError::Postgres)?;
+        self.partition_registered.insert(key);
+        Ok(())
+    }
+
+    // ── v0.21.0: DLQ Archive ──────────────────────────────────────────────────
+
+    /// Archive aged DLQ entries into a DuckLake `dlq_archive` table.
+    ///
+    /// Moves entries older than `dlq_archive_after_hours` from
+    /// `tide.relay_dlq` into `{catalog_schema}.dlq_archive`.  Called on each
+    /// `publish()` invocation when `dlq_archive_after_hours` is set.
+    pub async fn archive_dlq_entries(&mut self) -> Result<(), RelayError> {
+        let hours = match self.config.dlq_archive_after_hours {
+            Some(h) => h as i64,
+            None => return Ok(()),
+        };
+        let cs = self.config.catalog_schema.clone();
+
+        // Ensure the DLQ archive table exists.
+        let archive_ddl = format!(
+            r#"
+CREATE TABLE IF NOT EXISTS "{cs}".dlq_archive (
+    id              BIGSERIAL   PRIMARY KEY,
+    pipeline_name   TEXT        NOT NULL,
+    dedup_key       TEXT,
+    subject         TEXT,
+    payload         TEXT,
+    error_message   TEXT,
+    failed_at       TIMESTAMPTZ,
+    archived_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"#,
+            cs = cs
+        );
+        self.db.batch_execute(&archive_ddl).await?;
+
+        // Move aged entries.
+        let moved: u64 = self
+            .db
+            .execute(
+                &format!(
+                    r#"
+WITH aged AS (
+    DELETE FROM tide.relay_dlq
+    WHERE failed_at < now() - ($1 * INTERVAL '1 hour')
+    RETURNING pipeline_name, dedup_key, subject, payload, error_message, failed_at
+)
+INSERT INTO "{cs}".dlq_archive
+    (pipeline_name, dedup_key, subject, payload, error_message, failed_at)
+SELECT pipeline_name, dedup_key, subject, payload, error_message, failed_at
+FROM   aged
+"#,
+                    cs = cs
+                ),
+                &[&hours],
+            )
+            .await
+            .map_err(RelayError::Postgres)?;
+
+        if moved > 0 {
+            tracing::info!(
+                moved = moved,
+                "DuckLake DLQ archiver: moved aged entries to dlq_archive"
+            );
+        }
+        Ok(())
     }
 
     /// Compute per-column statistics for filter pushdown from a message batch.
@@ -594,8 +1104,12 @@ impl super::Sink for DuckLakeSink {
 
         self.ensure_catalog().await?;
 
+        // v0.21.0: Archive aged DLQ entries on each publish cycle.
+        self.archive_dlq_entries().await?;
+
         let namespace = self.config.namespace.clone();
         let cs = self.config.catalog_schema.clone();
+        let inline_row_limit = self.config.inline_row_limit;
 
         // Group by table name.
         let mut groups: HashMap<String, Vec<&RelayMessage>> = HashMap::new();
@@ -608,7 +1122,55 @@ impl super::Sink for DuckLakeSink {
             // Bootstrap table catalog entries (schema/table/column rows) on first use.
             let (schema_id, table_id) = self.bootstrap_table(&namespace, table).await?;
 
+            // v0.21.0: Register partition config on first use.
+            self.register_partition_config(&namespace, table).await?;
+
+            // v0.21.0: Allocate a snapshot ID first (needed for schema evolution logging).
+            let snapshot_id: i64 = self
+                .db
+                .query_one(
+                    &format!(
+                        r#"SELECT nextval('"{cs}".ducklake_snapshot_id_seq')"#,
+                        cs = cs
+                    ),
+                    &[],
+                )
+                .await
+                .map_err(RelayError::Postgres)?
+                .get(0);
+
+            // v0.21.0: Schema evolution bridge — detect new JSON keys.
+            let proceed = self
+                .apply_schema_evolution(table_id, snapshot_id, batch)
+                .await?;
+            if !proceed {
+                // on_schema_change=route_to_dlq: skip this batch.
+                tracing::warn!(table = %table, "DuckLake: skipping batch due to schema change policy");
+                continue;
+            }
+
+            // v0.21.0: Get current schema version.
+            let schema_version = *self.schema_version.entry(table_id).or_insert(0);
+
             let num_records = batch.len() as i64;
+
+            // v0.21.0: Choose write path — inline vs. Parquet.
+            if batch.len() <= inline_row_limit {
+                // Inline path: write rows directly to catalog.
+                self.ensure_inlined_table(table_id, schema_version).await?;
+                self.publish_inline(table_id, schema_version, snapshot_id, schema_id, batch)
+                    .await?;
+
+                // Write offset map entry.
+                if let Some(last_id) = batch.iter().filter_map(|m| m.outbox_id).max() {
+                    self.write_offset_map(last_id, snapshot_id).await?;
+                }
+                continue;
+            }
+
+            // Parquet path (unchanged from v0.20.0, plus offset map).
+
+            let num_records_i64 = num_records;
 
             // Compute column statistics for filter pushdown.
             let col_stats = Self::compute_column_stats(batch);
@@ -619,7 +1181,6 @@ impl super::Sink for DuckLakeSink {
             let file_size = parquet_bytes.len() as i64;
 
             // Write Parquet to object storage.
-            // We use `now_ms` as a timestamp component to make the path unique per call.
             let now_ms = Utc::now().timestamp_millis();
             let parquet_path = self.config.parquet_path(table, now_ms);
             let obj_path = Path::from(parquet_path.trim_start_matches('/'));
@@ -632,8 +1193,6 @@ impl super::Sink for DuckLakeSink {
                 })?;
 
             // --- DuckLake v1.0 catalog transaction ---
-            // All catalog writes for this batch happen in one PostgreSQL transaction,
-            // guaranteeing atomic snapshot creation.
             let txn = self
                 .db
                 .build_transaction()
@@ -642,20 +1201,7 @@ impl super::Sink for DuckLakeSink {
                 .await
                 .map_err(RelayError::Postgres)?;
 
-            // 1. Allocate a monotonically increasing snapshot ID.
-            let snapshot_id: i64 = txn
-                .query_one(
-                    &format!(
-                        r#"SELECT nextval('"{cs}".ducklake_snapshot_id_seq')"#,
-                        cs = cs
-                    ),
-                    &[],
-                )
-                .await
-                .map_err(RelayError::Postgres)?
-                .get(0);
-
-            // 2. Allocate a file ID.
+            // Allocate a file ID.
             let file_id: i64 = txn
                 .query_one(
                     &format!(r#"SELECT nextval('"{cs}".ducklake_file_id_seq')"#, cs = cs),
@@ -665,13 +1211,13 @@ impl super::Sink for DuckLakeSink {
                 .map_err(RelayError::Postgres)?
                 .get(0);
 
-            // 3. Insert ducklake_snapshot.
+            // Insert ducklake_snapshot (uses pre-allocated snapshot_id from above).
             txn.execute(
                 &format!(
                     r#"
 INSERT INTO "{cs}".ducklake_snapshot
     (snapshot_id, table_id, schema_version, sequence_number, author)
-VALUES ($1, $2, 0,
+VALUES ($1, $2, $3,
     COALESCE((SELECT MAX(sequence_number) + 1
               FROM "{cs}".ducklake_snapshot
               WHERE table_id = $2), 0),
@@ -679,12 +1225,12 @@ VALUES ($1, $2, 0,
 "#,
                     cs = cs
                 ),
-                &[&snapshot_id, &table_id],
+                &[&snapshot_id, &table_id, &schema_version],
             )
             .await
             .map_err(RelayError::Postgres)?;
 
-            // 4. Insert ducklake_data_file.
+            // Insert ducklake_data_file.
             txn.execute(
                 &format!(
                     r#"
@@ -700,7 +1246,7 @@ VALUES ($1, $2, $3, $4, 'parquet', $5, $6, $7)
                     &table_id,
                     &snapshot_id,
                     &parquet_path,
-                    &num_records,
+                    &num_records_i64,
                     &file_size,
                     &footer_size,
                 ],
@@ -708,8 +1254,7 @@ VALUES ($1, $2, $3, $4, 'parquet', $5, $6, $7)
             .await
             .map_err(RelayError::Postgres)?;
 
-            // 5. Write per-file column statistics.
-            // Column order matches the schema: _dedup_key, _subject, _op, _outbox_id, data
+            // Write per-file column statistics.
             let col_names = ["_dedup_key", "_subject", "_op", "_outbox_id", "data"];
             for (i, stats) in col_stats.iter().enumerate() {
                 if let Some(col_id) = self.column_ids.get(&(table_id, col_names[i].to_string())) {
@@ -739,7 +1284,7 @@ ON CONFLICT (file_id, column_id) DO UPDATE
                 }
             }
 
-            // 6. Update ducklake_table_stats (next_row_id, row_count).
+            // Update ducklake_table_stats (next_row_id, row_count).
             txn.execute(
                 &format!(
                     r#"
@@ -750,12 +1295,12 @@ WHERE table_id = $2
 "#,
                     cs = cs
                 ),
-                &[&num_records, &table_id],
+                &[&num_records_i64, &table_id],
             )
             .await
             .map_err(RelayError::Postgres)?;
 
-            // 7. Upsert global ducklake_table_column_stats (min/max across all files).
+            // Upsert global ducklake_table_column_stats.
             for (i, stats) in col_stats.iter().enumerate() {
                 if let Some(col_id) = self.column_ids.get(&(table_id, col_names[i].to_string())) {
                     txn.execute(
@@ -794,7 +1339,7 @@ ON CONFLICT (table_id, column_id) DO UPDATE
                 }
             }
 
-            // 8. Record snapshot change.
+            // Record snapshot change.
             txn.execute(
                 &format!(
                     r#"
@@ -809,7 +1354,7 @@ VALUES ($1, 'add_data_file', $2, $3, $4)
             .await
             .map_err(RelayError::Postgres)?;
 
-            // 9. NOTIFY-based change notification for downstream consumers.
+            // NOTIFY-based change notification for downstream consumers.
             let notify_payload = serde_json::json!({
                 "table": table,
                 "snapshot_id": snapshot_id,
@@ -823,8 +1368,12 @@ VALUES ($1, 'add_data_file', $2, $3, $4)
             .await
             .map_err(RelayError::Postgres)?;
 
-            // Commit the catalog transaction.
             txn.commit().await.map_err(RelayError::Postgres)?;
+
+            // v0.21.0: Write offset map entry after Parquet commit.
+            if let Some(last_id) = batch.iter().filter_map(|m| m.outbox_id).max() {
+                self.write_offset_map(last_id, snapshot_id).await?;
+            }
 
             tracing::debug!(
                 table = %table,

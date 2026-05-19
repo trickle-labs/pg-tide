@@ -4647,7 +4647,7 @@ dependencies = [
 
 [[package]]
 name = "pg-tide-ext"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "pgrx",
  "pgrx-tests",
@@ -4658,7 +4658,7 @@ dependencies = [
 
 [[package]]
 name = "pg-tide-relay"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "apache-avro",
  "arrow-array",

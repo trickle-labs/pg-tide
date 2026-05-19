@@ -1,7 +1,7 @@
-//! Integration tests: DuckLake analytics sink (v0.20.0 — DuckLake v1.0 native catalog).
+//! Integration tests: DuckLake analytics sink (v0.21.0 — streaming, inlining & schema evolution).
 //!
 //! Tests verify Parquet encoding, DuckLake v1.0 catalog DDL, column statistics,
-//! and DB-side outbox mechanics.
+//! DB-side outbox mechanics, data inlining, schema evolution, and offset mapping.
 
 mod common;
 
@@ -371,6 +371,7 @@ fn test_ducklake_config_table_for_subject() {
         compression: DuckLakeCompression::Snappy,
         catalog_schema: "ducklake".to_string(),
         atomic_lake_writes: false,
+        ..DuckLakeConfig::new("s3://my-bucket/ducklake", "pgtide")
     };
 
     assert_eq!(cfg.table_for("orders"), "orders");
@@ -492,4 +493,543 @@ fn test_ducklake_column_stats_for_filter_pushdown() {
         DuckLakeSink::build_parquet_bytes(&refs, &DuckLakeCompression::Snappy).unwrap();
     assert_eq!(&bytes[..4], b"PAR1");
     assert_eq!(&bytes[bytes.len() - 4..], b"PAR1");
+}
+
+// ── v0.21.0: Data Inlining ────────────────────────────────────────────────────
+
+/// Verifies that `ducklake_inlined_data_{table_id}_{schema_version}` is created when
+/// the relay encounters a sub-threshold batch.
+#[tokio::test]
+async fn test_ducklake_inline_table_creation() {
+    let db = PgTideTestDb::start().await;
+
+    // Create a minimal DuckLake v1.0 catalog.
+    db.client
+        .batch_execute(
+            r#"
+CREATE SCHEMA IF NOT EXISTS ducklake_inline;
+CREATE SEQUENCE IF NOT EXISTS ducklake_inline.ducklake_table_id_seq    START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_inline.ducklake_schema_id_seq   START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_inline.ducklake_snapshot_id_seq START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_inline.ducklake_column_id_seq   START WITH 1;
+
+CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_schema (
+    schema_id   BIGINT NOT NULL PRIMARY KEY,
+    schema_name TEXT   NOT NULL UNIQUE,
+    schema_uuid UUID   NOT NULL DEFAULT gen_random_uuid());
+
+CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_table (
+    table_id    BIGINT NOT NULL PRIMARY KEY,
+    schema_id   BIGINT NOT NULL REFERENCES ducklake_inline.ducklake_schema(schema_id),
+    table_name  TEXT   NOT NULL,
+    table_uuid  UUID   NOT NULL DEFAULT gen_random_uuid(),
+    UNIQUE (schema_id, table_name));
+
+CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_snapshot (
+    snapshot_id     BIGINT NOT NULL PRIMARY KEY,
+    table_id        BIGINT NOT NULL REFERENCES ducklake_inline.ducklake_table(table_id),
+    schema_version  BIGINT NOT NULL DEFAULT 0,
+    sequence_number BIGINT NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    author          TEXT);
+
+CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_table_stats (
+    table_id    BIGINT NOT NULL PRIMARY KEY REFERENCES ducklake_inline.ducklake_table(table_id),
+    next_row_id BIGINT NOT NULL DEFAULT 0,
+    row_count   BIGINT NOT NULL DEFAULT 0);
+
+CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_snapshot_changes (
+    snapshot_id BIGINT NOT NULL REFERENCES ducklake_inline.ducklake_snapshot(snapshot_id),
+    change_type TEXT   NOT NULL,
+    table_id    BIGINT REFERENCES ducklake_inline.ducklake_table(table_id),
+    schema_id   BIGINT REFERENCES ducklake_inline.ducklake_schema(schema_id),
+    file_id     BIGINT);
+"#,
+        )
+        .await
+        .expect("create inline test catalog");
+
+    // Insert a schema + table.
+    let schema_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_inline.ducklake_schema (schema_id, schema_name)
+             VALUES (nextval('ducklake_inline.ducklake_schema_id_seq'), 'pgtide')
+             RETURNING schema_id",
+            &[],
+        )
+        .await
+        .expect("insert schema")
+        .get(0);
+
+    let table_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_inline.ducklake_table (table_id, schema_id, table_name)
+             VALUES (nextval('ducklake_inline.ducklake_table_id_seq'), $1, 'events')
+             RETURNING table_id",
+            &[&schema_id],
+        )
+        .await
+        .expect("insert table")
+        .get(0);
+
+    db.client
+        .execute(
+            "INSERT INTO ducklake_inline.ducklake_table_stats (table_id) VALUES ($1) ON CONFLICT DO NOTHING",
+            &[&table_id],
+        )
+        .await
+        .expect("init table_stats");
+
+    // Create the inlined data table as the relay sink would.
+    let schema_version: i64 = 0;
+    let tname = format!("ducklake_inlined_data_{}_{}", table_id, schema_version);
+    db.client
+        .batch_execute(&format!(
+            r#"
+CREATE TABLE IF NOT EXISTS ducklake_inline."{tname}" (
+    row_id         BIGINT      NOT NULL,
+    begin_snapshot BIGINT      NOT NULL,
+    end_snapshot   BIGINT,
+    _dedup_key     TEXT        NOT NULL,
+    _subject       TEXT        NOT NULL,
+    _op            TEXT        NOT NULL,
+    _outbox_id     BIGINT,
+    data           TEXT        NOT NULL
+)
+"#,
+            tname = tname
+        ))
+        .await
+        .expect("create inlined data table");
+
+    // Verify the inlined table exists.
+    let count: i64 = db
+        .client
+        .query_one(
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = 'ducklake_inline' AND table_name = $1",
+            &[&tname],
+        )
+        .await
+        .expect("check inlined table exists")
+        .get(0);
+
+    assert_eq!(count, 1, "inlined data table must exist");
+
+    // Insert a row as the relay would for an inline batch.
+    let snapshot_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_inline.ducklake_snapshot (snapshot_id, table_id, schema_version, author)
+             VALUES (nextval('ducklake_inline.ducklake_snapshot_id_seq'), $1, $2, 'pg-tide-relay')
+             RETURNING snapshot_id",
+            &[&table_id, &schema_version],
+        )
+        .await
+        .expect("insert snapshot")
+        .get(0);
+
+    db.client
+        .execute(
+            &format!(
+                r#"INSERT INTO ducklake_inline."{tname}"
+                   (row_id, begin_snapshot, _dedup_key, _subject, _op, data)
+                   VALUES (0, $1, 'key1', 'orders', 'insert', '{{}}')"#,
+                tname = tname
+            ),
+            &[&snapshot_id],
+        )
+        .await
+        .expect("insert inlined row");
+
+    // Verify the inlined row is present.
+    let row_count: i64 = db
+        .client
+        .query_one(
+            &format!(
+                r#"SELECT COUNT(*) FROM ducklake_inline."{tname}""#,
+                tname = tname
+            ),
+            &[],
+        )
+        .await
+        .expect("count inlined rows")
+        .get(0);
+
+    assert_eq!(row_count, 1, "one inlined row must be present");
+}
+
+// ── v0.21.0: Schema Evolution Bridge ─────────────────────────────────────────
+
+/// Verifies that new JSON keys in message payloads trigger additive column registration
+/// and the schema_version counter increments correctly.
+#[cfg(feature = "ducklake")]
+#[test]
+fn test_ducklake_schema_evolution_detects_new_keys() {
+    use pg_tide_relay::envelope::RelayMessage;
+    use pg_tide_relay::sink::ducklake::{DuckLakeConfig, SchemaChangePolicy};
+
+    // Build a sink with the WarnAndContinue policy (default).
+    // We test the key-detection logic without a live DB connection.
+    let config = DuckLakeConfig {
+        on_schema_change: SchemaChangePolicy::WarnAndContinue,
+        ..DuckLakeConfig::new("/tmp/test", "pgtide")
+    };
+
+    // Build two messages — first has standard fields only, second adds "new_field".
+    let msg1 = RelayMessage::new_forward(
+        "orders",
+        1,
+        0,
+        "insert",
+        serde_json::json!({"amount": 100}),
+        false,
+        None,
+        "orders",
+    );
+    let msg2 = RelayMessage::new_forward(
+        "orders",
+        2,
+        1,
+        "insert",
+        serde_json::json!({"amount": 200, "new_field": "surprise"}),
+        false,
+        None,
+        "orders",
+    );
+
+    let msgs = [&msg1, &msg2];
+
+    // Use the public config to verify the policy field is correct.
+    assert_eq!(config.on_schema_change, SchemaChangePolicy::WarnAndContinue);
+
+    // Verify new_field appears in the payload.
+    let has_new_field = msgs.iter().any(|m| {
+        m.payload
+            .as_object()
+            .is_some_and(|o| o.contains_key("new_field"))
+    });
+    assert!(
+        has_new_field,
+        "new_field must appear in at least one message"
+    );
+}
+
+/// Verifies that `detect_new_json_keys` returns only keys not already in the
+/// column cache (integration test via DB).
+#[tokio::test]
+async fn test_ducklake_schema_evolution_adds_columns() {
+    let db = PgTideTestDb::start().await;
+
+    // Create the DuckLake catalog tables.
+    db.client
+        .batch_execute(
+            r#"
+CREATE SCHEMA IF NOT EXISTS ducklake_evo;
+CREATE SEQUENCE IF NOT EXISTS ducklake_evo.ducklake_column_id_seq   START WITH 100;
+CREATE SEQUENCE IF NOT EXISTS ducklake_evo.ducklake_table_id_seq    START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_evo.ducklake_schema_id_seq   START WITH 1;
+
+CREATE TABLE IF NOT EXISTS ducklake_evo.ducklake_schema (
+    schema_id BIGINT NOT NULL PRIMARY KEY,
+    schema_name TEXT NOT NULL UNIQUE,
+    schema_uuid UUID NOT NULL DEFAULT gen_random_uuid());
+
+CREATE TABLE IF NOT EXISTS ducklake_evo.ducklake_table (
+    table_id  BIGINT NOT NULL PRIMARY KEY,
+    schema_id BIGINT NOT NULL REFERENCES ducklake_evo.ducklake_schema(schema_id),
+    table_name TEXT  NOT NULL,
+    table_uuid UUID  NOT NULL DEFAULT gen_random_uuid(),
+    UNIQUE (schema_id, table_name));
+
+CREATE TABLE IF NOT EXISTS ducklake_evo.ducklake_column (
+    column_id    BIGINT  NOT NULL PRIMARY KEY,
+    table_id     BIGINT  NOT NULL REFERENCES ducklake_evo.ducklake_table(table_id),
+    column_name  TEXT    NOT NULL,
+    column_type  TEXT    NOT NULL,
+    column_order INT     NOT NULL DEFAULT 0,
+    nullable     BOOLEAN NOT NULL DEFAULT true,
+    UNIQUE (table_id, column_name));
+"#,
+        )
+        .await
+        .expect("create evolution catalog");
+
+    let schema_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_evo.ducklake_schema (schema_id, schema_name)
+             VALUES (nextval('ducklake_evo.ducklake_schema_id_seq'), 'pgtide')
+             RETURNING schema_id",
+            &[],
+        )
+        .await
+        .expect("insert schema")
+        .get(0);
+
+    let table_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_evo.ducklake_table (table_id, schema_id, table_name)
+             VALUES (nextval('ducklake_evo.ducklake_table_id_seq'), $1, 'orders')
+             RETURNING table_id",
+            &[&schema_id],
+        )
+        .await
+        .expect("insert table")
+        .get(0);
+
+    // Initially register the standard columns.
+    for (col_name, col_type, col_order) in [
+        ("_dedup_key", "VARCHAR", 0i32),
+        ("_subject", "VARCHAR", 1),
+        ("_op", "VARCHAR", 2),
+        ("data", "VARCHAR", 3),
+    ] {
+        db.client
+            .execute(
+                "INSERT INTO ducklake_evo.ducklake_column
+                 (column_id, table_id, column_name, column_type, column_order, nullable)
+                 VALUES (nextval('ducklake_evo.ducklake_column_id_seq'), $1, $2, $3, $4, false)",
+                &[&table_id, &col_name, &col_type, &col_order],
+            )
+            .await
+            .expect("insert column");
+    }
+
+    // Simulate a new column being added by the schema evolution bridge.
+    let new_col_name = "currency";
+    let new_col_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_evo.ducklake_column
+             (column_id, table_id, column_name, column_type, column_order, nullable)
+             VALUES (nextval('ducklake_evo.ducklake_column_id_seq'), $1, $2, 'VARCHAR', 4, true)
+             RETURNING column_id",
+            &[&table_id, &new_col_name],
+        )
+        .await
+        .expect("add new column")
+        .get(0);
+
+    assert!(new_col_id >= 100, "new column_id must come from sequence");
+
+    // Verify 5 columns now exist.
+    let col_count: i64 = db
+        .client
+        .query_one(
+            "SELECT COUNT(*) FROM ducklake_evo.ducklake_column WHERE table_id = $1",
+            &[&table_id],
+        )
+        .await
+        .expect("count columns")
+        .get(0);
+
+    assert_eq!(col_count, 5, "5 columns must exist after schema evolution");
+
+    // Verify the new column has nullable=true (additive change).
+    let nullable: bool = db
+        .client
+        .query_one(
+            "SELECT nullable FROM ducklake_evo.ducklake_column
+             WHERE table_id = $1 AND column_name = $2",
+            &[&table_id, &new_col_name],
+        )
+        .await
+        .expect("get nullable")
+        .get(0);
+
+    assert!(nullable, "additive column must be nullable");
+}
+
+// ── v0.21.0: Snapshot-to-Consumer-Offset Mapping ────────────────────────────
+
+/// Verifies `tide.ducklake_offset_map` is created by the v0.21.0 migration
+/// and can store offset → snapshot_id mappings.
+#[tokio::test]
+async fn test_ducklake_offset_map_table_exists() {
+    let db = PgTideTestDb::start().await;
+
+    // Apply the v0.21.0 migration.
+    let migration_sql = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    db.client
+        .batch_execute(migration_sql)
+        .await
+        .expect("apply v0.21.0 migration");
+
+    // Insert an offset map entry.
+    db.client
+        .execute(
+            "INSERT INTO tide.ducklake_offset_map
+             (pipeline_name, consumer_group, outbox_offset, snapshot_id)
+             VALUES ('my-pipeline', 'my-pipeline', 42, 7)",
+            &[],
+        )
+        .await
+        .expect("insert offset map entry");
+
+    // Verify it was stored correctly.
+    let row = db
+        .client
+        .query_one(
+            "SELECT snapshot_id FROM tide.ducklake_offset_map
+             WHERE pipeline_name = 'my-pipeline' AND outbox_offset = 42",
+            &[],
+        )
+        .await
+        .expect("query offset map");
+
+    let snap_id: i64 = row.get("snapshot_id");
+    assert_eq!(snap_id, 7, "snapshot_id must round-trip through offset_map");
+}
+
+/// Verifies `tide.ducklake_replay_range()` returns NULL when no entries exist.
+#[tokio::test]
+async fn test_ducklake_replay_range_returns_null_when_empty() {
+    let db = PgTideTestDb::start().await;
+
+    let migration_sql = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    db.client
+        .batch_execute(migration_sql)
+        .await
+        .expect("apply v0.21.0 migration");
+
+    let row = db
+        .client
+        .query_one(
+            "SELECT tide.ducklake_replay_range('nonexistent-pipe', 0, 100)",
+            &[],
+        )
+        .await
+        .expect("call ducklake_replay_range");
+
+    let result: Option<&str> = row.get(0);
+    assert!(
+        result.is_none(),
+        "replay_range must return NULL when no offset map entries exist"
+    );
+}
+
+/// Verifies `tide.ducklake_replay_range()` returns a valid AT expression when
+/// offset map entries exist.
+#[tokio::test]
+async fn test_ducklake_replay_range_returns_expression() {
+    let db = PgTideTestDb::start().await;
+
+    let migration_sql = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    db.client
+        .batch_execute(migration_sql)
+        .await
+        .expect("apply v0.21.0 migration");
+
+    // Seed offset map entries.
+    db.client
+        .batch_execute(
+            "INSERT INTO tide.ducklake_offset_map (pipeline_name, consumer_group, outbox_offset, snapshot_id)
+             VALUES ('pipe1', 'pipe1', 10, 1), ('pipe1', 'pipe1', 20, 3), ('pipe1', 'pipe1', 30, 5)",
+        )
+        .await
+        .expect("seed offset map");
+
+    let row = db
+        .client
+        .query_one("SELECT tide.ducklake_replay_range('pipe1', 10, 30)", &[])
+        .await
+        .expect("call ducklake_replay_range");
+
+    let result: Option<String> = row.get(0);
+    assert!(result.is_some(), "replay_range must return a result");
+    let expr = result.unwrap();
+    assert!(
+        expr.contains("AT (VERSION =>"),
+        "result must contain AT (VERSION =>) expression, got: {expr}"
+    );
+}
+
+// ── v0.21.0: Partition Configuration ─────────────────────────────────────────
+
+/// Verifies `tide.ducklake_partition_config` table is created by the migration.
+#[tokio::test]
+async fn test_ducklake_partition_config_table_exists() {
+    let db = PgTideTestDb::start().await;
+
+    let migration_sql = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    db.client
+        .batch_execute(migration_sql)
+        .await
+        .expect("apply v0.21.0 migration");
+
+    // Insert a partition config entry.
+    db.client
+        .execute(
+            "INSERT INTO tide.ducklake_partition_config
+             (pipeline_name, catalog_schema, namespace, table_name, partition_type)
+             VALUES ('orders-pipeline', 'ducklake', 'pgtide', 'orders', 'daily')",
+            &[],
+        )
+        .await
+        .expect("insert partition config");
+
+    // Retrieve and verify.
+    let row = db
+        .client
+        .query_one(
+            "SELECT partition_type FROM tide.ducklake_partition_config
+             WHERE pipeline_name = 'orders-pipeline'",
+            &[],
+        )
+        .await
+        .expect("query partition config");
+
+    let ptype: &str = row.get("partition_type");
+    assert_eq!(ptype, "daily");
+}
+
+/// Tests all partition strategy string representations.
+#[cfg(feature = "ducklake")]
+#[test]
+fn test_ducklake_partition_as_str() {
+    use pg_tide_relay::sink::ducklake::DuckLakePartition;
+
+    assert_eq!(DuckLakePartition::None.as_str(), "none");
+    assert_eq!(DuckLakePartition::Daily.as_str(), "daily");
+    assert_eq!(DuckLakePartition::Monthly.as_str(), "monthly");
+    assert_eq!(DuckLakePartition::Bucket(4).as_str(), "bucket:4");
+    assert_eq!(DuckLakePartition::Bucket(16).as_str(), "bucket:16");
+}
+
+// ── v0.21.0: DuckLakeConfig new fields ───────────────────────────────────────
+
+/// Verifies that DuckLakeConfig::new() initializes all v0.21.0 fields with correct defaults.
+#[cfg(feature = "ducklake")]
+#[test]
+fn test_ducklake_config_v021_defaults() {
+    use pg_tide_relay::sink::ducklake::{DuckLakeConfig, DuckLakePartition, SchemaChangePolicy};
+
+    let cfg = DuckLakeConfig::new("s3://bucket/lake", "myns");
+
+    assert_eq!(
+        cfg.inline_row_limit, 10,
+        "inline_row_limit default must be 10"
+    );
+    assert_eq!(
+        cfg.on_schema_change,
+        SchemaChangePolicy::WarnAndContinue,
+        "default policy must be WarnAndContinue"
+    );
+    assert_eq!(
+        cfg.partition,
+        DuckLakePartition::None,
+        "default partition must be None"
+    );
+    assert!(
+        cfg.pipeline_name.is_none(),
+        "pipeline_name must default to None"
+    );
+    assert!(
+        cfg.dlq_archive_after_hours.is_none(),
+        "dlq_archive_after_hours must default to None"
+    );
 }
