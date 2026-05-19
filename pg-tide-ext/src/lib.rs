@@ -118,15 +118,18 @@ pgrx::extension_sql_file!(
     name = "pg_tide_m_0_17",
     requires = ["pg_tide_m_0_16"]
 );
-pgrx::extension_sql_file!(
-    "../../sql/pg_tide--0.17.0--0.18.0.sql",
-    name = "pg_tide_m_0_18",
-    requires = ["pg_tide_m_0_17"]
-);
+// NOTE: pg_tide--0.17.0--0.18.0.sql is intentionally excluded from this chain.
+// It only redefines relay_enable, relay_disable, and relay_set_outbox_v2 using
+// CREATE OR REPLACE FUNCTION (plpgsql).  Those same functions are also generated
+// by pgrx from their #[pg_extern] Rust implementations using plain CREATE FUNCTION
+// (not OR REPLACE).  Including the migration file causes SQLSTATE 42723
+// ("already exists with same argument types") on fresh installs because the
+// plpgsql version is created first, then pgrx's CREATE FUNCTION fails.
+// The migration file is still used by ALTER EXTENSION pg_tide UPDATE for upgrades.
 pgrx::extension_sql_file!(
     "../../sql/pg_tide--0.18.0--0.19.0.sql",
     name = "pg_tide_m_0_19",
-    requires = ["pg_tide_m_0_18"]
+    requires = ["pg_tide_m_0_17"]
 );
 pgrx::extension_sql_file!(
     "../../sql/pg_tide--0.19.0--0.20.0.sql",
