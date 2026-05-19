@@ -5,8 +5,8 @@ description: >
   inboxes with external messaging systems (NATS, Kafka, Redis, RabbitMQ,
   SQS, HTTP webhooks).
 type: application
-version: 0.22.0
-appVersion: "0.22.0"
+version: 0.23.0
+appVersion: "0.23.0"
 home: https://github.com/trickle-labs/pg-tide
 sources:
   - https://github.com/trickle-labs/pg-tide

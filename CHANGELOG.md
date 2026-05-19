@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.23.0 — Correctness, Real TLS & Full Migration Coverage](#0230--2026-05-19--correctness-real-tls--full-migration-coverage)
 - [0.22.0 — DuckLake Bidirectional Flow & Ecosystem Surface](#0220--2026-05-19--ducklake-bidirectional-flow--ecosystem-surface)
 - [0.21.0 — DuckLake Streaming, Inlining & Schema Evolution](#0210--2026-05-19--ducklake-streaming-inlining--schema-evolution)
 - [0.20.0 — DuckLake Native Catalog Integration](#0200--2026-05-19--ducklake-native-catalog-integration)
@@ -30,6 +31,75 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.23.0] — 2026-05-19 — Correctness, Real TLS & Full Migration Coverage
+
+v0.23.0 addresses every P0/P1/P2 finding from overall-assessment-4, completing
+the audit remediation cycle before v1.0.0 GA.  The headline changes are: a
+critical fix to `PgInboxSink` that restores cross-database inbox delivery (broken
+since v0.13.0), real TLS connections via the new `native-tls` feature flag,
+full migration test coverage through v0.22.0, and a `commit_offset()` monotonicity
+guard that prevents offset rollback by buggy consumers.
+
+### Breaking changes
+None.
+
+### What's new
+
+**P0: Critical correctness fixes**
+- **Fix `PgInboxSink` column mismatch** — the remote PostgreSQL inbox sink was
+  inserting into `(event_id, event_type, payload, received_at)` instead of the
+  correct `(event_id, source, payload, headers)` schema created by
+  `tide.inbox_create()`.  Any cross-database inbox delivery pipeline has been
+  failing at runtime since v0.13.0; this release fixes it.  Also switched from
+  a per-row INSERT loop to a single UNNEST batch insert matching the local
+  `InboxSink` pattern.
+- **Add missing `extension_sql_file!()` for 0.21.0→0.22.0** — a fresh
+  `CREATE EXTENSION pg_tide` at v0.22.0 was silently missing
+  `tide.ducklake_source_config`, `tide.ducklake_replicate()`, and
+  `tide.ducklake_source_last_snapshot()`.  Fixed.
+
+**P1: Real TLS via `native-tls` feature**
+- New optional Cargo feature `native-tls` (disabled by default) that uses the
+  platform OpenSSL stack (`postgres-openssl`) to establish real TLS connections
+  when `sslmode=require/verify-ca/verify-full`.  The default build continues to
+  fail closed on `require` without establishing plaintext; the `:latest-full`
+  Docker image compiles with `--features native-tls`.
+
+**P1: Migration test coverage**
+- `migration_test.rs` extended through v0.22.0 (five new migration scripts).
+- `sql_to_sink_e2e.rs` extended through v0.22.0 (DuckLake catalog tables now
+  present in the E2E test environment).
+
+**P1: Security hardening**
+- **Fix `ducklake_attach()` format specifiers** — single quotes in database names
+  or hostnames no longer produce malformed DuckDB `ATTACH` statements; backported
+  via the `pg_tide--0.22.0--0.23.0.sql` migration.
+- **Fix `ctrl_c().await.expect()` in `main.rs`** — replaced with graceful
+  degradation on restricted seccomp profiles.
+- **`ducklake_replicate()` identifier length guard** — 63-byte identifier limit
+  is now checked and raises a clear error instead of silently truncating.
+
+**P2: Offset safety**
+- **`commit_offset()` monotonicity guard** — the `ON CONFLICT DO UPDATE` clause
+  now includes `WHERE committed_offset <= EXCLUDED.committed_offset`, preventing
+  any consumer from rolling back an already-committed offset accidentally.  This
+  finding was raised in four consecutive audit cycles; it is now fixed.
+- **`tide.admin_rewind_offset()`** — new `SECURITY DEFINER` function for
+  intentional offset rollback, requiring `confirm_reprocessing = TRUE` and
+  `pg_tide_admin` or superuser membership.  All calls are audited.
+
+**P2: Remote inbox sink batching**
+- `PgInboxSink` now uses a single `UNNEST` batch insert instead of N individual
+  round-trips per batch.
+
+**Test coverage**
+- `commit_offset()` monotonicity guard test (two cases: lower value ignored, higher advances).
+- `PgInboxSink` round-trip test: 50 messages, correct column mapping, zero duplicates.
+- DLQ fault-injection test + error-classification unit tests.
+- `admin_rewind_offset()` verified in migration test.
 
 ---
 

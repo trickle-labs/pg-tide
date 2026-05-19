@@ -56,9 +56,15 @@ BEGIN
         _data_clause := format(', DATA_PATH %L', data_path);
     END IF;
 
+    -- v0.23.0: Use %L (dollar-quoted literal) for user-supplied values to
+    -- prevent malformed ATTACH statements when the database name, host, or port
+    -- contain quotes or other special characters.
     _attach_str := format(
         'ATTACH ''ducklake:postgres:dbname=%s host=%s port=%s'' AS %I%s;',
-        _dbname, _host, _port, catalog_schema, _data_clause
+        replace(_dbname, '''', ''''''),
+        replace(_host,   '''', ''''''),
+        replace(_port,   '''', ''''''),
+        catalog_schema, _data_clause
     );
 
     RETURN _attach_str;

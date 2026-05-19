@@ -484,13 +484,18 @@ pub fn commit_offset(p_group: &str, p_consumer: &str, p_last_offset: i64) {
 }
 
 fn commit_offset_impl(group: &str, consumer: &str, last_offset: i64) -> Result<(), PgTideError> {
+    // v0.23.0: Monotonicity guard — only advance the committed offset, never
+    // roll it back.  The WHERE clause on the DO UPDATE prevents a stale or
+    // buggy consumer from rewinding an offset that was already committed.
+    // Use tide.admin_rewind_offset() for intentional rollback.
     Spi::run_with_args(
         "INSERT INTO tide.tide_consumer_offsets \
          (group_name, consumer_id, committed_offset, last_heartbeat) \
          VALUES ($1, $2, $3, now()) \
          ON CONFLICT (group_name, consumer_id) DO UPDATE \
          SET committed_offset = EXCLUDED.committed_offset, \
-             last_heartbeat = EXCLUDED.last_heartbeat",
+             last_heartbeat = EXCLUDED.last_heartbeat \
+         WHERE tide_consumer_offsets.committed_offset <= EXCLUDED.committed_offset",
         &[group.into(), consumer.into(), last_offset.into()],
     )
     .map_err(|e| PgTideError::SpiError(format!("commit_offset: {e}")))?;

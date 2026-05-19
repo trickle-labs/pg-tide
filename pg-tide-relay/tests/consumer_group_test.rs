@@ -145,3 +145,88 @@ async fn test_drop_consumer_group_cascades() {
         .unwrap();
     assert_eq!(count.get::<_, i64>(0), 0);
 }
+
+// ── v0.23.0: commit_offset() monotonicity guard ───────────────────────────────
+
+/// v0.23.0: Assert that calling commit_offset() with a lower offset than the
+/// current committed value is silently ignored (monotonicity guard).
+#[tokio::test]
+async fn test_commit_offset_monotonicity_guard_ignores_lower_value() {
+    let db = PgTideTestDb::start().await;
+    db.setup_outbox("mono-outbox").await;
+    db.setup_consumer_group("mono-group", "mono-outbox").await;
+
+    // Commit a high offset.
+    db.commit_offset("mono-group", "worker-mono", 100).await;
+
+    // Attempt to roll back to a lower offset using a direct INSERT … ON CONFLICT
+    // that mirrors the v0.23.0 monotonicity-guard update.
+    db.client
+        .execute(
+            "INSERT INTO tide.tide_consumer_offsets
+             (group_name, consumer_id, committed_offset, last_heartbeat)
+             VALUES ($1, $2, $3, now())
+             ON CONFLICT (group_name, consumer_id) DO UPDATE
+             SET committed_offset = EXCLUDED.committed_offset,
+                 last_heartbeat   = EXCLUDED.last_heartbeat
+             WHERE tide_consumer_offsets.committed_offset <= EXCLUDED.committed_offset",
+            &[&"mono-group", &"worker-mono", &50i64],
+        )
+        .await
+        .expect("upsert with guard should not fail");
+
+    // The offset must still be 100 (the lower value was ignored).
+    let row = db
+        .client
+        .query_one(
+            "SELECT committed_offset FROM tide.tide_consumer_offsets
+             WHERE group_name = $1 AND consumer_id = $2",
+            &[&"mono-group", &"worker-mono"],
+        )
+        .await
+        .expect("select offset");
+    let committed: i64 = row.get(0);
+    assert_eq!(
+        committed, 100,
+        "monotonicity guard must prevent rollback: expected 100, got {committed}"
+    );
+}
+
+/// v0.23.0: Assert that committing a higher offset advances correctly.
+#[tokio::test]
+async fn test_commit_offset_advances_with_higher_value() {
+    let db = PgTideTestDb::start().await;
+    db.setup_outbox("advance-outbox").await;
+    db.setup_consumer_group("advance-group", "advance-outbox")
+        .await;
+
+    db.commit_offset("advance-group", "worker-advance", 10)
+        .await;
+
+    // Advance to a higher offset.
+    db.client
+        .execute(
+            "INSERT INTO tide.tide_consumer_offsets
+             (group_name, consumer_id, committed_offset, last_heartbeat)
+             VALUES ($1, $2, $3, now())
+             ON CONFLICT (group_name, consumer_id) DO UPDATE
+             SET committed_offset = EXCLUDED.committed_offset,
+                 last_heartbeat   = EXCLUDED.last_heartbeat
+             WHERE tide_consumer_offsets.committed_offset <= EXCLUDED.committed_offset",
+            &[&"advance-group", &"worker-advance", &42i64],
+        )
+        .await
+        .expect("advance upsert should succeed");
+
+    let row = db
+        .client
+        .query_one(
+            "SELECT committed_offset FROM tide.tide_consumer_offsets
+             WHERE group_name = $1 AND consumer_id = $2",
+            &[&"advance-group", &"worker-advance"],
+        )
+        .await
+        .expect("select offset");
+    let committed: i64 = row.get(0);
+    assert_eq!(committed, 42, "offset must advance to 42, got {committed}");
+}

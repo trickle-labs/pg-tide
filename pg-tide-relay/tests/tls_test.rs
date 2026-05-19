@@ -14,6 +14,7 @@
 mod common;
 
 use common::PgTideTestDb;
+#[cfg(not(feature = "native-tls"))]
 use pg_tide_relay::error::RelayError;
 use pg_tide_relay::pg_tls::{parse_ssl_mode, with_ssl_mode, PgSslMode};
 
@@ -101,6 +102,11 @@ fn test_with_ssl_mode_disable() {
 ///
 /// This test does NOT require a running PostgreSQL instance; the error is
 /// returned before the connection is attempted.
+///
+/// When compiled with the `native-tls` feature, `sslmode=require` attempts a
+/// real TLS connection instead of returning `TlsRequired`, so this test is
+/// only meaningful without that feature.
+#[cfg(not(feature = "native-tls"))]
 #[tokio::test]
 async fn test_pg_tls_connect_require_fails_closed() {
     // Use a URL with sslmode=require pointing to a non-existent host so that
@@ -116,6 +122,10 @@ async fn test_pg_tls_connect_require_fails_closed() {
 }
 
 /// v0.15.0: Verify `sslmode=require` with DSN format also fails closed.
+///
+/// Only meaningful when compiled without the `native-tls` feature;
+/// see `test_pg_tls_connect_require_fails_closed`.
+#[cfg(not(feature = "native-tls"))]
 #[tokio::test]
 async fn test_pg_tls_connect_require_dsn_fails_closed() {
     let result = pg_tide_relay::pg_tls::connect("host=127.0.0.1 port=9999 sslmode=require").await;

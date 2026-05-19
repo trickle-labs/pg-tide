@@ -1,13 +1,19 @@
 /// PostgreSQL inbox sink for remote PG (RELAY-12).
-/// Writes messages to a pg-trickle inbox table on a different PostgreSQL instance.
-use tokio_postgres::Client;
+/// Writes messages to a pg_tide inbox table on a different PostgreSQL instance.
+///
+/// v0.23.0: Fixed column names to match `tide.inbox_create()` schema:
+/// `(event_id, source, payload, headers)` instead of the incorrect
+/// `(event_id, event_type, payload, received_at)`.  Also switched from a
+/// per-row INSERT loop to a single UNNEST batch insert (mirrors the local
+/// InboxSink introduced in v0.13.0).
+use tokio_postgres::types::Json;
 
 use crate::envelope::RelayMessage;
 use crate::error::RelayError;
 /// Remote PostgreSQL inbox sink.
 /// Uses tokio-postgres directly for PostgreSQL connections.
 pub struct PgInboxSink {
-    client: Client,
+    client: tokio_postgres::Client,
     inbox_table: String,
     dedup_count: u64,
 }
@@ -44,25 +50,49 @@ impl super::Sink for PgInboxSink {
     }
 
     async fn publish(&mut self, messages: &[RelayMessage]) -> Result<(), RelayError> {
-        for msg in messages {
-            let result = self
-                .client
-                .execute(
-                    &format!(
-                        "INSERT INTO tide.{table} (event_id, event_type, payload, received_at)
-                         VALUES ($1, $2, $3, now())
-                         ON CONFLICT (event_id) DO NOTHING",
-                        table = self.inbox_table
-                    ),
-                    &[&msg.dedup_key, &msg.subject, &msg.payload],
-                )
-                .await
-                .map_err(RelayError::from)?;
-
-            if result == 0 {
-                self.dedup_count += 1;
-            }
+        if messages.is_empty() {
+            return Ok(());
         }
+
+        // v0.23.0: UNNEST batch insert — one round-trip per batch, matching the
+        // local InboxSink pattern from v0.13.0.
+        // Column mapping:
+        //   event_id → msg.dedup_key   (TEXT idempotency key)
+        //   source   → msg.subject     (event subject / routing key)
+        //   payload  → msg.payload     (JSONB message body)
+        //   headers  → {"event_type": subject}  (JSONB metadata envelope)
+        let mut event_ids: Vec<String> = Vec::with_capacity(messages.len());
+        let mut sources: Vec<String> = Vec::with_capacity(messages.len());
+        let mut payloads: Vec<serde_json::Value> = Vec::with_capacity(messages.len());
+        let mut headers: Vec<serde_json::Value> = Vec::with_capacity(messages.len());
+
+        for msg in messages {
+            event_ids.push(msg.dedup_key.clone());
+            sources.push(msg.subject.clone());
+            payloads.push(msg.payload.clone());
+            headers.push(serde_json::json!({"event_type": msg.subject}));
+        }
+
+        let payload_params: Vec<Json<&serde_json::Value>> = payloads.iter().map(Json).collect();
+        let header_params: Vec<Json<&serde_json::Value>> = headers.iter().map(Json).collect();
+
+        let sql = format!(
+            "INSERT INTO tide.{table} (event_id, source, payload, headers) \
+             SELECT * FROM UNNEST($1::text[], $2::text[], $3::jsonb[], $4::jsonb[]) \
+             ON CONFLICT (event_id) DO NOTHING",
+            table = self.inbox_table
+        );
+
+        let inserted = self
+            .client
+            .execute(
+                &sql,
+                &[&event_ids, &sources, &payload_params, &header_params],
+            )
+            .await
+            .map_err(RelayError::from)?;
+
+        self.dedup_count += (messages.len() as u64).saturating_sub(inserted);
         Ok(())
     }
 
