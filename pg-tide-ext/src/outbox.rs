@@ -275,7 +275,7 @@ fn outbox_status_impl(name: &str) -> Result<pgrx::JsonB, PgTideError> {
             "SELECT \
                COUNT(m.id) FILTER (WHERE m.consumed_at IS NULL)::bigint, \
                COUNT(m.id)::bigint, \
-               EXTRACT(epoch FROM now() - MIN(m.created_at) FILTER (WHERE m.consumed_at IS NULL)), \
+               EXTRACT(epoch FROM now() - MIN(m.created_at) FILTER (WHERE m.consumed_at IS NULL))::float8, \
                COALESCE(c.retention_hours, 24)::int \
              FROM tide.tide_outbox_config c \
              LEFT JOIN tide.tide_outbox_messages m ON m.outbox_name = c.outbox_name \
