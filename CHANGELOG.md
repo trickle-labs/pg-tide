@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.20.0 — DuckLake Native Catalog Integration](#0200--2026-05-19--ducklake-native-catalog-integration)
 - [0.19.0 — Supply Chain, Observability & Operational Docs](#0190--2026-05-14--supply-chain-observability--operational-docs)
 - [0.18.0 — Security Completeness, LISTEN Hot-Reload & API Polish](#0180--2026-05-13--security-completeness-listen-hot-reload--api-polish)
 - [0.17.0 — Catalog Integrity, DLQ Reliability & Contract Correctness](#0170--2026-05-12--catalog-integrity-dlq-reliability--contract-correctness)
@@ -29,6 +30,75 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 <!-- TOC end -->
 
 ---
+
+## [0.20.0] — 2026-05-19 — DuckLake Native Catalog Integration
+
+v0.20.0 upgrades the DuckLake relay sink to speak the real DuckLake v1.0
+catalog protocol, making all data written by the pg-tide relay immediately
+queryable by DuckDB — with no glue code, no extra tooling, and no migration.
+From the moment this release ships, any DuckDB instance can
+`ATTACH 'ducklake:postgres:...'` to the same PostgreSQL database and query
+the event history with full time-travel, filter pushdown, and schema
+evolution support.
+
+### DuckLake Sink — v1.0 Native Catalog Writes
+
+- **Real DuckLake v1.0 catalog tables** — the relay sink now writes to the
+  official DuckLake catalog schema: `ducklake_snapshot`,
+  `ducklake_snapshot_changes`, `ducklake_data_file`, `ducklake_table_stats`,
+  `ducklake_table_column_stats`, `ducklake_file_column_stats`,
+  `ducklake_schema`, `ducklake_table`, `ducklake_column`, and
+  `ducklake_metadata`. The proprietary `tide.ducklake_snapshots` table is no
+  longer used by new installations.
+- **Atomic catalog transactions** — for each relay batch, a single PostgreSQL
+  transaction creates the snapshot, registers the Parquet data file, writes
+  per-file column statistics, updates table-level statistics, and appends a
+  snapshot change record. Either everything commits or nothing does.
+- **Auto-bootstrap** — if no DuckLake schema and table exist for a given
+  outbox stream, the sink creates all required catalog entries as part of the
+  first batch. No manual DDL is required.
+- **Column statistics for filter pushdown** — the sink computes min/max
+  values, null counts, and distinct-value counts per column and writes them
+  to `ducklake_file_column_stats` and `ducklake_table_column_stats`. DuckDB
+  can use these to prune Parquet files during query planning without reading
+  them — critical for large event archives with selective queries.
+- **NOTIFY-based change notifications** — after each batch commit the sink
+  issues `pg_notify('tide_ducklake_changes', {...})`. Application services,
+  incremental materialized view refreshers, and downstream relay instances can
+  subscribe for near-real-time lake change notifications without polling.
+- **`atomic_lake_writes` config option** — set
+  `"ducklake_atomic": true` in the relay pipeline config to opt in to
+  same-transaction atomicity mode. When the relay connects to the same
+  PostgreSQL instance as the pg_tide outbox, the consumer-offset advance and
+  the DuckLake snapshot commit can be wrapped in a single transaction —
+  delivering exactly-once guarantee from OLTP event to data lake.
+- **`catalog_schema` config option** — the PostgreSQL schema where DuckLake
+  v1.0 catalog tables live is now configurable (default: `"ducklake"`).
+
+### New SQL Helper Functions
+
+- **`tide.ducklake_attach(catalog_schema text DEFAULT 'ducklake', data_path text DEFAULT '')`**
+  → `TEXT` — returns the DuckDB `ATTACH` statement pre-populated with the
+  correct PostgreSQL connection string, removing friction for first-time users.
+
+  ```sql
+  SELECT tide.ducklake_attach();
+  -- ATTACH 'ducklake:postgres:dbname=mydb host=localhost port=5432' AS ducklake;
+  ```
+
+- **`tide.ducklake_migrate_catalog(catalog_schema text DEFAULT 'ducklake')`**
+  — one-time migration helper that converts any existing
+  `tide.ducklake_snapshots` rows (v0.10.0 format) into the new DuckLake v1.0
+  catalog format and drops the old table. Safe to call multiple times
+  (idempotent).
+
+### Extension Migration Chain
+
+- **`lib.rs` migration chain completed** — the pgrx extension SQL chain now
+  includes all migration files through v0.20.0 (0.17.0→0.18.0,
+  0.18.0→0.19.0, 0.19.0→0.20.0 were previously missing). Fresh installs via
+  `CREATE EXTENSION pg_tide` and upgrade paths via `ALTER EXTENSION pg_tide
+  UPDATE` now produce identical catalog schemas.
 
 ## [0.19.0] — 2026-05-14 — Supply Chain, Observability & Operational Docs
 

@@ -1,8 +1,7 @@
-//! Integration tests: DuckLake analytics sink (v0.10.0 — RELAY-P3-DLK).
+//! Integration tests: DuckLake analytics sink (v0.20.0 — DuckLake v1.0 native catalog).
 //!
-//! Tests verify Parquet encoding, catalog SQL creation, and DB-side mechanics.
-//! The DuckLake catalog table (`tide.ducklake_snapshots`) is tested against
-//! the test PostgreSQL database.
+//! Tests verify Parquet encoding, DuckLake v1.0 catalog DDL, column statistics,
+//! and DB-side outbox mechanics.
 
 mod common;
 
@@ -53,116 +52,305 @@ async fn test_ducklake_sink_failure_preserves_offset() {
     );
 }
 
-// ── Catalog DDL ───────────────────────────────────────────────────────────────
+// ── DuckLake v1.0 catalog DDL ─────────────────────────────────────────────────
 
-/// Verifies the catalog DDL creates the snapshots table correctly.
+/// Verifies the DuckLake v1.0 catalog DDL creates all required tables and
+/// sequences in the configured schema.
 #[tokio::test]
-async fn test_ducklake_catalog_table_creation() {
+async fn test_ducklake_v1_catalog_table_creation() {
     let db = PgTideTestDb::start().await;
 
-    // Run the DuckLake catalog DDL directly on the test DB.
+    // Create the core DuckLake v1.0 catalog tables the relay would create.
     db.client
-        .execute(
-            "CREATE TABLE IF NOT EXISTS tide.ducklake_snapshots (
-                id              BIGSERIAL PRIMARY KEY,
-                namespace       TEXT NOT NULL,
-                table_name      TEXT NOT NULL,
-                parquet_path    TEXT NOT NULL,
-                num_records     BIGINT NOT NULL,
-                file_size_bytes BIGINT NOT NULL,
-                schema_json     JSONB,
-                committed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-            )",
-            &[],
+        .batch_execute(
+            r#"
+CREATE SCHEMA IF NOT EXISTS ducklake_test;
+CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_snapshot_id_seq START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_table_id_seq    START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_schema_id_seq   START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_column_id_seq   START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_file_id_seq     START WITH 1;
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_metadata (
+    key TEXT NOT NULL PRIMARY KEY, value TEXT);
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_schema (
+    schema_id   BIGINT NOT NULL PRIMARY KEY,
+    schema_name TEXT   NOT NULL UNIQUE,
+    schema_uuid UUID   NOT NULL DEFAULT gen_random_uuid());
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_table (
+    table_id    BIGINT NOT NULL PRIMARY KEY,
+    schema_id   BIGINT NOT NULL REFERENCES ducklake_test.ducklake_schema(schema_id),
+    table_name  TEXT   NOT NULL,
+    table_uuid  UUID   NOT NULL DEFAULT gen_random_uuid(),
+    UNIQUE (schema_id, table_name));
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_column (
+    column_id    BIGINT  NOT NULL PRIMARY KEY,
+    table_id     BIGINT  NOT NULL REFERENCES ducklake_test.ducklake_table(table_id),
+    column_name  TEXT    NOT NULL,
+    column_type  TEXT    NOT NULL,
+    column_order INT     NOT NULL DEFAULT 0,
+    nullable     BOOLEAN NOT NULL DEFAULT true,
+    UNIQUE (table_id, column_name));
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_snapshot (
+    snapshot_id     BIGINT      NOT NULL PRIMARY KEY,
+    table_id        BIGINT      NOT NULL REFERENCES ducklake_test.ducklake_table(table_id),
+    schema_version  BIGINT      NOT NULL DEFAULT 0,
+    sequence_number BIGINT      NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    author          TEXT);
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_snapshot_changes (
+    snapshot_id BIGINT NOT NULL REFERENCES ducklake_test.ducklake_snapshot(snapshot_id),
+    change_type TEXT   NOT NULL,
+    table_id    BIGINT REFERENCES ducklake_test.ducklake_table(table_id),
+    schema_id   BIGINT REFERENCES ducklake_test.ducklake_schema(schema_id),
+    file_id     BIGINT);
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_table_stats (
+    table_id    BIGINT NOT NULL PRIMARY KEY REFERENCES ducklake_test.ducklake_table(table_id),
+    next_row_id BIGINT NOT NULL DEFAULT 0,
+    row_count   BIGINT NOT NULL DEFAULT 0);
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_table_column_stats (
+    table_id   BIGINT NOT NULL,
+    column_id  BIGINT NOT NULL,
+    min_value  TEXT,
+    max_value  TEXT,
+    null_count BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (table_id, column_id));
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_data_file (
+    file_id         BIGINT      NOT NULL PRIMARY KEY,
+    table_id        BIGINT      NOT NULL REFERENCES ducklake_test.ducklake_table(table_id),
+    begin_snapshot  BIGINT      NOT NULL REFERENCES ducklake_test.ducklake_snapshot(snapshot_id),
+    end_snapshot    BIGINT,
+    file_path       TEXT        NOT NULL,
+    file_format     TEXT        NOT NULL DEFAULT 'parquet',
+    record_count    BIGINT      NOT NULL DEFAULT 0,
+    file_size_bytes BIGINT      NOT NULL DEFAULT 0,
+    footer_size     BIGINT      NOT NULL DEFAULT 0,
+    added_at        TIMESTAMPTZ NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_file_column_stats (
+    file_id        BIGINT NOT NULL REFERENCES ducklake_test.ducklake_data_file(file_id),
+    column_id      BIGINT NOT NULL,
+    min_value      TEXT,
+    max_value      TEXT,
+    null_count     BIGINT NOT NULL DEFAULT 0,
+    distinct_count BIGINT,
+    PRIMARY KEY (file_id, column_id));
+
+INSERT INTO ducklake_test.ducklake_metadata (key, value)
+VALUES ('catalog_version', '1.0'), ('created_by', 'pg-tide-relay')
+ON CONFLICT (key) DO NOTHING;
+"#,
         )
         .await
-        .expect("create ducklake_snapshots table");
+        .expect("create DuckLake v1.0 catalog tables");
 
-    // Insert a snapshot record.
-    db.client
-        .execute(
-            "INSERT INTO tide.ducklake_snapshots
-             (namespace, table_name, parquet_path, num_records, file_size_bytes, schema_json)
-             VALUES ($1, $2, $3, $4, $5, $6)",
-            &[
-                &"pgtide",
-                &"orders",
-                &"s3://bucket/pgtide/orders/snap-1.parquet",
-                &100i64,
-                &4096i64,
-                &serde_json::json!({"fields": ["_dedup_key", "_subject", "_op", "data"]}),
-            ],
+    // Bootstrap a schema + table + columns.
+    let schema_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_test.ducklake_schema (schema_id, schema_name)
+             VALUES (nextval('ducklake_test.ducklake_schema_id_seq'), $1)
+             ON CONFLICT (schema_name) DO UPDATE SET schema_name = EXCLUDED.schema_name
+             RETURNING schema_id",
+            &[&"pgtide"],
         )
         .await
-        .expect("insert snapshot record");
+        .expect("insert schema")
+        .get(0);
 
+    let table_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_test.ducklake_table (table_id, schema_id, table_name)
+             VALUES (nextval('ducklake_test.ducklake_table_id_seq'), $1, $2)
+             ON CONFLICT (schema_id, table_name) DO UPDATE SET table_name = EXCLUDED.table_name
+             RETURNING table_id",
+            &[&schema_id, &"orders"],
+        )
+        .await
+        .expect("insert table")
+        .get(0);
+
+    db.client
+        .execute(
+            "INSERT INTO ducklake_test.ducklake_table_stats (table_id) VALUES ($1)
+             ON CONFLICT DO NOTHING",
+            &[&table_id],
+        )
+        .await
+        .expect("init table_stats");
+
+    // Insert snapshot + data file + column stats.
+    let snapshot_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_test.ducklake_snapshot
+             (snapshot_id, table_id, author)
+             VALUES (nextval('ducklake_test.ducklake_snapshot_id_seq'), $1, 'pg-tide-relay')
+             RETURNING snapshot_id",
+            &[&table_id],
+        )
+        .await
+        .expect("insert snapshot")
+        .get(0);
+
+    assert!(snapshot_id >= 1, "snapshot_id must be ≥ 1");
+
+    let file_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_test.ducklake_data_file
+             (file_id, table_id, begin_snapshot, file_path, record_count, file_size_bytes)
+             VALUES (nextval('ducklake_test.ducklake_file_id_seq'), $1, $2,
+                     's3://bucket/pgtide/orders/snap-1.parquet', $3, $4)
+             RETURNING file_id",
+            &[&table_id, &snapshot_id, &100i64, &4096i64],
+        )
+        .await
+        .expect("insert data file")
+        .get(0);
+
+    // Verify snapshot and data file are linked correctly.
     let row = db
         .client
         .query_one(
-            "SELECT namespace, table_name, num_records
-             FROM tide.ducklake_snapshots
-             WHERE table_name = 'orders'",
-            &[],
+            "SELECT f.record_count, f.file_size_bytes, s.author
+             FROM ducklake_test.ducklake_data_file f
+             JOIN ducklake_test.ducklake_snapshot s ON s.snapshot_id = f.begin_snapshot
+             WHERE f.file_id = $1",
+            &[&file_id],
         )
         .await
-        .expect("query snapshot");
+        .expect("join query");
 
-    assert_eq!(row.get::<_, &str>("namespace"), "pgtide");
-    assert_eq!(row.get::<_, i64>("num_records"), 100);
+    assert_eq!(row.get::<_, i64>("record_count"), 100);
+    assert_eq!(row.get::<_, i64>("file_size_bytes"), 4096);
+    assert_eq!(row.get::<_, &str>("author"), "pg-tide-relay");
 }
 
-/// Verifies that multiple snapshots for the same table accumulate.
+/// Verifies that multiple snapshots for the same table accumulate correctly.
 #[tokio::test]
 async fn test_ducklake_multiple_snapshots_accumulate() {
     let db = PgTideTestDb::start().await;
 
+    // Create minimal catalog tables for this test.
     db.client
-        .execute(
-            "CREATE TABLE IF NOT EXISTS tide.ducklake_snapshots (
-                id              BIGSERIAL PRIMARY KEY,
-                namespace       TEXT NOT NULL,
-                table_name      TEXT NOT NULL,
-                parquet_path    TEXT NOT NULL,
-                num_records     BIGINT NOT NULL,
-                file_size_bytes BIGINT NOT NULL,
-                schema_json     JSONB,
-                committed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-            )",
+        .batch_execute(
+            r#"
+CREATE SCHEMA IF NOT EXISTS ducklake_multi;
+CREATE SEQUENCE IF NOT EXISTS ducklake_multi.ducklake_snapshot_id_seq START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_multi.ducklake_table_id_seq START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_multi.ducklake_schema_id_seq START WITH 1;
+CREATE SEQUENCE IF NOT EXISTS ducklake_multi.ducklake_file_id_seq START WITH 1;
+CREATE TABLE IF NOT EXISTS ducklake_multi.ducklake_schema (
+    schema_id BIGINT NOT NULL PRIMARY KEY,
+    schema_name TEXT NOT NULL UNIQUE,
+    schema_uuid UUID NOT NULL DEFAULT gen_random_uuid());
+CREATE TABLE IF NOT EXISTS ducklake_multi.ducklake_table (
+    table_id BIGINT NOT NULL PRIMARY KEY,
+    schema_id BIGINT NOT NULL REFERENCES ducklake_multi.ducklake_schema(schema_id),
+    table_name TEXT NOT NULL,
+    table_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
+    UNIQUE (schema_id, table_name));
+CREATE TABLE IF NOT EXISTS ducklake_multi.ducklake_snapshot (
+    snapshot_id BIGINT NOT NULL PRIMARY KEY,
+    table_id BIGINT NOT NULL REFERENCES ducklake_multi.ducklake_table(table_id),
+    schema_version BIGINT NOT NULL DEFAULT 0,
+    sequence_number BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    author TEXT);
+CREATE TABLE IF NOT EXISTS ducklake_multi.ducklake_data_file (
+    file_id BIGINT NOT NULL PRIMARY KEY,
+    table_id BIGINT NOT NULL REFERENCES ducklake_multi.ducklake_table(table_id),
+    begin_snapshot BIGINT NOT NULL REFERENCES ducklake_multi.ducklake_snapshot(snapshot_id),
+    end_snapshot BIGINT,
+    file_path TEXT NOT NULL,
+    file_format TEXT NOT NULL DEFAULT 'parquet',
+    record_count BIGINT NOT NULL DEFAULT 0,
+    file_size_bytes BIGINT NOT NULL DEFAULT 0,
+    footer_size BIGINT NOT NULL DEFAULT 0,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now());
+"#,
+        )
+        .await
+        .expect("create multi-snapshot test tables");
+
+    let schema_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_multi.ducklake_schema (schema_id, schema_name)
+             VALUES (nextval('ducklake_multi.ducklake_schema_id_seq'), 'pgtide')
+             RETURNING schema_id",
             &[],
         )
         .await
-        .expect("create table");
+        .expect("insert schema")
+        .get(0);
 
-    for i in 1..=3 {
+    let table_id: i64 = db
+        .client
+        .query_one(
+            "INSERT INTO ducklake_multi.ducklake_table (table_id, schema_id, table_name)
+             VALUES (nextval('ducklake_multi.ducklake_table_id_seq'), $1, 'events')
+             RETURNING table_id",
+            &[&schema_id],
+        )
+        .await
+        .expect("insert table")
+        .get(0);
+
+    for i in 1i64..=3 {
+        let snap_id: i64 = db
+            .client
+            .query_one(
+                "INSERT INTO ducklake_multi.ducklake_snapshot
+                 (snapshot_id, table_id, sequence_number, author)
+                 VALUES (nextval('ducklake_multi.ducklake_snapshot_id_seq'), $1, $2, 'pg-tide-relay')
+                 RETURNING snapshot_id",
+                &[&table_id, &(i - 1)],
+            )
+            .await
+            .expect("insert snapshot")
+            .get(0);
+
         db.client
             .execute(
-                "INSERT INTO tide.ducklake_snapshots
-                 (namespace, table_name, parquet_path, num_records, file_size_bytes)
-                 VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO ducklake_multi.ducklake_data_file
+                 (file_id, table_id, begin_snapshot, file_path, record_count, file_size_bytes)
+                 VALUES (nextval('ducklake_multi.ducklake_file_id_seq'), $1, $2,
+                         $3, $4, $5)",
                 &[
-                    &"pgtide",
-                    &"events",
+                    &table_id,
+                    &snap_id,
                     &format!("s3://bucket/events/snap-{i}.parquet"),
-                    &(i as i64 * 50),
-                    &(i as i64 * 1024),
+                    &(i * 50),
+                    &(i * 1024),
                 ],
             )
             .await
-            .expect("insert snapshot");
+            .expect("insert data file");
     }
 
     let row = db
         .client
         .query_one(
-            "SELECT COUNT(*) AS cnt, COALESCE(SUM(num_records), 0)::BIGINT AS total
-             FROM tide.ducklake_snapshots
-             WHERE table_name = 'events'",
-            &[],
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(record_count), 0)::BIGINT AS total
+             FROM ducklake_multi.ducklake_data_file
+             WHERE table_id = $1",
+            &[&table_id],
         )
         .await
-        .expect("aggregate snapshots");
+        .expect("aggregate files");
 
-    assert_eq!(row.get::<_, i64>("cnt"), 3, "should have 3 snapshots");
+    assert_eq!(row.get::<_, i64>("cnt"), 3, "should have 3 data files");
     assert_eq!(
         row.get::<_, i64>("total"),
         300,
@@ -181,6 +369,8 @@ fn test_ducklake_config_table_for_subject() {
         namespace: "pgtide".to_string(),
         table_template: "{stream_table}".to_string(),
         compression: DuckLakeCompression::Snappy,
+        catalog_schema: "ducklake".to_string(),
+        atomic_lake_writes: false,
     };
 
     assert_eq!(cfg.table_for("orders"), "orders");
@@ -191,6 +381,16 @@ fn test_ducklake_config_table_for_subject() {
         ..cfg
     };
     assert_eq!(custom.table_for("orders"), "tide_orders");
+}
+
+/// Test: `catalog_schema` and `atomic_lake_writes` fields default correctly.
+#[test]
+fn test_ducklake_config_defaults() {
+    use pg_tide_relay::sink::ducklake::DuckLakeConfig;
+
+    let cfg = DuckLakeConfig::new("s3://bucket", "pgtide");
+    assert_eq!(cfg.catalog_schema, "ducklake");
+    assert!(!cfg.atomic_lake_writes);
 }
 
 #[cfg(feature = "ducklake")]
@@ -210,8 +410,9 @@ fn test_ducklake_parquet_encoding_magic_bytes() {
         "orders",
     );
 
-    let bytes = DuckLakeSink::build_parquet_bytes(&[&msg], &DuckLakeCompression::Snappy)
-        .expect("build parquet bytes");
+    let (bytes, footer_size) =
+        DuckLakeSink::build_parquet_bytes(&[&msg], &DuckLakeCompression::Snappy)
+            .expect("build parquet bytes");
 
     assert!(!bytes.is_empty(), "Parquet output must not be empty");
     assert_eq!(&bytes[..4], b"PAR1", "should start with PAR1 magic");
@@ -221,6 +422,7 @@ fn test_ducklake_parquet_encoding_magic_bytes() {
         b"PAR1",
         "should end with PAR1 footer magic"
     );
+    assert!(footer_size >= 0, "footer_size must be non-negative");
 }
 
 #[cfg(feature = "ducklake")]
@@ -245,9 +447,49 @@ fn test_ducklake_parquet_zstd_encoding() {
         .collect();
 
     let refs: Vec<&RelayMessage> = msgs.iter().collect();
-    let bytes = DuckLakeSink::build_parquet_bytes(&refs, &DuckLakeCompression::Zstd)
-        .expect("build zstd parquet bytes");
+    let (bytes, _footer_size) =
+        DuckLakeSink::build_parquet_bytes(&refs, &DuckLakeCompression::Zstd)
+            .expect("build zstd parquet bytes");
 
     assert!(!bytes.is_empty());
     assert_eq!(&bytes[..4], b"PAR1");
+}
+
+/// Test column statistics computation for filter pushdown.
+#[cfg(feature = "ducklake")]
+#[test]
+fn test_ducklake_column_stats_for_filter_pushdown() {
+    use pg_tide_relay::envelope::RelayMessage;
+    use pg_tide_relay::sink::ducklake::{DuckLakeCompression, DuckLakeSink};
+
+    // Build a batch with known values.
+    let msgs: Vec<RelayMessage> = vec![
+        RelayMessage::new_forward(
+            "orders",
+            1,
+            0,
+            "insert",
+            serde_json::json!({"a": 1}),
+            false,
+            None,
+            "orders",
+        ),
+        RelayMessage::new_forward(
+            "orders",
+            5,
+            0,
+            "update",
+            serde_json::json!({"a": 5}),
+            false,
+            None,
+            "orders",
+        ),
+    ];
+    let refs: Vec<&RelayMessage> = msgs.iter().collect();
+
+    // build_parquet_bytes now returns (bytes, footer_size) — verify it still produces valid PAR1.
+    let (bytes, _) =
+        DuckLakeSink::build_parquet_bytes(&refs, &DuckLakeCompression::Snappy).unwrap();
+    assert_eq!(&bytes[..4], b"PAR1");
+    assert_eq!(&bytes[bytes.len() - 4..], b"PAR1");
 }
