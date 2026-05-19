@@ -267,16 +267,19 @@ fn outbox_status_impl(name: &str) -> Result<pgrx::JsonB, PgTideError> {
 
     // v0.24.0: Single SPI call using FILTER aggregates — eliminates 2× round-trips
     // compared to the previous three-query approach.
+    // Drive from config (always 1 row) LEFT JOIN messages so that an empty outbox
+    // still returns a row instead of 0 rows (which would cause an SpiTupleTable
+    // "positioned before start or after end" error when calling .get()).
     let (pending, total, oldest_age_secs, retention) = Spi::connect(|client| {
         let tup = client.select(
             "SELECT \
-               COUNT(*) FILTER (WHERE m.consumed_at IS NULL)::bigint, \
-               COUNT(*)::bigint, \
+               COUNT(m.id) FILTER (WHERE m.consumed_at IS NULL)::bigint, \
+               COUNT(m.id)::bigint, \
                EXTRACT(epoch FROM now() - MIN(m.created_at) FILTER (WHERE m.consumed_at IS NULL)), \
                COALESCE(c.retention_hours, 24)::int \
-             FROM tide.tide_outbox_messages m \
-             JOIN tide.tide_outbox_config c ON c.outbox_name = m.outbox_name \
-             WHERE m.outbox_name = $1 \
+             FROM tide.tide_outbox_config c \
+             LEFT JOIN tide.tide_outbox_messages m ON m.outbox_name = c.outbox_name \
+             WHERE c.outbox_name = $1 \
              GROUP BY c.retention_hours",
             None,
             &[name.into()],
