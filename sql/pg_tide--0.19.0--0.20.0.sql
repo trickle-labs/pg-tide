@@ -186,8 +186,15 @@ COMMENT ON FUNCTION tide.ducklake_migrate_catalog(text) IS
     'real DuckLake v1.0 catalog tables in catalog_schema. Idempotent and safe to '
     'call even if no legacy rows exist.';
 
-GRANT EXECUTE ON FUNCTION tide.ducklake_migrate_catalog(text)
-    TO pg_tide_admin;
+-- Grant to pg_tide_admin if the role exists (it is created externally by the
+-- DBA, so it may not exist in fresh installs or test environments).
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'pg_tide_admin') THEN
+        GRANT EXECUTE ON FUNCTION tide.ducklake_migrate_catalog(text) TO pg_tide_admin;
+    END IF;
+END
+$$;
 
 -- ── Extension version comment ─────────────────────────────────────────────────
 
