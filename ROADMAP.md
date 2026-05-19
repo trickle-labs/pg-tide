@@ -257,6 +257,107 @@
 
 ---
 
+### Data Lake Ecosystem — DuckLake Integration (v0.20.x – v0.22.x)
+
+pg-tide and DuckLake share a foundational bet: PostgreSQL is the right place to coordinate critical data operations. DuckLake stores its entire lakehouse catalog — snapshots, file registrations, column statistics, schema evolution history — as ordinary PostgreSQL tables. pg-tide's outbox and relay live in the same database. This co-location makes it possible to commit "outbox offset consumed" and "DuckLake snapshot created" in a single PostgreSQL transaction, delivering an exactly-once guarantee from OLTP event to data lake that no other pipeline tool can currently offer. The three releases below build this integration progressively: first the correct catalog wire protocol, then streaming-optimised inlining and schema evolution, then bidirectional flow and the full ecosystem surface.
+
+| Version | Theme | Status | Scope | Full details |
+|---------|-------|--------|-------|--------------|
+| v0.20.0 | DuckLake native catalog integration: upgrade the DuckLake sink to speak the real DuckLake v1.0 spec (write `ducklake_snapshot`, `ducklake_data_file`, `ducklake_file_column_stats`), same-transaction atomicity mode, NOTIFY-based lake change notifications, column statistics for filter pushdown, `tide.ducklake_attach()` SQL helper, auto-create DuckLake schema/table on first pipeline | 🔜 Planned | Large | [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
+| v0.21.0 | DuckLake streaming, inlining & schema evolution: data inlining for sub-threshold batches (rows written directly to `ducklake_inlined_data_*` tables instead of Parquet files — eliminating the small-files problem for streaming workloads), automatic schema evolution bridge (new JSON fields in outbox messages trigger `ducklake_column` entries), snapshot-to-consumer-offset mapping (time-travel replay via `AT (VERSION => N)`), auto-partition by time/event-type, DLQ archive to DuckLake table | 🔜 Future | Large | [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
+| v0.22.0 | DuckLake bidirectional flow & ecosystem surface: reverse relay source (poll new DuckLake snapshots → deliver to pg-tide inbox, enabling lake-to-application data flow), cross-lake replication (DuckLake → DuckLake fan-out via pg-tide as transport), `pg-tide ducklake` CLI sub-commands (`snapshots`, `checkpoint`, `flush-inlined`), Docker Compose getting-started example (PostgreSQL + pg-tide + DuckLake + DuckDB + Grafana in a single `docker compose up`), tutorial suite and conference demo scripts | 🔜 Future | Large | [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
+
+#### v0.20.0 — DuckLake Native Catalog Integration (detail)
+
+This release replaces the current custom `tide.ducklake_snapshots` catalog schema with the real DuckLake v1.0 specification tables, making all data written by the pg-tide relay immediately queryable by DuckDB — with no glue code, no extra tooling, and no migration. From the moment this release ships, any DuckDB instance can `ATTACH 'ducklake:postgres:...'` to the same PostgreSQL database and query the event history with full time-travel, filter pushdown, and schema evolution support.
+
+**Native DuckLake v1.0 catalog writes**
+- Replace the `tide.ducklake_snapshots` table with the official 28-table DuckLake catalog schema (`ducklake_snapshot`, `ducklake_snapshot_changes`, `ducklake_data_file`, `ducklake_table_stats`, `ducklake_table_column_stats`, `ducklake_file_column_stats`, `ducklake_schema`, `ducklake_table`, `ducklake_column`, `ducklake_metadata`, and the remaining supporting tables per spec v1.0).
+- For each relay batch, execute a single PostgreSQL transaction that: writes the Parquet file to object storage, inserts into `ducklake_data_file` with correct `begin_snapshot`, `record_count`, `file_size_bytes`, and `footer_size`; increments `ducklake_table_stats.next_row_id`; upserts global column min/max in `ducklake_table_column_stats`; writes per-file column statistics to `ducklake_file_column_stats`; creates a new `ducklake_snapshot` entry with monotonically increasing ID from a PostgreSQL sequence; and appends a `ducklake_snapshot_changes` record tagged `author = 'pg-tide-relay'`.
+- Auto-bootstrap: if a DuckLake schema and table do not yet exist for a given outbox stream, the sink creates them (inserts into `ducklake_schema`, `ducklake_table`, and `ducklake_column`) as part of the first batch, requiring no manual DDL.
+- Migration path: a one-time `tide.ducklake_migrate_catalog()` function converts any existing `tide.ducklake_snapshots` rows into the new format and drops the old table.
+
+**Same-transaction atomicity mode**
+- When the relay is connected to the same PostgreSQL instance that hosts both the pg-tide outbox and the DuckLake catalog, enable an opt-in `atomic_lake_writes = true` sink option that wraps the outbox consumer-offset advance and the DuckLake catalog commit inside a single database transaction.
+- This makes pg-tide the only pipeline tool that can guarantee exactly-once delivery from a PostgreSQL transaction to a data lake: either the offset advances and the snapshot is committed together, or neither happens. No duplicate events survive a relay crash.
+- Expose as `tide.relay_set_outbox_v2(...)` config key `"ducklake_atomic": true`; document the requirement that the relay's `--postgres-url` must point at the catalog database.
+
+**Column statistics for filter pushdown**
+- While building each Parquet batch, compute per-column min/max values, null counts, and distinct-value counts. Write these to `ducklake_file_column_stats` so that DuckDB can prune Parquet files during query planning without reading them — critical for large event archives with selective queries.
+- Support statistics for all DuckLake-compatible column types that appear in pg-tide messages: `VARCHAR` (dedup key, subject, op), `BIGINT` (outbox ID), and JSONB-flattened scalar fields.
+
+**NOTIFY-based DuckLake change notifications**
+- After committing each DuckLake snapshot, issue `pg_notify('tide_ducklake_changes', json_build_object('table', table_name, 'snapshot_id', new_snapshot_id)::text)`. External consumers — application services, incremental materialized view refreshers, or downstream relay instances — subscribe and receive near-real-time notification of new lake data without polling.
+- Document the LISTEN/NOTIFY pattern for DuckDB-based consumers in the operations guide.
+
+**`tide.ducklake_attach()` SQL helper**
+- A convenience function that returns the DuckDB `ATTACH` statement pre-populated with the correct PostgreSQL connection string and catalog database name, removing friction for first-time users.
+
+```sql
+SELECT tide.ducklake_attach();
+-- Returns: ATTACH 'ducklake:postgres:dbname=mydb host=localhost' AS my_ducklake (DATA_PATH 's3://my-bucket/events/');
+```
+
+#### v0.21.0 — DuckLake Streaming, Inlining & Schema Evolution (detail)
+
+This release tackles the two hardest problems for streaming workloads on data lakes: the small-files problem and schema drift. DuckLake's data inlining feature stores small writes directly in the PostgreSQL catalog database — zero Parquet files created, sub-millisecond write latency, full time-travel preserved. DuckLake's benchmarks demonstrate 926× faster query performance and 105× faster ingestion compared to Iceberg for streaming workloads. pg-tide is the perfect producer for inlining because its outbox is already in PostgreSQL: the relay can batch inlined writes without any extra network hops.
+
+**Data inlining for streaming workloads**
+- Add an `inline_row_limit` option to the DuckLake sink config (default: 10, matching DuckLake's default). Batches at or below this threshold are written directly to `ducklake_inlined_data_{table_id}_{schema_version}` in the catalog rather than flushing to Parquet.
+- For inlined inserts: write rows with `row_id`, `begin_snapshot`, `end_snapshot = NULL`, and the message payload columns. For inlined deletes (DLQ-tombstone ops): set `end_snapshot` on existing inlined rows rather than creating a delete file.
+- Above the threshold, the existing Parquet-write path is used. The inlining and Parquet paths are transparent to DuckDB consumers: queries always return the correct result regardless of where the data lives.
+- Expose a `pg-tide ducklake flush <pipeline>` CLI command that triggers a `CHECKPOINT` equivalent — materialising all inlined data to a consolidated Parquet file and releasing the catalog storage — for use in scheduled maintenance windows.
+
+**Automatic schema evolution bridge**
+- On each relay batch, compare the JSON keys present in the current message payloads against the known `ducklake_column` entries for the target table. When new keys are detected, classify the change: additive (new nullable column) vs. breaking (type conflict on existing key).
+- For additive changes: within the snapshot transaction, insert new `ducklake_column` rows with `begin_snapshot = new_snapshot_id` and `nulls_allowed = true`. DuckDB handles missing values in older Parquet files transparently via column projection. Update the Parquet schema for the current file to include the new column.
+- For breaking changes: apply the pipeline's configured `on_schema_change` policy — `pause`, `route_to_dlq`, `warn_and_continue`, or `auto_new_stream` — matching the v0.13.0 guardrail semantics.
+- Expose the schema fingerprint and detected-column history in a new `tide.ducklake_column_history(pipeline_name)` SQL view for observability.
+
+**Snapshot-to-consumer-offset mapping**
+- Record a mapping from pg-tide consumer group offset to DuckLake snapshot ID in a new `tide.ducklake_offset_map(pipeline_name, consumer_group, outbox_offset, snapshot_id, committed_at)` table, written atomically with each snapshot commit.
+- This enables consumers to ask: "give me all events since I last checkpointed" by querying `FROM events AT (VERSION => last_snapshot_id + 1)` through the latest snapshot — turning the DuckLake table into a replayable, SQL-queryable event log with no message broker required.
+- Expose a `tide.ducklake_replay_range(pipeline, from_offset, to_offset)` function that returns the corresponding DuckDB `AT (VERSION => …)` range expression, ready to paste into a DuckDB session.
+
+**Auto-partition by time and event type**
+- When creating a new DuckLake table for an outbox stream, inspect the configured `wire_format` and outbox metadata to determine whether to apply hidden partitioning. For event streams, default to daily time partitioning on `_committed_at`. For subject-routed streams, offer bucket partitioning on `_subject`.
+- Register partition information in `ducklake_partition_info` and `ducklake_partition_column` so that DuckDB's query planner can prune Parquet files for time-range and event-type queries without scanning the full archive.
+- Expose `"ducklake_partition": "daily" | "monthly" | "bucket:N" | "none"` in the sink config.
+
+**DLQ archive to DuckLake**
+- Add a background sweeper task that periodically moves aged-out DLQ entries (older than a configurable `dlq_archive_after` TTL) from `tide.relay_dlq` into a dedicated DuckLake table `dlq_archive` in the same catalog schema.
+- Archived entries are fully queryable via DuckDB with time-travel and filter pushdown, keeping the operational DLQ table small while providing unlimited, auditable history of every failed message delivery.
+
+#### v0.22.0 — DuckLake Bidirectional Flow & Ecosystem Surface (detail)
+
+With the inbound pipeline (PostgreSQL → DuckLake) solid, this release opens the reverse direction and builds the full ecosystem surface: CLI tooling, getting-started materials, and community integration that positions pg-tide as the recommended ingestion and egestion layer for PostgreSQL-backed DuckLakes.
+
+**Reverse relay: DuckLake → pg-tide inbox source**
+- Implement a `ducklake` source type in the relay that watches a DuckLake table for new snapshots by polling `SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $last_seen`. When a new snapshot appears, fetch the incremental rows (using DuckLake's incremental scan semantics between the last-seen and current snapshot IDs) and deliver them into a pg-tide inbox with full deduplication.
+- This enables lake-to-application data flow: ML model outputs, enriched analytics results, cross-system aggregations, and regulatory reports written to DuckLake by any engine (DuckDB, Spark, DataFusion, Trino) can be consumed by application services via the familiar pg-tide inbox API.
+- Configure via `tide.relay_set_inbox_v2(...)` with `"source_type": "ducklake"` and keys `"catalog_connection"`, `"schema"`, `"table"`, `"snapshot_poll_interval_ms"`.
+
+**Cross-lake replication**
+- Chain two DuckLake pipelines: a DuckLake source pulling new snapshots from a source lake into a pg-tide inbox, and a DuckLake sink writing from an outbox to a destination lake. This enables multi-region or multi-cloud DuckLake federation — with the relay handling delivery guarantees, deduplication, and fan-out routing — without any external ETL tool.
+- Provide a `tide.ducklake_replicate(source_catalog, source_table, dest_catalog, dest_table)` convenience function that configures both pipelines automatically.
+
+**`pg-tide ducklake` CLI sub-commands**
+- `pg-tide ducklake snapshots <pipeline>` — lists all DuckLake snapshots for a given pipeline with their timestamps, record counts, and Parquet file paths.
+- `pg-tide ducklake checkpoint <pipeline>` — triggers a full checkpoint on the target DuckLake (flush inlined data, merge small Parquet files, expire old snapshots beyond the retention window).
+- `pg-tide ducklake flush-inlined <pipeline>` — flushes inlined data to Parquet without full compaction, for use in low-latency archival scenarios.
+- `pg-tide ducklake offset-map <pipeline>` — prints the consumer-offset-to-snapshot-ID mapping table in human-readable form, useful for debugging replay scenarios.
+
+**Docker Compose getting-started example**
+- Add `examples/ducklake/docker-compose.yml` that spins up: PostgreSQL 18 with pg_tide installed, the pg-tide relay pre-configured with a DuckLake sink writing to a local S3-compatible store (MinIO), a DuckDB shell container with the `ducklake` extension pre-installed, and a Grafana instance with the relay health dashboard. A single `docker compose up` gives any developer a working, queryable event lake in under two minutes.
+- Include a seeded script that publishes 1 000 synthetic order events and demonstrates: querying the live lake from DuckDB, time-travel back to snapshot 1, and the `pg-tide ducklake snapshots` CLI output.
+
+**Tutorial suite and conference demo scripts**
+- Publish five written tutorials in `docs/src/guides/ducklake/`: "From Transaction to Data Lake in 5 Minutes," "Real-Time Analytics with DuckDB," "Multi-Tenant Data Lake with Row-Level Security," "Event Sourcing with DuckLake as the Event Store," and "Migrating from Kafka Connect."
+- Include four ready-to-run conference demo scripts in `examples/ducklake/demos/`: the "Zero to Data Lake" lightning demo, the "Impossible Guarantee" crash-recovery demo, the "Streaming Sensor Dashboard" interactive demo, and the "Compliance Replay" enterprise demo — each with a speaker script, timing notes, and recovery steps.
+- Submit a DuckLake community guide and request inclusion in the [awesome-ducklake](https://github.com/esadek/awesome-ducklake) repository.
+
+---
+
 ### Production GA & Extended Ecosystems (v1.0+)
 
 | Version | Theme | Status | Scope | Full details |
