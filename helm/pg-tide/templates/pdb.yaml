@@ -1,0 +1,22 @@
+{{- if .Values.podDisruptionBudget.enabled -}}
+# v0.24.0: PodDisruptionBudget for HA relay deployments.
+#
+# Advisory locks ensure each pipeline is owned by exactly one replica at a time,
+# so running more than one replica is safe for HA.  A PDB prevents Kubernetes
+# from evicting all replicas simultaneously during rolling upgrades or node drain.
+#
+# Recommended topology: run 2+ replicas with max_owned_pipelines set so that
+# each replica owns a disjoint subset of pipelines.  Set minAvailable: 1 so at
+# least one replica remains healthy during planned maintenance.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "pg-tide.fullname" . }}
+  labels:
+    {{- include "pg-tide.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "pg-tide.selectorLabels" . | nindent 6 }}
+{{- end }}

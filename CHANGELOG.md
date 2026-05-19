@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.24.0 — Code Quality, Performance & Helm Production Maturity](#0240--2026-05-19--code-quality-performance--helm-production-maturity)
 - [0.23.0 — Correctness, Real TLS & Full Migration Coverage](#0230--2026-05-19--correctness-real-tls--full-migration-coverage)
 - [0.22.0 — DuckLake Bidirectional Flow & Ecosystem Surface](#0220--2026-05-19--ducklake-bidirectional-flow--ecosystem-surface)
 - [0.21.0 — DuckLake Streaming, Inlining & Schema Evolution](#0210--2026-05-19--ducklake-streaming-inlining--schema-evolution)
@@ -31,6 +32,97 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.24.0] — 2026-05-19 — Code Quality, Performance & Helm Production Maturity
+
+v0.24.0 lands every P2/P3 audit finding accumulated over four assessment
+cycles, ships three new Helm production-maturity templates, and publishes
+ADR-006 — the design contract for outbox table partitioning that will be
+implemented in v0.25.0.  The headline changes are: `outbox_status()` now
+executes a single SQL query with `FILTER` aggregates instead of three
+round-trips, `OutboxBatch::into_messages()` eliminates a full payload clone on
+every message decode, and the Helm chart gains `PodDisruptionBudget`,
+`ServiceMonitor`, and `HorizontalPodAutoscaler` templates for HA and
+observability.
+
+### Breaking changes
+None.
+
+### What's new
+
+**P2: Performance and correctness**
+- **`outbox_status_impl()` single SPI call** — replaced the three sequential
+  `Spi::get_one_with_args()` calls (pending count, total count, oldest age)
+  with a single `SELECT … FILTER (WHERE …)` aggregate query joined to the
+  config table.  Eliminates 2× SPI round-trips for every `tide.outbox_status()`
+  invocation.
+- **Per-batch coordinator logging** — demoted per-message dry-run logging from
+  `tracing::info!` to `tracing::debug!`, reserving `info!` for state
+  transitions (worker start/stop, circuit-breaker open/close, pipeline
+  pause/resume).  At 50 pipelines × 1 poll/s this reduces log volume by
+  approximately 4.3 million lines/day in a typical production deployment.
+- **`rate_limiter.rs` safe constant** — replaced
+  `NonZeroU32::new(1).expect("1 is non-zero")` with `NonZeroU32::MIN`
+  (stable since Rust 1.79), removing the last production-reachable `expect()`
+  call in the rate-limiter path.
+
+**P3: SPI error handling**
+- **`get_outbox_retention()` error propagation** — changed the return type from
+  `Option<i32>` to `Result<Option<i32>, PgTideError>` and propagate errors with
+  `?` instead of silently returning `None` on SPI failure, consistent with the
+  pattern established for `outbox_exists()` in v0.17.0.
+- **`outbox_publish_impl()` fold `current_user` into ACL query** — eliminated
+  the preliminary `SELECT current_user` SPI call by embedding `current_user`
+  directly in the ACL lookup predicate.  Saves one SPI round-trip per
+  `tide.outbox_publish()` call under ACL-enforced outboxes.
+
+**P3: Coordinator decomposition**
+- **`worker_inner()` decomposition** — extracted the polling and decoding logic
+  into a `poll_and_decode()` helper and the publish path into a
+  `publish_with_circuit_breaker()` helper.  Both are independently unit-testable.
+  Added `PollOutcome` and `PublishOutcome` enums for clean branching in the
+  outer loop.
+- **`OutboxBatch::into_messages()` avoid unnecessary clone** — switched from
+  `.iter()` with `row.clone()` to consuming ownership via `.into_iter()`,
+  eliminating a full copy of the payload `Vec` on every message decode.
+
+**Observability improvements**
+- **Per-sink publish latency histogram** — new
+  `pg_tide_relay_sink_publish_duration_seconds` Histogram metric labelled by
+  `pipeline` and `sink_type`, tracking wall-clock time from `Sink::publish()`
+  call entry to return.
+- **Connection pool health metrics** — new
+  `pg_tide_relay_pool_connections{state}` gauge and
+  `pg_tide_relay_pool_acquire_duration_seconds` histogram for early detection of
+  connection exhaustion before `max_connections` is hit.
+- **OTel `backoff_sleep` span annotation** — the `relay.backoff.sleep` span now
+  carries a `next_wake_up_ms` attribute alongside `consecutive_failures` so
+  distributed traces capture the full backoff trajectory for performance
+  debugging.
+
+**Helm production maturity**
+- **`PodDisruptionBudget` template** (`helm/pg-tide/templates/pdb.yaml`) —
+  rendered from `podDisruptionBudget.enabled` (default `false`) and
+  `podDisruptionBudget.minAvailable` (default `1`).  Prevents Kubernetes from
+  evicting all relay replicas simultaneously during rolling upgrades.
+- **`ServiceMonitor` template** (`helm/pg-tide/templates/servicemonitor.yaml`)
+  — rendered from `serviceMonitor.enabled` (default `false`).  Auto-discovers
+  the `/metrics` endpoint for the Prometheus Operator (kube-prometheus-stack,
+  Victoria Metrics Operator) without manual scrape configuration.
+- **`HorizontalPodAutoscaler` template** (`helm/pg-tide/templates/hpa.yaml`) —
+  renders an `autoscaling/v2` HPA when `autoscaling.enabled = true`, replacing
+  the previous placeholder.  Advisory locks ensure safe multi-replica
+  deployments with disjoint pipeline ownership.
+
+**Architecture decision records**
+- **ADR-006: Outbox Table Partitioning** — published in
+  `docs/adr/adr-006-outbox-table-partitioning.md`.  Establishes the design
+  contract for declarative range partitioning on `created_at` with opt-in
+  `partition_strategy` parameter in `outbox_create()`, live migration tooling,
+  and consumer group compatibility guarantees.  Implementation is scheduled for
+  v0.25.0.
 
 ---
 

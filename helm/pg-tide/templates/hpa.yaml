@@ -1,0 +1,41 @@
+{{- if .Values.autoscaling.enabled -}}
+# v0.24.0: HorizontalPodAutoscaler for bursty relay workloads.
+#
+# Scales relay replica count based on CPU utilisation by default.
+# For consumer-lag-driven autoscaling, use a KEDA ScaledObject instead —
+# see the KEDA ScaledObject example in the values.yaml comments.
+#
+# Advisory locks ensure each pipeline is owned by at most one replica, so
+# adding replicas safely distributes load across disjoint pipeline subsets
+# when max_owned_pipelines is configured.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "pg-tide.fullname" . }}
+  labels:
+    {{- include "pg-tide.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "pg-tide.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}

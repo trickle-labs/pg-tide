@@ -546,29 +546,39 @@ async fn worker_inner(
         }
 
         let batch = {
-            // v0.13.0: OTel span for the poll call.
-            // Use Instrument::instrument() to avoid holding EnteredSpan across await.
-            let span = tracing::info_span!(
-                "relay.source.poll",
-                pipeline = %pipeline.name,
-                direction = %direction_label,
-            );
-            match source.poll(batch_size).instrument(span).await {
-                Ok(msgs) => {
+            // v0.24.0: Use poll_and_decode() helper for clean separation of
+            // poll, replay-filter, and error-classification logic.
+            match poll_and_decode(
+                &mut source,
+                batch_size,
+                &pipeline.name,
+                &direction_label,
+                replay_from,
+                replay_to,
+                is_replay,
+            )
+            .await
+            {
+                PollOutcome::Batch(msgs) => {
                     // v0.15.0: Reset backoff on successful poll.
                     poll_backoff_ms = poll_interval_ms;
                     msgs
                 }
-                Err(e) => {
-                    // v0.15.0: Permanent errors stop the pipeline immediately.
-                    if !e.is_transient() {
-                        tracing::error!(
-                            pipeline = %pipeline.name,
-                            error = %e,
-                            "permanent poll error — stopping pipeline"
-                        );
-                        return Err(e);
+                PollOutcome::Empty => {
+                    // Reset backoff when idle (no messages).
+                    poll_backoff_ms = poll_interval_ms;
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+                        _ = stop_rx.changed() => { break; }
                     }
+                    continue;
+                }
+                PollOutcome::ReplayComplete => {
+                    tracing::info!(pipeline = %pipeline.name, "replay complete");
+                    break;
+                }
+                PollOutcome::TransientError(e) => {
+                    // v0.15.0: Permanent errors stop the pipeline immediately.
                     // v0.18.0: Replace LCG pseudo-random jitter with rand::thread_rng()
                     // so concurrent pipelines failing at the same instant do not choose
                     // identical backoff offsets (fixes deterministic clustering).
@@ -590,11 +600,15 @@ async fn worker_inner(
                         "transient poll error — backing off before retry"
                     );
                     // v0.16.0: OTel span around backoff sleep.
+                    // v0.24.0: Annotate with consecutive_failures count and next_wake_up_ms
+                    // for distributed trace performance debugging.
+                    let next_wake_up_ms = (poll_backoff_ms * 2).min(max_poll_backoff_ms);
                     let backoff_span = tracing::info_span!(
                         "relay.backoff.sleep",
                         pipeline = %pipeline.name,
                         sleep_ms,
                         consecutive_failures,
+                        next_wake_up_ms,
                     );
                     let _enter = backoff_span.enter();
                     tokio::select! {
@@ -604,18 +618,16 @@ async fn worker_inner(
                     poll_backoff_ms = (poll_backoff_ms * 2).min(max_poll_backoff_ms);
                     continue;
                 }
+                PollOutcome::PermanentError(e) => {
+                    tracing::error!(
+                        pipeline = %pipeline.name,
+                        error = %e,
+                        "permanent poll error — stopping pipeline"
+                    );
+                    return Err(e);
+                }
             }
         };
-
-        if batch.is_empty() {
-            // Reset backoff when idle (no messages).
-            poll_backoff_ms = poll_interval_ms;
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
-                _ = stop_rx.changed() => { break; }
-            }
-            continue;
-        }
 
         // v0.13.0: Increment consumed counter after successful poll.
         metrics
@@ -625,19 +637,6 @@ async fn worker_inner(
 
         // v0.13.0: Record the poll timestamp for end-to-end latency tracking.
         let poll_instant = std::time::Instant::now();
-
-        // v0.7.0: Replay mode — skip messages outside the replay range.
-        let batch = if is_replay {
-            filter_replay_batch(batch, replay_from, replay_to)
-        } else {
-            batch
-        };
-
-        if batch.is_empty() {
-            // Replay range exhausted.
-            tracing::info!(pipeline = %pipeline.name, "replay complete");
-            break;
-        }
 
         // v0.7.0: Apply JMESPath transforms, schema evolution, and routing.
         // v0.18.0: Extracted into process_batch() helper for independent testability.
@@ -728,7 +727,9 @@ async fn worker_inner(
         // v0.7.0: Dry-run mode — log what would be published, skip actual publish.
         if dry_run {
             for msg in &batch {
-                tracing::info!(
+                // v0.24.0: Demote per-message dry-run logging to debug to reduce
+                // log volume (at 50 pipelines × 1 poll/s this was ~4.3M lines/day).
+                tracing::debug!(
                     pipeline = %pipeline.name,
                     subject = %msg.subject,
                     dedup_key = %msg.dedup_key,
@@ -746,65 +747,6 @@ async fn worker_inner(
             continue;
         }
 
-        // v0.7.0: Circuit breaker check.
-        if !circuit_breaker.should_allow() {
-            tracing::warn!(
-                pipeline = %pipeline.name,
-                "circuit breaker open — routing batch to DLQ or sleeping"
-            );
-            if dlq_config.enabled {
-                let entries: Vec<DlqEntry> = batch
-                    .iter()
-                    .map(|msg| {
-                        DlqEntry::from_message(
-                            &direction_label,
-                            &pipeline.name,
-                            source.name(),
-                            sink.name(),
-                            msg,
-                            "circuit breaker open",
-                            ErrorKind::SinkPermanent,
-                        )
-                    })
-                    .collect();
-                // v0.16.0: OTel span around DLQ insert.
-                let dlq_span = tracing::info_span!(
-                    "relay.dlq.insert",
-                    pipeline = %pipeline.name,
-                    count = entries.len(),
-                    reason = "circuit_breaker_open",
-                );
-                let _enter = dlq_span.enter();
-                // v0.18.0: Use route_to_dlq() helper for consistent error handling.
-                match route_to_dlq(
-                    &db,
-                    &entries,
-                    &pipeline.name,
-                    &direction_label,
-                    &tenant_label,
-                    &metrics,
-                )
-                .await
-                {
-                    DlqOutcome::Written => {
-                        if let Some(last) = batch.last() {
-                            let _ = source.acknowledge(last).await;
-                        }
-                    }
-                    DlqOutcome::TransientError => {} // retry next iteration
-                    DlqOutcome::PermanentError(e) => {
-                        return Err(e);
-                    }
-                }
-            } else {
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
-                    _ = stop_rx.changed() => { break; }
-                }
-            }
-            continue;
-        }
-
         // v0.7.0: Rate limiting — wait for tokens before publishing.
         rate_limiter.acquire(batch.len() as u32).await;
 
@@ -816,19 +758,83 @@ async fn worker_inner(
             None
         };
 
-        // v0.13.0: OTel span around the publish call.
-        let publish_result = {
-            let span = tracing::info_span!(
-                "relay.sink.publish",
-                pipeline = %pipeline.name,
-                batch_size = batch.len(),
-            );
-            sink.publish(&batch).instrument(span).await
-        };
-        match publish_result {
-            Ok(()) => {
+        // v0.24.0: Use publish_with_circuit_breaker() helper, then record
+        // per-sink publish latency and handle the outcome.
+        let publish_span = tracing::info_span!(
+            "relay.sink.publish",
+            pipeline = %pipeline.name,
+            batch_size = batch.len(),
+        );
+        let publish_start = std::time::Instant::now();
+        let publish_outcome = publish_with_circuit_breaker(&mut sink, &batch, &mut circuit_breaker)
+            .instrument(publish_span)
+            .await;
+        let publish_duration = publish_start.elapsed().as_secs_f64();
+        metrics
+            .sink_publish_duration_seconds
+            .with_label_values(&[&pipeline.name, sink.name()])
+            .observe(publish_duration);
+
+        match publish_outcome {
+            PublishOutcome::CircuitBreakerOpen => {
+                tracing::warn!(
+                    pipeline = %pipeline.name,
+                    "circuit breaker open — routing batch to DLQ or sleeping"
+                );
+                if dlq_config.enabled {
+                    let entries: Vec<DlqEntry> = batch
+                        .iter()
+                        .map(|msg| {
+                            DlqEntry::from_message(
+                                &direction_label,
+                                &pipeline.name,
+                                source.name(),
+                                sink.name(),
+                                msg,
+                                "circuit breaker open",
+                                ErrorKind::SinkPermanent,
+                            )
+                        })
+                        .collect();
+                    // v0.16.0: OTel span around DLQ insert.
+                    let dlq_span = tracing::info_span!(
+                        "relay.dlq.insert",
+                        pipeline = %pipeline.name,
+                        count = entries.len(),
+                        reason = "circuit_breaker_open",
+                    );
+                    let _enter = dlq_span.enter();
+                    // v0.18.0: Use route_to_dlq() helper for consistent error handling.
+                    match route_to_dlq(
+                        &db,
+                        &entries,
+                        &pipeline.name,
+                        &direction_label,
+                        &tenant_label,
+                        &metrics,
+                    )
+                    .await
+                    {
+                        DlqOutcome::Written => {
+                            if let Some(last) = batch.last() {
+                                let _ = source.acknowledge(last).await;
+                            }
+                        }
+                        DlqOutcome::TransientError => {} // retry next iteration
+                        DlqOutcome::PermanentError(e) => {
+                            return Err(e);
+                        }
+                    }
+                } else {
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+                        _ = stop_rx.changed() => { break; }
+                    }
+                }
+                continue;
+            }
+            PublishOutcome::Success => {
                 consecutive_failures = 0;
-                circuit_breaker.record_success();
 
                 if let Some(last) = batch.last() {
                     // v0.13.0: OTel span around acknowledge.
@@ -863,9 +869,8 @@ async fn worker_inner(
                     .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                     .inc_by(batch.len() as u64);
             }
-            Err(e) => {
+            PublishOutcome::Failure(e) => {
                 consecutive_failures += 1;
-                circuit_breaker.record_failure();
 
                 tracing::warn!(
                     pipeline = %pipeline.name,
@@ -944,7 +949,7 @@ async fn worker_inner(
                 }
             }
         }
-    }
+    } // end loop
 
     // v0.13.0: Mark pipeline as healthy=0 on worker exit.
     metrics
@@ -974,7 +979,7 @@ fn filter_replay_batch(
         .collect()
 }
 
-// ── v0.18.0 worker helper functions ──────────────────────────────────────
+// ── v0.18.0 / v0.24.0 worker helper functions ────────────────────────────
 
 /// Outcome of a `route_to_dlq` call.
 #[derive(Debug)]
@@ -1028,6 +1033,108 @@ async fn route_to_dlq(
                 "permanent DLQ insert error — pausing pipeline"
             );
             DlqOutcome::PermanentError(e)
+        }
+    }
+}
+
+// ── v0.24.0 worker decomposition helpers ─────────────────────────────────
+
+/// Outcome of a `poll_and_decode` call.
+#[derive(Debug)]
+enum PollOutcome {
+    /// A non-empty batch of decoded messages ready to process.
+    Batch(Vec<crate::envelope::RelayMessage>),
+    /// The source returned an empty batch; caller should sleep and retry.
+    Empty,
+    /// A transient error occurred; caller should back off and retry.
+    TransientError(RelayError),
+    /// A permanent error occurred; caller must stop the pipeline.
+    PermanentError(RelayError),
+    /// Replay range is exhausted; caller should stop the pipeline.
+    ReplayComplete,
+}
+
+/// Poll the source and apply replay filtering.
+///
+/// v0.24.0: Extracted from `worker_inner()` to make the polling and replay
+/// logic independently testable.
+async fn poll_and_decode(
+    source: &mut Box<dyn crate::source::Source>,
+    batch_size: i64,
+    pipeline_name: &str,
+    direction_label: &str,
+    replay_from: Option<i64>,
+    replay_to: Option<i64>,
+    is_replay: bool,
+) -> PollOutcome {
+    let span = tracing::info_span!(
+        "relay.source.poll",
+        pipeline = %pipeline_name,
+        direction = %direction_label,
+    );
+    let msgs = match source.poll(batch_size).instrument(span).await {
+        Ok(msgs) => msgs,
+        Err(e) => {
+            if e.is_transient() {
+                return PollOutcome::TransientError(e);
+            } else {
+                return PollOutcome::PermanentError(e);
+            }
+        }
+    };
+
+    if msgs.is_empty() {
+        return PollOutcome::Empty;
+    }
+
+    // Apply replay range filter when in replay mode.
+    let msgs = if is_replay {
+        let filtered = filter_replay_batch(msgs, replay_from, replay_to);
+        if filtered.is_empty() {
+            return PollOutcome::ReplayComplete;
+        }
+        filtered
+    } else {
+        msgs
+    };
+
+    PollOutcome::Batch(msgs)
+}
+
+/// Outcome of a `publish_with_circuit_breaker` call.
+#[derive(Debug)]
+enum PublishOutcome {
+    /// Batch published successfully; source should be acknowledged.
+    Success,
+    /// Publish failed; caller should handle retry / DLQ logic.
+    Failure(RelayError),
+    /// Circuit breaker is open; batch routed to DLQ or dropped.
+    CircuitBreakerOpen,
+}
+
+/// Attempt to publish a batch via the sink, honouring the circuit breaker.
+///
+/// Returns the result so the caller can handle acknowledge, retry, and DLQ
+/// routing without nesting the full error path inside `worker_inner()`.
+///
+/// v0.24.0: Extracted from `worker_inner()` for independent testability.
+async fn publish_with_circuit_breaker(
+    sink: &mut Box<dyn crate::sink::Sink>,
+    batch: &[crate::envelope::RelayMessage],
+    circuit_breaker: &mut crate::circuit_breaker::CircuitBreaker,
+) -> PublishOutcome {
+    if !circuit_breaker.should_allow() {
+        return PublishOutcome::CircuitBreakerOpen;
+    }
+
+    match sink.publish(batch).await {
+        Ok(()) => {
+            circuit_breaker.record_success();
+            PublishOutcome::Success
+        }
+        Err(e) => {
+            circuit_breaker.record_failure();
+            PublishOutcome::Failure(e)
         }
     }
 }

@@ -19,6 +19,12 @@ pub const METRIC_RECONCILE_DURATION: &str = "pg_tide_relay_reconcile_duration_se
 pub const METRIC_PIPELINE_ERRORS: &str = "pg_tide_relay_pipeline_errors_total";
 /// v0.17.0: DLQ write error counter (permanent DLQ failures that pause the pipeline).
 pub const METRIC_DLQ_WRITE_ERRORS: &str = "pg_tide_relay_dlq_write_errors_total";
+/// v0.24.0: Per-sink publish latency histogram.
+pub const METRIC_SINK_PUBLISH_DURATION: &str = "pg_tide_relay_sink_publish_duration_seconds";
+/// v0.24.0: Connection pool state gauge.
+pub const METRIC_POOL_CONNECTIONS: &str = "pg_tide_relay_pool_connections";
+/// v0.24.0: Pool acquire duration histogram.
+pub const METRIC_POOL_ACQUIRE_DURATION: &str = "pg_tide_relay_pool_acquire_duration_seconds";
 
 /// Shared relay metrics.
 pub struct RelayMetrics {
@@ -41,6 +47,12 @@ pub struct RelayMetrics {
     pub pipeline_errors_total: IntCounterVec,
     /// v0.17.0: DLQ write errors that caused a pipeline pause.
     pub dlq_write_errors: IntCounterVec,
+    /// v0.24.0: Per-sink publish latency histogram (pipeline × sink_type).
+    pub sink_publish_duration_seconds: HistogramVec,
+    /// v0.24.0: Connection pool state gauge (idle/busy/waiting).
+    pub pool_connections: IntGaugeVec,
+    /// v0.24.0: Pool acquire duration histogram.
+    pub pool_acquire_duration_seconds: HistogramVec,
     registry: Registry,
 }
 
@@ -147,6 +159,37 @@ impl RelayMetrics {
             &["pipeline"],
         )?;
 
+        // v0.24.0: Per-sink publish latency histogram.
+        let sink_publish_duration_seconds = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                METRIC_SINK_PUBLISH_DURATION,
+                "Wall-clock time from Sink::publish() call entry to return, in seconds",
+            )
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0, 30.0,
+            ]),
+            &["pipeline", "sink_type"],
+        )?;
+
+        // v0.24.0: Connection pool state gauge.
+        let pool_connections = IntGaugeVec::new(
+            prometheus::opts!(
+                METRIC_POOL_CONNECTIONS,
+                "Connection pool state counts (idle/busy/waiting)"
+            ),
+            &["state"],
+        )?;
+
+        // v0.24.0: Pool acquire duration histogram.
+        let pool_acquire_duration_seconds = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                METRIC_POOL_ACQUIRE_DURATION,
+                "Time to acquire a connection from the pool, in seconds",
+            )
+            .buckets(vec![0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0]),
+            &["relay_group"],
+        )?;
+
         registry.register(Box::new(messages_published.clone()))?;
         registry.register(Box::new(messages_consumed.clone()))?;
         registry.register(Box::new(publish_errors.clone()))?;
@@ -159,6 +202,9 @@ impl RelayMetrics {
         registry.register(Box::new(reconcile_duration_seconds.clone()))?;
         registry.register(Box::new(pipeline_errors_total.clone()))?;
         registry.register(Box::new(dlq_write_errors.clone()))?;
+        registry.register(Box::new(sink_publish_duration_seconds.clone()))?;
+        registry.register(Box::new(pool_connections.clone()))?;
+        registry.register(Box::new(pool_acquire_duration_seconds.clone()))?;
 
         Ok(Arc::new(Self {
             messages_published,
@@ -173,6 +219,9 @@ impl RelayMetrics {
             reconcile_duration_seconds,
             pipeline_errors_total,
             dlq_write_errors,
+            sink_publish_duration_seconds,
+            pool_connections,
+            pool_acquire_duration_seconds,
             registry,
         }))
     }

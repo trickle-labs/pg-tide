@@ -1,0 +1,16 @@
+-- pg_tide 0.23.0 → 0.24.0
+-- Code quality, performance & Helm production maturity.
+-- No schema changes in this release.
+--
+-- Changes shipped in v0.24.0 are relay-side (Rust) and Helm chart only:
+--   • outbox_status_impl() single SPI call (3 → 1 round-trip)
+--   • OutboxBatch::into_messages() avoids payload clone
+--   • rate_limiter uses NonZeroU32::MIN instead of .expect()
+--   • get_outbox_retention() propagates SPI errors via Result<>
+--   • outbox_publish_impl() folds current_user into ACL query
+--   • worker_inner() decomposition helpers (poll_and_decode, publish_with_circuit_breaker)
+--   • Per-sink publish latency histogram (pg_tide_relay_sink_publish_duration_seconds)
+--   • Connection pool health metrics (pg_tide_relay_pool_connections, pg_tide_relay_pool_acquire_duration_seconds)
+--   • OTel backoff_sleep span annotated with next_wake_up_ms
+--   • Helm: PodDisruptionBudget, ServiceMonitor, HorizontalPodAutoscaler templates
+--   • ADR-006: Outbox table partitioning design document

@@ -101,10 +101,14 @@ pub struct OutboxBatch {
 
 impl OutboxBatch {
     /// Convert this batch into a vector of RelayMessages.
+    ///
+    /// v0.24.0: Consumes `self` via `into_iter()` to avoid cloning the full
+    /// payload Vec on every message decode (was `.iter().clone()` previously).
     pub fn into_messages(self, outbox_table: &str, subject_template: &str) -> Vec<RelayMessage> {
+        let inserted_len = self.inserted.len();
         let mut msgs = Vec::with_capacity(self.inserted.len() + self.deleted.len());
 
-        for (i, row) in self.inserted.iter().enumerate() {
+        for (i, row) in self.inserted.into_iter().enumerate() {
             let subject = render_subject(
                 subject_template,
                 outbox_table,
@@ -117,13 +121,13 @@ impl OutboxBatch {
                 self.outbox_id,
                 i,
                 "insert",
-                row.clone(),
+                row,
                 self.is_full_refresh,
                 self.refresh_id,
                 subject,
             ));
         }
-        for (i, row) in self.deleted.iter().enumerate() {
+        for (i, row) in self.deleted.into_iter().enumerate() {
             let subject = render_subject(
                 subject_template,
                 outbox_table,
@@ -134,9 +138,9 @@ impl OutboxBatch {
             msgs.push(RelayMessage::new_forward(
                 outbox_table,
                 self.outbox_id,
-                self.inserted.len() + i,
+                inserted_len + i,
                 "delete",
-                row.clone(),
+                row,
                 false,
                 self.refresh_id,
                 subject,
