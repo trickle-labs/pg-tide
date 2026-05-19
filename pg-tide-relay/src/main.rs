@@ -288,17 +288,27 @@ fn init_tracing(cfg: &RelayConfig) {
 
 async fn wait_for_shutdown() {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        // v0.23.0: Replace .expect() with graceful degradation so that
+        // signal-registration failure on restricted seccomp profiles logs a
+        // clear warning and lets the relay continue rather than panicking.
+        if let Err(e) = signal::ctrl_c().await {
+            tracing::warn!("Ctrl+C signal handler failed: {e}");
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!("failed to install SIGTERM handler: {e}");
+                // Fall back to waiting forever on this branch so tokio::select!
+                // can still fire on Ctrl+C.
+                std::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]

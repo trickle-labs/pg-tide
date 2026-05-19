@@ -84,9 +84,12 @@ pub enum RelayError {
     #[error("{0}")]
     Other(String),
 
-    // TLS errors (v0.15.0)
+    // TLS errors (v0.15.0 / v0.23.0)
     #[error("TLS required by sslmode=require but TLS backend not compiled in: {url}")]
     TlsRequired { url: String },
+
+    #[error("TLS setup failed: {0}")]
+    TlsSetup(String),
 }
 
 impl RelayError {
@@ -124,7 +127,8 @@ impl RelayError {
             | Self::InvalidSecretToken(_)
             | Self::SecretNotFound { .. }
             | Self::SecretReadError { .. }
-            | Self::TlsRequired { .. } => false,
+            | Self::TlsRequired { .. }
+            | Self::TlsSetup(_) => false,
             // Transient: network / I/O / temporary backend issues
             _ => true,
         }

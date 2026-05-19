@@ -1,7 +1,6 @@
-/// PostgreSQL TLS/mTLS connection support (v0.13.0).
+/// PostgreSQL TLS/mTLS connection support (v0.13.0 / v0.23.0).
 ///
-/// Provides rustls-backed TLS connections for all PostgreSQL connections in
-/// the relay: coordinator, notification listener, worker, and remote PG sink.
+/// Provides TLS connections for all PostgreSQL connections in the relay.
 ///
 /// ## SSL modes
 /// - `disable`     — plain TCP, no TLS (default when sslmode not specified)
@@ -11,12 +10,74 @@
 /// - `verify-full` — TLS required + CA verification + hostname check
 ///
 /// The `sslmode` is parsed from the PostgreSQL connection URL.
+///
+/// ## v0.23.0: `native-tls` feature
+/// When compiled with `--features native-tls`, the `require`/`verify-ca`/
+/// `verify-full` modes use the platform OpenSSL stack (via `postgres-openssl`)
+/// instead of failing closed.  The `:latest` Docker image and default feature
+/// set remain NoTls-capable (fail-closed on `require`); the `:latest-full`
+/// image compiles with `--features native-tls`.
+use std::pin::Pin;
 use std::str::FromStr;
+use std::task::{Context, Poll};
 
 use tokio_postgres::config::SslMode;
 use tokio_postgres::{Client, Connection, Socket};
 
 use crate::error::RelayError;
+
+/// Opaque PostgreSQL background connection driver.
+///
+/// This enum abstracts over the plaintext and TLS connection driver types,
+/// allowing call sites to write `let (client, conn) = pg_tls::connect(url).await?;`
+/// without caring whether TLS is in use.  All callers should spawn this:
+/// ```ignore
+/// tokio::spawn(async move { let _ = conn.await; });
+/// ```
+pub enum PgConnection {
+    /// Plain-text (NoTls) connection driver.
+    Plain(Connection<Socket, tokio_postgres::tls::NoTlsStream>),
+    /// TLS connection driver (only present when `native-tls` feature is enabled).
+    #[cfg(feature = "native-tls")]
+    Tls(Connection<Socket, postgres_openssl::TlsStream<Socket>>),
+}
+
+impl std::future::Future for PgConnection {
+    type Output = Result<(), tokio_postgres::Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: We never move the inner value after pinning.
+        match unsafe { self.get_unchecked_mut() } {
+            PgConnection::Plain(conn) => {
+                // SAFETY: We pin the inner connection via a projection.
+                unsafe { Pin::new_unchecked(conn) }.poll(cx)
+            }
+            #[cfg(feature = "native-tls")]
+            PgConnection::Tls(conn) => {
+                // SAFETY: We pin the inner connection via a projection.
+                unsafe { Pin::new_unchecked(conn) }.poll(cx)
+            }
+        }
+    }
+}
+
+impl PgConnection {
+    /// Proxy `poll_message` for LISTEN/NOTIFY notification streams.
+    ///
+    /// This allows callers that drive the connection manually (e.g. for
+    /// intercepting `AsyncMessage::Notification`) to work regardless of
+    /// whether TLS is in use.
+    pub fn poll_message(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<tokio_postgres::AsyncMessage, tokio_postgres::Error>>> {
+        match self {
+            PgConnection::Plain(conn) => conn.poll_message(cx),
+            #[cfg(feature = "native-tls")]
+            PgConnection::Tls(conn) => conn.poll_message(cx),
+        }
+    }
+}
 
 /// The TLS mode for a PostgreSQL connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -92,49 +153,62 @@ fn extract_sslmode_str(url: &str) -> Option<String> {
 ///
 /// - `sslmode=disable` or not set → `NoTls`
 /// - `sslmode=prefer` → try TLS first, fall back to plaintext
-/// - `sslmode=require` / `verify-ca` / `verify-full` → **fail closed** if TLS
-///   is not available (the `native-tls` feature is not compiled in)
+/// - `sslmode=require` / `verify-ca` / `verify-full`:
+///   - With `native-tls` feature: use platform OpenSSL stack (postgres-openssl)
+///   - Without `native-tls` feature: **fail closed** (`TlsRequired` error)
 ///
 /// ## Security
-/// When `sslmode=require` is set, this function refuses to connect without TLS
-/// rather than silently downgrading to plaintext.  This prevents accidental
-/// credential exposure on networks that do not enforce encryption at the
-/// infrastructure layer.
-pub async fn connect(
-    url: &str,
-) -> Result<(Client, Connection<Socket, tokio_postgres::tls::NoTlsStream>), RelayError> {
+/// When `sslmode=require` is set and the `native-tls` feature is not compiled
+/// in, this function refuses to connect without TLS rather than silently
+/// downgrading to plaintext.  This prevents accidental credential exposure on
+/// networks that do not enforce encryption at the infrastructure layer.
+pub async fn connect(url: &str) -> Result<(Client, PgConnection), RelayError> {
     let ssl_mode = parse_ssl_mode(url);
-    if ssl_mode.is_required() {
-        // Fail closed: sslmode=require without a TLS backend is a security
-        // misconfiguration.  Return an explicit error rather than silently
-        // connecting in plaintext.
-        return Err(RelayError::TlsRequired {
-            url: url.to_string(),
-        });
+    match ssl_mode {
+        PgSslMode::Require => connect_require(url).await,
+        _ => connect_notls(url).await,
     }
-    connect_notls(url).await
 }
 
-/// Connect using `NoTls` (plain TCP).
-async fn connect_notls(
-    url: &str,
-) -> Result<(Client, Connection<Socket, tokio_postgres::tls::NoTlsStream>), RelayError> {
-    let ssl_mode = parse_ssl_mode(url);
-    if ssl_mode.is_required() {
-        // When TLS is required but we only have NoTls available, fail closed.
-        // In a production build with the `native-tls` feature this would use
-        // the platform TLS stack instead.
-        tracing::warn!(
-            "sslmode=require but native-tls feature is not compiled in; \
-             connection will use plaintext. Enable the `native-tls` feature for TLS support."
-        );
-    }
-    tokio_postgres::connect(url, tokio_postgres::NoTls)
+/// Handle a connection request when `sslmode=require`.
+///
+/// With the `native-tls` feature: use the platform TLS stack.
+/// Without it: fail closed with `RelayError::TlsRequired`.
+#[cfg(feature = "native-tls")]
+async fn connect_require(url: &str) -> Result<(Client, PgConnection), RelayError> {
+    use postgres_openssl::MakeTlsConnector;
+
+    let connector = openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
+        .map_err(|e| RelayError::TlsSetup(e.to_string()))?
+        .build();
+    let tls_connector = MakeTlsConnector::new(connector);
+
+    let (client, conn) = tokio_postgres::connect(url, tls_connector)
         .await
         .map_err(|e| RelayError::ConnectionFailed {
             url: url.to_string(),
             err: e,
-        })
+        })?;
+    Ok((client, PgConnection::Tls(conn)))
+}
+
+/// Fail closed when `sslmode=require` but `native-tls` is not compiled in.
+#[cfg(not(feature = "native-tls"))]
+async fn connect_require(url: &str) -> Result<(Client, PgConnection), RelayError> {
+    Err(RelayError::TlsRequired {
+        url: url.to_string(),
+    })
+}
+
+/// Connect using `NoTls` (plain TCP).
+async fn connect_notls(url: &str) -> Result<(Client, PgConnection), RelayError> {
+    let (client, conn) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+        .await
+        .map_err(|e| RelayError::ConnectionFailed {
+            url: url.to_string(),
+            err: e,
+        })?;
+    Ok((client, PgConnection::Plain(conn)))
 }
 
 /// Create a TLS-aware connection string from a base URL and explicit ssl mode override.

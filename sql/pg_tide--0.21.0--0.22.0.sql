@@ -71,6 +71,20 @@ BEGIN
     _inbox_name   := _pipeline_in  || '_inbox';
     _outbox_name  := _pipeline_out || '_outbox';
 
+    -- v0.23.0: Guard against PostgreSQL identifier truncation at 63 bytes.
+    -- Two different source tables could silently collide on the same pipeline
+    -- name if the schema+table combination exceeds 63 bytes after the prefix.
+    IF length(_pipeline_in) > 63 THEN
+        RAISE EXCEPTION
+            'generated pipeline name ''%'' exceeds 63 bytes; shorten schema or table name',
+            _pipeline_in;
+    END IF;
+    IF length(_pipeline_out) > 63 THEN
+        RAISE EXCEPTION
+            'generated pipeline name ''%'' exceeds 63 bytes; shorten schema or table name',
+            _pipeline_out;
+    END IF;
+
     -- Register the source pipeline.
     INSERT INTO tide.ducklake_source_config (
         pipeline_name, catalog_connection, dl_schema, dl_table

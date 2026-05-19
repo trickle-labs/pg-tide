@@ -39,6 +39,12 @@ const V0_13_0_TO_0_14_0: &str = include_str!("../../sql/pg_tide--0.13.0--0.14.0.
 const V0_14_0_TO_0_15_0: &str = include_str!("../../sql/pg_tide--0.14.0--0.15.0.sql");
 const V0_15_0_TO_0_16_0: &str = include_str!("../../sql/pg_tide--0.15.0--0.16.0.sql");
 const V0_16_0_TO_0_17_0: &str = include_str!("../../sql/pg_tide--0.16.0--0.17.0.sql");
+const V0_17_0_TO_0_18_0: &str = include_str!("../../sql/pg_tide--0.17.0--0.18.0.sql");
+const V0_18_0_TO_0_19_0: &str = include_str!("../../sql/pg_tide--0.18.0--0.19.0.sql");
+const V0_19_0_TO_0_20_0: &str = include_str!("../../sql/pg_tide--0.19.0--0.20.0.sql");
+const V0_20_0_TO_0_21_0: &str = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+const V0_21_0_TO_0_22_0: &str = include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql");
+const V0_22_0_TO_0_23_0: &str = include_str!("../../sql/pg_tide--0.22.0--0.23.0.sql");
 
 /// Apply the full migration chain so tests run on the current schema.
 async fn apply_full_schema(client: &tokio_postgres::Client) {
@@ -60,6 +66,12 @@ async fn apply_full_schema(client: &tokio_postgres::Client) {
         ("0.14.0→0.15.0", V0_14_0_TO_0_15_0),
         ("0.15.0→0.16.0", V0_15_0_TO_0_16_0),
         ("0.16.0→0.17.0", V0_16_0_TO_0_17_0),
+        ("0.17.0→0.18.0", V0_17_0_TO_0_18_0),
+        ("0.18.0→0.19.0", V0_18_0_TO_0_19_0),
+        ("0.19.0→0.20.0", V0_19_0_TO_0_20_0),
+        ("0.20.0→0.21.0", V0_20_0_TO_0_21_0),
+        ("0.21.0→0.22.0", V0_21_0_TO_0_22_0),
+        ("0.22.0→0.23.0", V0_22_0_TO_0_23_0),
     ];
     client
         .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
