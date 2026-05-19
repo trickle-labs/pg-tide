@@ -119,23 +119,42 @@ jobs:
 
       - name: Build and push image digest
         id: build
-        uses: Wandalen/wretry.action@v3
-        with:
-          action: docker/build-push-action@v7
-          attempt_limit: 3
-          attempt_delay: 20000
-          with: |
-            context: .
-            file: Dockerfile
-            push: true
-            platforms: ${{ matrix.platform }}
-            labels: ${{ steps.meta.outputs.labels }}
-            outputs: type=image,name=ghcr.io/trickle-labs/pg-tide,push-by-digest=true,name-canonical=true,push=true
+        env:
+          DOCKER_LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+          LABEL_ARGS=()
+          while IFS= read -r line; do
+            [[ -n "$line" ]] && LABEL_ARGS+=(--label "$line")
+          done <<< "$DOCKER_LABELS"
+          for attempt in 1 2 3; do
+            echo "=== Build/push attempt ${attempt}/3 ==="
+            rm -f /tmp/buildx-metadata.json
+            if docker buildx build \
+              --platform "${{ matrix.platform }}" \
+              --file Dockerfile \
+              "${LABEL_ARGS[@]}" \
+              --output "type=image,name=ghcr.io/trickle-labs/pg-tide,push-by-digest=true,name-canonical=true,push=true" \
+              --metadata-file /tmp/buildx-metadata.json \
+              .; then
+              digest=$(jq -r '."containerimage.digest"' /tmp/buildx-metadata.json)
+              echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+              echo "Succeeded: ${digest}"
+              break
+            fi
+            if [[ ${attempt} -lt 3 ]]; then
+              echo "Attempt ${attempt} failed, waiting $((attempt * 20))s..."
+              sleep $((attempt * 20))
+            else
+              echo "All 3 attempts failed."
+              exit 1
+            fi
+          done
 
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
-          digest="${{ fromJSON(steps.build.outputs.outputs).digest }}"
+          digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
@@ -301,24 +320,43 @@ jobs:
 
       - name: Build and push full image digest
         id: build-full
-        uses: Wandalen/wretry.action@v3
-        with:
-          action: docker/build-push-action@v7
-          attempt_limit: 3
-          attempt_delay: 20000
-          with: |
-            context: .
-            file: Dockerfile
-            push: true
-            platforms: ${{ matrix.platform }}
-            build-args: CARGO_FLAGS=--all-features
-            labels: ${{ steps.meta-full.outputs.labels }}
-            outputs: type=image,name=ghcr.io/trickle-labs/pg-tide,push-by-digest=true,name-canonical=true,push=true
+        env:
+          DOCKER_LABELS: ${{ steps.meta-full.outputs.labels }}
+        run: |
+          set -euo pipefail
+          LABEL_ARGS=()
+          while IFS= read -r line; do
+            [[ -n "$line" ]] && LABEL_ARGS+=(--label "$line")
+          done <<< "$DOCKER_LABELS"
+          for attempt in 1 2 3; do
+            echo "=== Build/push attempt ${attempt}/3 ==="
+            rm -f /tmp/buildx-metadata.json
+            if docker buildx build \
+              --platform "${{ matrix.platform }}" \
+              --file Dockerfile \
+              --build-arg CARGO_FLAGS=--all-features \
+              "${LABEL_ARGS[@]}" \
+              --output "type=image,name=ghcr.io/trickle-labs/pg-tide,push-by-digest=true,name-canonical=true,push=true" \
+              --metadata-file /tmp/buildx-metadata.json \
+              .; then
+              digest=$(jq -r '."containerimage.digest"' /tmp/buildx-metadata.json)
+              echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+              echo "Succeeded: ${digest}"
+              break
+            fi
+            if [[ ${attempt} -lt 3 ]]; then
+              echo "Attempt ${attempt} failed, waiting $((attempt * 20))s..."
+              sleep $((attempt * 20))
+            else
+              echo "All 3 attempts failed."
+              exit 1
+            fi
+          done
 
       - name: Export full digest
         run: |
           mkdir -p /tmp/digests-full
-          digest="${{ fromJSON(steps.build-full.outputs.outputs).digest }}"
+          digest="${{ steps.build-full.outputs.digest }}"
           touch "/tmp/digests-full/${digest#sha256:}"
 
       - name: Upload full digest
