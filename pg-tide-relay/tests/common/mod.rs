@@ -4,6 +4,35 @@
 //! container with the pg_tide schema installed, ready for test scenarios.
 #![allow(dead_code)]
 
+/// Strip `COMMENT ON EXTENSION` statements from migration SQL.
+///
+/// When migration scripts are executed as standalone SQL (outside the
+/// PostgreSQL extension infrastructure), `COMMENT ON EXTENSION pg_tide IS …`
+/// fails with "extension does not exist".  This helper removes those
+/// statements so the remaining DDL can be applied to a plain test database.
+pub fn strip_extension_comments(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let mut skipping = false;
+    for line in sql.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("COMMENT ON EXTENSION") {
+            skipping = true;
+        }
+        if skipping {
+            // Consume lines until we find the statement terminator.
+            if trimmed.ends_with(';') {
+                skipping = false;
+            }
+            // Do not push skipped lines to result.
+            result.push('\n'); // preserve line count for error messages
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result
+}
+
 use std::time::Duration;
 use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
 use testcontainers_modules::postgres::Postgres;

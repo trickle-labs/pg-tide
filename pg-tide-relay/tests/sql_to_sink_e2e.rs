@@ -78,8 +78,9 @@ async fn apply_full_schema(client: &tokio_postgres::Client) {
         .await
         .expect("create schema");
     for (label, sql) in scripts {
+        let processed = common::strip_extension_comments(sql);
         client
-            .batch_execute(sql)
+            .batch_execute(&processed)
             .await
             .unwrap_or_else(|e| panic!("migration {label} failed: {e}"));
     }

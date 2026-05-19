@@ -147,8 +147,9 @@ async fn test_sequential_migration_upgrade() {
 
     // Apply all upgrades in sequence.
     for (label, sql) in UPGRADES {
+        let processed = common::strip_extension_comments(sql);
         client
-            .batch_execute(sql)
+            .batch_execute(&processed)
             .await
             .unwrap_or_else(|e| panic!("upgrade {label} failed: {e}"));
     }
