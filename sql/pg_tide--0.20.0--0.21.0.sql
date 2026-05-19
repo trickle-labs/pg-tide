@@ -74,23 +74,26 @@ SECURITY DEFINER
 SET search_path = tide, pg_catalog
 AS $$
 DECLARE
+    _pipeline  text    := pipeline_name;
+    _from      bigint  := from_offset;
+    _to        bigint  := to_offset;
     _from_snap BIGINT;
     _to_snap   BIGINT;
 BEGIN
     -- Look up the snapshot that corresponds to (or immediately follows)
     -- from_offset and to_offset for this pipeline.
-    SELECT snapshot_id INTO _from_snap
-    FROM tide.ducklake_offset_map
-    WHERE pipeline_name   = ducklake_replay_range.pipeline_name
-      AND outbox_offset  >= ducklake_replay_range.from_offset
-    ORDER BY outbox_offset ASC
+    SELECT m.snapshot_id INTO _from_snap
+    FROM tide.ducklake_offset_map m
+    WHERE m.pipeline_name   = _pipeline
+      AND m.outbox_offset  >= _from
+    ORDER BY m.outbox_offset ASC
     LIMIT 1;
 
-    SELECT snapshot_id INTO _to_snap
-    FROM tide.ducklake_offset_map
-    WHERE pipeline_name   = ducklake_replay_range.pipeline_name
-      AND outbox_offset  <= ducklake_replay_range.to_offset
-    ORDER BY outbox_offset DESC
+    SELECT m.snapshot_id INTO _to_snap
+    FROM tide.ducklake_offset_map m
+    WHERE m.pipeline_name   = _pipeline
+      AND m.outbox_offset  <= _to
+    ORDER BY m.outbox_offset DESC
     LIMIT 1;
 
     IF _from_snap IS NULL OR _to_snap IS NULL THEN
@@ -124,6 +127,7 @@ SECURITY DEFINER
 SET search_path = tide, pg_catalog
 AS $$
 DECLARE
+    _pipeline text := pipeline_name;
     _rec RECORD;
 BEGIN
     -- Iterate over every partition_config entry for this pipeline to discover
@@ -132,7 +136,7 @@ BEGIN
     FOR _rec IN
         SELECT p.catalog_schema, p.namespace, p.table_name
         FROM   tide.ducklake_partition_config p
-        WHERE  p.pipeline_name = ducklake_column_history.pipeline_name
+        WHERE  p.pipeline_name = _pipeline
     LOOP
         BEGIN
             RETURN QUERY EXECUTE format(
