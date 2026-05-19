@@ -358,6 +358,119 @@ With the inbound pipeline (PostgreSQL → DuckLake) solid, this release opens th
 
 ---
 
+### Audit Remediation, TLS Completeness & Pre-GA Hardening (v0.23.x – v0.25.x)
+
+Following the four-cycle audit programme that produced `overall_assessment_1` through `overall_assessment_4`, this tranche addresses every remaining finding before the v1.0.0 Production GA: correctness bugs in the remote PostgreSQL inbox sink, catalog drift in the extension's `extension_sql_file!()` chain, a real TLS backend replacing the fail-closed placeholder, full migration test coverage through the current release, a comprehensive code-quality pass covering every P2/P3 item accumulated over multiple sprints, and the ADR-006 outbox table partitioning implementation that unblocks v1.0.0 GA.
+
+| Version | Theme | Status | Scope | Full details |
+|---------|-------|--------|-------|--------------|
+| v0.23.0 | Correctness, real TLS & full migration coverage: fix remote `PgInboxSink` column mismatch, add missing `0.21.0→0.22.0` `extension_sql_file!()` entry, implement `native-tls` feature, extend migration and E2E tests through v0.22.0, add `commit_offset()` monotonicity guard + `admin_rewind_offset()`, DLQ fault-injection and error-classification tests, `PgInboxSink` round-trip test, `ducklake_replicate()` relay test, `pg_dump` schema-diff CI assertion | 🔜 Planned | Large | [plans/overall-assessment-4.md](plans/overall-assessment-4.md) |
+| v0.24.0 | Code quality, performance & Helm production maturity: all P2/P3 audit findings — `outbox_status_impl()` SPI consolidation, coordinator logging discipline, `worker_inner()` decomposition, `OutboxBatch` ownership fix, `rate_limiter` safe constant, per-sink latency metrics, `pg-tide status` TLS and pool metrics, Helm `PodDisruptionBudget` + `ServiceMonitor` + HPA, ADR-006 outbox partitioning design document | 🔜 Planned | Large | [plans/overall-assessment-4.md](plans/overall-assessment-4.md) |
+| v0.25.0 | Outbox table partitioning, multi-tenant relay completion & pre-GA hardening: implement ADR-006 declarative partitioning with live migration tooling, complete per-tenant relay group runtime, extended `pg-tide doctor` (TLS version, DuckLake catalog, DLQ depth, partition capacity), relay Criterion.rs benchmark suite with CI regression gate, `--self-test` startup flag, pre-GA readiness checklist | 🔜 Planned | Large | [plans/overall-assessment-4.md](plans/overall-assessment-4.md) |
+
+#### v0.23.0 — Correctness, Real TLS & Full Migration Test Coverage (detail)
+
+**P0: Critical correctness fixes**
+- **Fix `PgInboxSink` column mismatch** — change the INSERT in `pg-tide-relay/src/sink/pg_outbox.rs` from `(event_id, event_type, payload, received_at)` to `(event_id, source, payload, headers)`, matching the schema created by `tide.inbox_create()`. Map `msg.subject` to `source` and build a `{"event_type": msg.subject}` JSON object for `headers`. This is a regression of the v0.13.0 fix that was correctly applied to local `InboxSink` but missed `PgInboxSink`; any cross-database inbox delivery pipeline has been failing at runtime since v0.13.0.
+- **Add missing `extension_sql_file!()` for 0.21.0→0.22.0** — add `pgrx::extension_sql_file!("../../sql/pg_tide--0.21.0--0.22.0.sql", name = "pg_tide_m_0_22", requires = ["pg_tide_m_0_21"]);` to `pg-tide-ext/src/lib.rs`. Without this entry a fresh `CREATE EXTENSION pg_tide` at v0.22.0 is missing `tide.ducklake_source_config`, `tide.ducklake_replicate()`, and `tide.ducklake_source_last_snapshot()`, silently breaking the v0.22.0 DuckLake bidirectional headline feature on all new installs while upgrades continue to work correctly.
+
+**P1: Migration test coverage**
+- **Extend `migration_test.rs` through v0.22.0** — add `const` bindings for all five missing migration scripts (`pg_tide--0.17.0--0.18.0.sql` through `pg_tide--0.21.0--0.22.0.sql`) and include them in the `UPGRADES` sequential chain so that every SQL upgrade is exercised in CI on every PR.
+- **Extend `sql_to_sink_e2e.rs` through v0.22.0** — the E2E test currently applies the schema only through v0.17.0; extend `apply_full_schema()` to include all migrations up to the current release, ensuring the DuckLake catalog tables (`ducklake_source_config`, `ducklake_offset_map`, etc.) exist in the E2E test environment.
+- **`pg_dump --schema-only` CI diff assertion** — add a CI job that: (1) creates a fresh `CREATE EXTENSION pg_tide` on PostgreSQL 18, (2) applies the complete upgrade chain from 0.1.0 to current on a second database, and (3) asserts the `pg_dump --schema-only` outputs are identical, making catalog drift immediately visible in CI rather than at the next audit cycle. Closes assessment-3 §6.4 which remained unimplemented through v0.19.0.
+
+**P1: Real TLS via `native-tls` feature**
+- **Compile-time `native-tls` Cargo feature** — add an optional `native-tls` feature to `pg-tide-relay/Cargo.toml` that pulls in `postgres-openssl` and swaps `pg_tls::connect()` to use `TlsConnector` when `sslmode=require`, `verify-ca`, or `verify-full` is parsed from the connection URL. The `:latest` Docker image and default feature set remain NoTls-capable (fail-closed on `require`); the `:latest-full` image compiles with `--features native-tls`.
+- **Integration test with TLS testcontainer** — spin up a PostgreSQL 18 testcontainer with TLS certificates and verify the relay connects successfully with `sslmode=require` when built with `--features native-tls`, and returns a clear `TlsRequired` error when built without it.
+- **TLS documentation clarification** — update README, `docs/src/relay-guide/configuration.md`, and `docs/src/operations/deployment-guide.md` to clearly state: (a) the default build fails closed on `sslmode=require` without establishing TLS, (b) real TLS requires `--features native-tls` or the `:latest-full` image, and (c) cloud-managed PostgreSQL services behind a TLS proxy work without the feature flag.
+
+**P1: Security hardening**
+- **Fix `signal::ctrl_c().await.expect()` in `main.rs`** — replace `.expect("failed to install Ctrl+C handler")` and `.expect("failed to install SIGTERM handler")` at `pg-tide-relay/src/main.rs` lines 293–299 with `?` propagation into `main()` (which returns `Result<(), RelayError>`), so that signal-registration failure on restricted seccomp profiles logs a clear error and exits cleanly rather than panicking.
+- **Fix `ducklake_attach()` format specifiers** — replace `%s` with `%L` (PostgreSQL dollar-quoted literal) for the `_dbname`, `_host`, and `_port` interpolations in `sql/pg_tide--0.19.0--0.20.0.sql`, preventing malformed ATTACH statements when database names or host values contain quotes. Backport the corrected function body via a new migration script entry.
+- **`ducklake_replicate()` identifier length guard** — add `IF length(_pipeline_in) > 63 THEN RAISE EXCEPTION 'generated pipeline name ''%'' exceeds 63 bytes; shorten schema or table name', _pipeline_in; END IF;` after the `regexp_replace` step in `sql/pg_tide--0.21.0--0.22.0.sql`, preventing silent PostgreSQL identifier truncation that could cause two different source tables to collide on the same pipeline name.
+
+**P2: Remote inbox sink batching**
+- **`PgInboxSink` UNNEST batch inserts** — replace the per-row `for msg in messages { client.execute(INSERT ...) }` loop with a single `INSERT INTO tide.{table} (event_id, source, payload, headers) SELECT * FROM UNNEST($1::text[], $2::text[], $3::jsonb[], $4::jsonb[]) ON CONFLICT (event_id) DO NOTHING`, building four parameter `Vec`s before executing. Mirrors the `InboxSink` UNNEST batching introduced in v0.13.0 and eliminates N database round-trips per relay batch.
+
+**P2: Offset safety**
+- **`commit_offset()` monotonicity guard** — add `WHERE tide_consumer_offsets.committed_offset <= EXCLUDED.committed_offset` to the `ON CONFLICT ... DO UPDATE` clause in `outbox_commit_offset_impl()`, preventing offset rewind by a buggy consumer without explicit admin action. This finding has been raised in four consecutive assessments since assessment-1 §7.3.
+- **`tide.admin_rewind_offset(group_name, consumer_id, target_offset)` function** — provide an explicit, `SECURITY DEFINER` escape hatch for intentional offset rollback, callable only by superusers or members of the `tide_admin` role. Requires the caller to explicitly acknowledge the re-processing risk by passing a `confirm_reprocessing BOOLEAN DEFAULT FALSE` parameter.
+
+**Test coverage: DuckLake relay paths**
+- **`tide.ducklake_replicate()` relay integration test** — call `tide.ducklake_replicate()` via SQL in a testcontainers environment, then start a relay coordinator and verify the auto-generated pipeline config is valid, the DuckLake source connection succeeds, and `tide.ducklake_source_config` contains the expected row.
+- **`tide.ducklake_source_last_snapshot()` test** — assert the function returns `NULL` on an empty `ducklake_snapshot` table and the correct `snapshot_id` value after a snapshot row is inserted.
+- **`PgInboxSink` round-trip test** — start a testcontainers PostgreSQL instance, install the extension, call `tide.inbox_create('test_inbox')`, instantiate `PgInboxSink`, publish 50 messages via `Sink::publish`, and assert all 50 rows appear in `tide.test_inbox` with correct `event_id`, `source`, `payload`, and `headers` values and zero duplicates after re-publishing the same 50 messages.
+
+**Test coverage: reliability paths (assessment-3 §6.2, §6.5)**
+- **DLQ fault-injection test** — revoke `INSERT` on `tide.relay_dlq` for the relay role; assert the worker enters the permanent-error pause state (`DlqOutcome::PermanentError`) rather than cycling indefinitely at `WARN`. Closes assessment-3 §6.2 which remained unimplemented through v0.19.0.
+- **Error classification integration test** — assert that a `RelayError::AuthRejected` (from a deliberately misconfigured sink credential) is classified as `is_transient() = false`, immediately pauses the pipeline without exhausting retries, and increments `pg_tide_relay_pipeline_errors_total{error_class="permanent"}`. Closes assessment-3 §6.5.
+- **`commit_offset()` monotonicity test** — assert that calling `commit_offset()` with a lower offset than the current committed value is silently ignored (existing value unchanged) and that calling with a higher offset succeeds and updates the row.
+
+#### v0.24.0 — Code Quality, Performance & Helm Production Maturity (detail)
+
+**P2: Performance and correctness**
+- **`outbox_status_impl()` single SPI call** — replace the three sequential `Spi::get_one_with_args()` calls (pending count, total count, oldest age) in `pg-tide-ext/src/outbox.rs` with a single query using `FILTER` aggregates: `SELECT COUNT(*) FILTER (WHERE consumed_at IS NULL), COUNT(*), EXTRACT(epoch FROM now() - MIN(created_at) FILTER (WHERE consumed_at IS NULL)) FROM tide.outbox_{name}`. Eliminates 2× SPI round-trips for every `tide.outbox_status()` invocation and simplifies future extension of the status struct.
+- **Per-batch coordinator logging level** — demote `tracing::info!(pipeline = ...)` on every successful poll completion in `coordinator.rs` to `tracing::debug!()`, reserving `info!` for state transitions (worker start/stop, circuit-breaker open/close, DLQ write, pipeline pause/resume). At 50 pipelines × 1 poll/second this change reduces log volume by approximately 4.3 million lines/day in a typical production deployment.
+- **`rate_limiter.rs` safe constant** — replace `NonZeroU32::new(1).expect("1 is non-zero")` in `pg-tide-relay/src/rate_limiter.rs` with `NonZeroU32::MIN` (stable since Rust 1.79), removing the last production-reachable `expect()` call in the rate-limiter path and eliminating the theoretical footgun if the literal is ever changed during refactoring.
+
+**P3: SPI error handling**
+- **`get_outbox_retention()` error propagation** — change the return type from `Option<i32>` to `Result<Option<i32>, PgTideError>` and replace `unwrap_or(None)` with `?` propagation in `pg-tide-ext/src/outbox.rs`, consistent with the pattern established for `outbox_exists()` in v0.17.0. Callers that previously silently received `None` on SPI error will now surface the error to the SQL caller.
+- **`outbox_publish_impl()` fold `current_user` into ACL query** — eliminate the preliminary `Spi::get_one::<String>("SELECT current_user")` call by embedding `current_user` directly in the ACL lookup predicate: `WHERE outbox_name = $1 AND role_name = current_user::text`. Saves one SPI round-trip per `tide.outbox_publish()` call, which matters for high-frequency event streams.
+
+**P3: Coordinator decomposition**
+- **`worker_inner()` decomposition** — extract the ~500-line `worker_inner()` function in `coordinator.rs` into three focused helpers: `poll_and_decode()` (source polling and envelope decoding), `publish_with_circuit_breaker()` (sink publish with circuit-breaker state management and retry logic), and `handle_batch_error()` (DLQ routing, error classification, backoff scheduling). Each helper is independently unit-testable. The outer `worker_inner()` becomes a clean orchestration loop under 100 lines.
+- **`OutboxBatch::into_messages()` avoid unnecessary clone** — switch from iterating with `.iter().cloned()` (or equivalent) to consuming ownership via `.into_iter()` in `OutboxBatch::into_messages()`, eliminating a full copy of the payload `Vec` on every message decode. This issue has been noted in four consecutive audit cycles (first in assessment-2 §4.4).
+
+**Observability improvements**
+- **Per-sink publish latency histogram** — add a `pg_tide_relay_sink_publish_duration_seconds` Histogram metric labelled by `pipeline` and `sink_type`, tracking wall-clock time from `Sink::publish()` call entry to return. Expose P50/P95/P99 quantiles. Add corresponding Grafana panels to `pg-tide/dashboards/relay-health.json`.
+- **Connection pool health metrics** — expose `pg_tide_relay_pool_connections{state="idle|busy|waiting"}` gauge and `pg_tide_relay_pool_acquire_duration_seconds` histogram from the `deadpool-postgres` coordinator pool, enabling early detection of connection exhaustion and pool saturation before `max_connections` is hit.
+- **OTel span coverage expansion** — add spans for: `schema_evolution_check` (before each DuckLake batch commit), `dlq_insert` (wrapping `route_to_dlq()`), and `backoff_sleep` (annotated with consecutive failure count and next-wake-up timestamp). Ensures distributed traces capture the full per-batch lifecycle for performance debugging.
+- **`pg-tide status` improvements** — extend the CLI output to include: TLS state (plaintext / fail-closed / native-tls with negotiated version), connection pool metrics (idle, busy, waiting counts), and per-pipeline last-error string from in-memory coordinator state.
+
+**Helm production maturity**
+- **`PodDisruptionBudget` template** — add `helm/pg-tide/templates/pdb.yaml` rendered from `values.yaml` key `podDisruptionBudget.enabled` (default: `false`) and `podDisruptionBudget.minAvailable` (default: `1`). Documents the recommended HA deployment topology where multiple relay replicas own disjoint pipeline sets via `max_owned_pipelines`.
+- **`ServiceMonitor` template for Prometheus Operator** — add `helm/pg-tide/templates/servicemonitor.yaml` rendered from `values.yaml` key `serviceMonitor.enabled` (default: `false`). Auto-discovers the `/metrics` endpoint and scrapes all `pg_tide_relay_*` metrics without manual Prometheus scrape configuration. Documents the label selectors required by common Prometheus Operator deployments (kube-prometheus-stack, Victoria Metrics Operator).
+- **`HorizontalPodAutoscaler` template** — add an optional HPA template driven by `pg_tide_relay_consumer_lag_seconds` via a KEDA `ScaledObject` (or custom metrics adapter) for auto-scaling relay replica count under bursty load. Gated on `autoscaling.enabled = false` by default with documented KEDA ScaledObject configuration.
+
+**ADR-006: Outbox table partitioning design**
+- **Publish ADR-006** — write `docs/adr/adr-006-outbox-table-partitioning.md` covering: motivation (unbounded table growth for high-throughput outboxes), evaluated partition strategies (range by `created_at`, hash by `id`), the migration path for existing tables, interaction with consumer group leases and advisory locks, `relay_consumer_offsets` update semantics during partition pruning, and the tradeoffs of PostgreSQL declarative partitioning vs. TTL-based truncation (the current `outbox_truncate_delivered()` approach). This ADR establishes the design contract for the implementation in v0.25.0.
+
+#### v0.25.0 — Outbox Table Partitioning, Multi-Tenant Relay Completion & Pre-GA Hardening (detail)
+
+This release implements the ADR-006 outbox partitioning design, completes the multi-tenant relay groups runtime (catalog-ready since v0.14.0 but runtime routing was never shipped), and hardens the operational surface to meet the bar required for the v1.0.0 Production GA release that follows.
+
+**Outbox table partitioning (ADR-006 implementation)**
+- **Declarative range partitioning on `created_at`** — `tide.outbox_create()` gains an optional `partition_strategy` parameter (`'none'` | `'daily'` | `'weekly'` | `'monthly'`; default `'none'`). When set, the outbox backing table is created as a PostgreSQL declarative range-partitioned table with an initial partition covering the current interval and the next.
+- **Automatic partition provisioning** — the relay `pg-tide sweep` command (or an optional background task) creates the next interval's partition before the current one fills, preventing insert failures during window transitions. Emits a `pg_notify('tide_partition_events', ...)` when a partition is created or dropped.
+- **Partition pruning and archival** — extend `tide.outbox_truncate_delivered(name)` to detach and drop partitions whose entire retention window has expired, keeping the active partition count within a bounded rolling window (configurable via `outbox_create()`'s `retention_partitions` parameter; default 7 for daily strategy).
+- **Consumer group and advisory lock compatibility** — verify and add regression tests confirming that `tide.poll_outbox()`, `tide.commit_offset()`, and `tide.consumer_lease_acquire()` work correctly on partitioned tables; pay particular attention to the `WHERE id > $last_offset` query plans to ensure partition pruning is applied.
+- **Live migration tooling** — provide `tide.outbox_convert_to_partitioned(name, strategy)`: a function that copies an existing unpartitioned outbox to a new partitioned table using an advisory-lock swap with minimal relay downtime (comparable to a `RENAME TABLE` switchover). Document the procedure in the schema migration runbook.
+- **`pg-tide doctor` partition health check** — warn when an outbox's most recent partition covers less than 48 hours of future capacity, enabling operators to provision new partitions before a write failure.
+
+**Multi-tenant relay groups: runtime completion**
+- **Per-tenant pipeline ownership filtering** — the coordinator's pipeline-ownership loop reads `current_setting('app.tenant_id', true)` (or a `PG_TIDE_TENANT_ID` env var) and filters `SELECT * FROM tide.relay_outbox_config WHERE tenant_id = $1` so that each relay instance owns only its tenant's pipelines without cross-tenant interference.
+- **Per-tenant advisory lock namespacing** — incorporate the tenant hash into the `pg_try_advisory_lock(group_hash, pipeline_hash)` key pair, preventing two tenants' relay groups from colliding on identical pipeline names in a shared PostgreSQL database.
+- **Per-tenant Prometheus metric label** — inject a `tenant` label (from `PG_TIDE_TENANT_ID` env var or CLI flag) into all relay metric series, enabling per-tenant Grafana dashboards and per-tenant alerting rules in multi-tenant deployments.
+- **Integration test: two-tenant isolation** — spin up two relay coordinators with different `relay_group_id` values against the same PostgreSQL database, publish events into tenant-A and tenant-B outboxes, and assert each relay delivers only its tenant's messages without cross-contamination.
+
+**Extended `pg-tide doctor` checks**
+- **TLS version check** — when connecting with TLS enabled, query `SELECT version FROM pg_ssl` and emit a warning if the server negotiated TLS 1.1 or earlier; emit an error if `sslmode=require` resolves to a plaintext connection (fail-closed path in the default build).
+- **DuckLake catalog health check** — verify that `ducklake_snapshot`, `ducklake_data_file`, and `ducklake_column` tables are accessible and owned by the expected schema, and that the sequence backing `ducklake_snapshot.snapshot_id` has at least 10% of its range remaining (overflow guard for long-running deployments).
+- **DLQ depth warning** — query `COUNT(*) FROM tide.relay_dlq WHERE created_at > now() - interval '1 hour'` and emit a `WARNING` when the hourly rate exceeds a configurable `--dlq-warn-threshold` (default: 100), signalling potential upstream data quality problems before they require emergency manual DLQ replay.
+- **Partition capacity check** — warn when the next partition boundary is within 48 hours of the most recently written row, providing at least one business day's notice before a write failure.
+
+**Relay benchmark suite**
+- **Criterion.rs throughput benchmarks** — implement benchmarks in `pg-tide-relay/benches/` for the three core hot paths: (1) `OutboxPollerSource::poll()` with 1 000-row batches at varying payload sizes (1 KB, 10 KB, 100 KB), (2) `InboxSink::publish()` with UNNEST batch sizes of 1, 10, 100, and 1 000 rows, (3) `coordinator::worker_inner()` end-to-end mock (source mock → JMESPath transform → sink mock) measuring orchestration overhead independently of PostgreSQL I/O.
+- **CI regression gate** — record and commit baseline benchmark results to `pg-tide-relay/benches/baseline.json`; the CI job compares against the baseline and fails on regressions above 10% in any measured throughput or latency percentile.
+- **Memory allocation profile** — add a `dhat`-instrumented CI job running the coordinator under a 50-pipeline mock load to identify any unbounded per-pipeline allocation growth before it becomes a production incident.
+
+**Pre-GA operational readiness**
+- **Pre-GA readiness checklist** — publish `docs/src/operations/pre-ga-checklist.md` covering: TLS configuration verification, outbox partitioning strategy selection, consumer group setup, DLQ monitoring thresholds, `pg-tide doctor` output interpretation, Helm security context review, benchmark baseline validation, and rollback procedure. This document serves as the formal acceptance gate for declaring v1.0.0 Production GA.
+- **`pg-tide --self-test` flag** — connects to PostgreSQL, verifies extension version matches the compiled-in expected minimum, checks TLS state, acquires and immediately releases an advisory lock, queries `tide.outbox_pending` view, and exits `0` on success or `1` with a descriptive error on failure. Designed for use in Kubernetes `initContainers`, container health checks, and CI/CD pre-deployment gates.
+- **`just release-notes` recipe** — reads `CHANGELOG.md` for the current workspace version and formats a GitHub Release body with upgrade notes, breaking changes, migration instructions, and benchmark comparison table. Eliminates manual release-note authoring and ensures every release references the relevant assessment and plan documents.
+
+---
+
 ### Production GA & Extended Ecosystems (v1.0+)
 
 | Version | Theme | Status | Scope | Full details |
