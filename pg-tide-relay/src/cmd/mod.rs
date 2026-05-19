@@ -4,6 +4,7 @@
 /// under 150 lines.
 pub mod asyncapi;
 pub mod doctor;
+pub mod ducklake;
 pub mod replay;
 pub mod status;
 pub mod sweep;

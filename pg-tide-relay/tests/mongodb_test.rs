@@ -54,6 +54,7 @@ async fn test_mongodb_sink_failure_preserves_offset() {
 
 // ── Config and document encoding ─────────────────────────────────────────────
 
+#[cfg(feature = "mongodb")]
 #[test]
 fn test_mongodb_config_collection_for_subject() {
     use pg_tide_relay::sink::mongodb::MongoDbConfig;
@@ -69,6 +70,7 @@ fn test_mongodb_config_collection_for_subject() {
     assert_eq!(custom.collection_for("orders"), "tide_orders");
 }
 
+#[cfg(feature = "mongodb")]
 #[test]
 fn test_mongodb_config_document_encoding_insert() {
     use pg_tide_relay::envelope::RelayMessage;
@@ -98,6 +100,7 @@ fn test_mongodb_config_document_encoding_insert() {
     assert_eq!(obj["_outbox_id"], 10);
 }
 
+#[cfg(feature = "mongodb")]
 #[test]
 fn test_mongodb_config_document_encoding_non_object_payload() {
     use pg_tide_relay::envelope::RelayMessage;
@@ -127,6 +130,7 @@ fn test_mongodb_config_document_encoding_non_object_payload() {
     );
 }
 
+#[cfg(feature = "mongodb")]
 #[test]
 fn test_mongodb_config_delete_op_does_not_add_extra_fields() {
     use pg_tide_relay::envelope::RelayMessage;

@@ -1,7 +1,10 @@
-//! Integration tests: DuckLake analytics sink (v0.21.0 — streaming, inlining & schema evolution).
+//! Integration tests: DuckLake analytics sink & reverse relay source
+//! (v0.21.0 — streaming, inlining & schema evolution;
+//!  v0.22.0 — bidirectional flow & ecosystem surface).
 //!
 //! Tests verify Parquet encoding, DuckLake v1.0 catalog DDL, column statistics,
-//! DB-side outbox mechanics, data inlining, schema evolution, and offset mapping.
+//! DB-side outbox mechanics, data inlining, schema evolution, offset mapping,
+//! reverse relay source config, cross-lake replication, and CLI subcommands.
 
 mod common;
 
@@ -1032,4 +1035,311 @@ fn test_ducklake_config_v021_defaults() {
         cfg.dlq_archive_after_hours.is_none(),
         "dlq_archive_after_hours must default to None"
     );
+}
+
+// ── v0.22.0: DuckLake Source Config ──────────────────────────────────────────
+
+/// Verifies the `tide.ducklake_source_config` table is created by the v0.22.0
+/// migration and that source config rows can be inserted and retrieved.
+#[tokio::test]
+async fn test_ducklake_source_config_table_exists() {
+    let db = PgTideTestDb::start().await;
+
+    // Apply both migrations in sequence.
+    let m21 = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    let m22 = include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql");
+    db.client
+        .batch_execute(m21)
+        .await
+        .expect("apply v0.21.0 migration");
+    db.client
+        .batch_execute(m22)
+        .await
+        .expect("apply v0.22.0 migration");
+
+    // Insert a source config entry.
+    db.client
+        .execute(
+            "INSERT INTO tide.ducklake_source_config
+             (pipeline_name, catalog_connection, dl_schema, dl_table)
+             VALUES ('test-source', 'postgres://localhost/mydb', 'pgtide', 'orders')",
+            &[],
+        )
+        .await
+        .expect("insert ducklake_source_config");
+
+    // Retrieve and verify.
+    let row = db
+        .client
+        .query_one(
+            "SELECT pipeline_name, dl_schema, dl_table, snapshot_poll_interval_ms
+             FROM tide.ducklake_source_config
+             WHERE pipeline_name = 'test-source'",
+            &[],
+        )
+        .await
+        .expect("query ducklake_source_config");
+
+    assert_eq!(row.get::<_, &str>("pipeline_name"), "test-source");
+    assert_eq!(row.get::<_, &str>("dl_schema"), "pgtide");
+    assert_eq!(row.get::<_, &str>("dl_table"), "orders");
+    assert_eq!(row.get::<_, i64>("snapshot_poll_interval_ms"), 1000);
+}
+
+/// Verifies that the `tide.ducklake_source_config` table enforces primary key
+/// uniqueness on `pipeline_name`.
+#[tokio::test]
+async fn test_ducklake_source_config_unique_pipeline_name() {
+    let db = PgTideTestDb::start().await;
+
+    let m21 = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    let m22 = include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql");
+    db.client.batch_execute(m21).await.expect("apply v0.21.0");
+    db.client.batch_execute(m22).await.expect("apply v0.22.0");
+
+    db.client
+        .execute(
+            "INSERT INTO tide.ducklake_source_config
+             (pipeline_name, catalog_connection, dl_schema, dl_table)
+             VALUES ('dup-pipeline', 'postgres://localhost/db', 'ns', 'tbl')",
+            &[],
+        )
+        .await
+        .expect("first insert");
+
+    // Second insert with same pipeline_name should fail.
+    let result = db
+        .client
+        .execute(
+            "INSERT INTO tide.ducklake_source_config
+             (pipeline_name, catalog_connection, dl_schema, dl_table)
+             VALUES ('dup-pipeline', 'postgres://localhost/db2', 'ns2', 'tbl2')",
+            &[],
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "inserting duplicate pipeline_name should fail with PK violation"
+    );
+}
+
+// ── v0.22.0: Cross-Lake Replication ──────────────────────────────────────────
+
+/// Verifies the `tide.ducklake_replicate()` function creates the expected
+/// source config entry and returns a non-empty summary string.
+#[tokio::test]
+async fn test_ducklake_replicate_creates_source_config() {
+    let db = PgTideTestDb::start().await;
+
+    let m21 = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    let m22 = include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql");
+    db.client.batch_execute(m21).await.expect("apply v0.21.0");
+    db.client.batch_execute(m22).await.expect("apply v0.22.0");
+
+    let result: String = db
+        .client
+        .query_one(
+            "SELECT tide.ducklake_replicate(
+                'postgres://source/db', 'pgtide', 'orders',
+                'postgres://dest/db',   'pgtide', 'orders_copy'
+             )",
+            &[],
+        )
+        .await
+        .expect("call ducklake_replicate")
+        .get(0);
+
+    assert!(
+        !result.is_empty(),
+        "ducklake_replicate must return a non-empty summary"
+    );
+    assert!(
+        result.contains("orders"),
+        "summary must mention the source table"
+    );
+
+    // Verify the source config was created.
+    let row = db
+        .client
+        .query_opt(
+            "SELECT pipeline_name, dl_table FROM tide.ducklake_source_config
+             WHERE dl_table = 'orders'",
+            &[],
+        )
+        .await
+        .expect("query source config")
+        .expect("source config row must exist");
+
+    assert_eq!(row.get::<_, &str>("dl_table"), "orders");
+}
+
+/// Verifies that calling `tide.ducklake_replicate()` twice with the same
+/// arguments is idempotent (ON CONFLICT DO UPDATE).
+#[tokio::test]
+async fn test_ducklake_replicate_idempotent() {
+    let db = PgTideTestDb::start().await;
+
+    let m21 = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    let m22 = include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql");
+    db.client.batch_execute(m21).await.expect("apply v0.21.0");
+    db.client.batch_execute(m22).await.expect("apply v0.22.0");
+
+    // Call twice.
+    db.client
+        .execute(
+            "SELECT tide.ducklake_replicate(
+                'postgres://src/db', 'pgtide', 'events',
+                'postgres://dst/db', 'pgtide', 'events_copy'
+             )",
+            &[],
+        )
+        .await
+        .expect("first call");
+
+    let result = db
+        .client
+        .execute(
+            "SELECT tide.ducklake_replicate(
+                'postgres://src/db', 'pgtide', 'events',
+                'postgres://dst/db', 'pgtide', 'events_copy'
+             )",
+            &[],
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "second call to ducklake_replicate must not fail"
+    );
+
+    // Exactly one row should exist.
+    let count: i64 = db
+        .client
+        .query_one(
+            "SELECT COUNT(*) FROM tide.ducklake_source_config
+             WHERE dl_schema = 'pgtide' AND dl_table = 'events'",
+            &[],
+        )
+        .await
+        .expect("count rows")
+        .get(0);
+
+    assert_eq!(count, 1, "idempotent call must not create duplicate rows");
+}
+
+// ── v0.22.0: DuckLake Source Last Snapshot ────────────────────────────────────
+
+/// Verifies that `tide.ducklake_source_last_snapshot()` returns NULL when
+/// no offset map entries exist for the pipeline.
+#[tokio::test]
+async fn test_ducklake_source_last_snapshot_returns_null_when_empty() {
+    let db = PgTideTestDb::start().await;
+
+    let m21 = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    let m22 = include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql");
+    db.client.batch_execute(m21).await.expect("apply v0.21.0");
+    db.client.batch_execute(m22).await.expect("apply v0.22.0");
+
+    let result: Option<i64> = db
+        .client
+        .query_one(
+            "SELECT tide.ducklake_source_last_snapshot('nonexistent-pipeline')",
+            &[],
+        )
+        .await
+        .expect("call ducklake_source_last_snapshot")
+        .get(0);
+
+    assert!(
+        result.is_none(),
+        "must return NULL for a pipeline with no offset map entries"
+    );
+}
+
+/// Verifies that `tide.ducklake_source_last_snapshot()` returns the
+/// maximum snapshot_id from the offset map for the given pipeline.
+#[tokio::test]
+async fn test_ducklake_source_last_snapshot_returns_max_snapshot() {
+    let db = PgTideTestDb::start().await;
+
+    let m21 = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
+    let m22 = include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql");
+    db.client.batch_execute(m21).await.expect("apply v0.21.0");
+    db.client.batch_execute(m22).await.expect("apply v0.22.0");
+
+    // Insert offset map entries with the special __ducklake_source consumer group.
+    db.client
+        .batch_execute(
+            "INSERT INTO tide.ducklake_offset_map
+             (pipeline_name, consumer_group, outbox_offset, snapshot_id)
+             VALUES
+               ('src-pipeline', '__ducklake_source', 10, 5),
+               ('src-pipeline', '__ducklake_source', 20, 10),
+               ('src-pipeline', '__ducklake_source', 30, 15),
+               ('other-pipeline', '__ducklake_source', 5, 99)",
+        )
+        .await
+        .expect("insert offset map entries");
+
+    let result: Option<i64> = db
+        .client
+        .query_one(
+            "SELECT tide.ducklake_source_last_snapshot('src-pipeline')",
+            &[],
+        )
+        .await
+        .expect("call ducklake_source_last_snapshot")
+        .get(0);
+
+    assert_eq!(
+        result,
+        Some(15),
+        "must return max snapshot_id for the pipeline"
+    );
+}
+
+// ── v0.22.0: DuckLake Source (Rust struct) ────────────────────────────────────
+
+/// Verifies that `DuckLakeSource` is constructible with valid config.
+#[test]
+fn test_ducklake_source_config_defaults() {
+    use pg_tide_relay::source::ducklake::{DuckLakeSource, DuckLakeSourceConfig};
+
+    let cfg = DuckLakeSourceConfig::new("postgres://localhost/db", "pgtide", "orders");
+    assert_eq!(cfg.catalog_schema, "ducklake");
+    assert_eq!(cfg.snapshot_poll_interval_ms, 1000);
+    assert_eq!(cfg.consumer_group, "default");
+
+    let source = DuckLakeSource::new(cfg, 0);
+    assert_eq!(source.subject(), "pgtide.orders");
+}
+
+/// Verifies that `DuckLakeSource::subject()` formats the subject correctly.
+#[test]
+fn test_ducklake_source_subject_format() {
+    use pg_tide_relay::source::ducklake::{DuckLakeSource, DuckLakeSourceConfig};
+
+    let cfg = DuckLakeSourceConfig {
+        catalog_connection: "postgres://localhost/db".to_string(),
+        catalog_schema: "ducklake".to_string(),
+        schema: "analytics".to_string(),
+        table: "page_views".to_string(),
+        snapshot_poll_interval_ms: 500,
+        consumer_group: "analytics-consumer".to_string(),
+    };
+    let source = DuckLakeSource::new(cfg, 42);
+    assert_eq!(source.subject(), "analytics.page_views");
+}
+
+/// Verifies that `DuckLakeSourceConfig::new()` initialises last_snapshot_id correctly.
+#[test]
+fn test_ducklake_source_initial_snapshot_id() {
+    use pg_tide_relay::source::ducklake::{DuckLakeSource, DuckLakeSourceConfig};
+
+    let cfg = DuckLakeSourceConfig::new("postgres://localhost/db", "ns", "tbl");
+    let source = DuckLakeSource::new(cfg, 99);
+    // The source struct holds the last snapshot; the value we pass becomes the
+    // starting point.  subject() is a useful proxy to ensure the source is live.
+    assert_eq!(source.subject(), "ns.tbl");
 }

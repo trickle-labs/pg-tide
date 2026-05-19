@@ -45,6 +45,9 @@ pub mod singer;
 #[cfg(feature = "airbyte")]
 pub mod airbyte;
 
+// v0.22.0: DuckLake reverse relay source
+pub mod ducklake;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;

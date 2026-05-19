@@ -56,6 +56,7 @@ async fn test_clickhouse_sink_failure_preserves_offset() {
 
 // ── Config and payload logic ──────────────────────────────────────────────────
 
+#[cfg(feature = "clickhouse")]
 #[test]
 fn test_clickhouse_config_table_for_subject() {
     use pg_tide_relay::sink::clickhouse::ClickHouseConfig;
@@ -74,6 +75,7 @@ fn test_clickhouse_config_table_for_subject() {
     assert_eq!(cfg.table_for("events"), "events");
 }
 
+#[cfg(feature = "clickhouse")]
 #[test]
 fn test_clickhouse_config_insert_query() {
     use pg_tide_relay::sink::clickhouse::ClickHouseConfig;

@@ -158,6 +158,10 @@ pub enum Commands {
     #[command(subcommand)]
     Asyncapi(AsyncapiCommands),
 
+    /// DuckLake lake management and inspection commands.
+    #[command(subcommand)]
+    Ducklake(DucklakeCommands),
+
     /// Delete consumed outbox messages that are past their retention window.
     ///
     /// Calls `tide.outbox_truncate_delivered()` for each configured outbox
@@ -289,6 +293,79 @@ pub enum AsyncapiCommands {
         /// Output file path. Defaults to stdout when omitted.
         #[arg(long)]
         output: Option<String>,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+}
+
+/// DuckLake lake management and inspection subcommands (v0.22.0).
+#[derive(Debug, Subcommand)]
+pub enum DucklakeCommands {
+    /// List all DuckLake snapshots for a pipeline with timestamps and record counts.
+    ///
+    /// Queries `ducklake_snapshot` and `ducklake_data_file` for the pipeline's
+    /// DuckLake table and prints a human-readable summary of each snapshot:
+    /// snapshot ID, created_at timestamp, record count, and Parquet file paths.
+    Snapshots {
+        /// Pipeline name to inspect.
+        #[arg(long)]
+        pipeline: String,
+
+        /// Maximum number of snapshots to show (default: 50).
+        #[arg(long, default_value = "50")]
+        limit: i64,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+
+    /// Trigger a full DuckLake checkpoint for a pipeline.
+    ///
+    /// Flushes all inlined data to Parquet, merges small Parquet files, and
+    /// expires snapshots beyond the configured retention window.  Safe to run
+    /// at any time; the relay continues processing during the checkpoint.
+    Checkpoint {
+        /// Pipeline name to checkpoint.
+        #[arg(long)]
+        pipeline: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+
+    /// Flush inlined DuckLake data to Parquet without full compaction.
+    ///
+    /// For each row currently stored in `ducklake_inlined_data_*` tables,
+    /// materialises the data into a Parquet file on object storage, registers
+    /// a new `ducklake_data_file` entry, and clears the inlined rows.
+    /// Lighter than a full `checkpoint`; suitable for low-latency archival
+    /// maintenance windows.
+    FlushInlined {
+        /// Pipeline name whose inlined data to flush.
+        #[arg(long)]
+        pipeline: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+
+    /// Print the consumer-offset-to-snapshot-ID mapping table for a pipeline.
+    ///
+    /// Shows the `tide.ducklake_offset_map` entries for the given pipeline in
+    /// human-readable form.  Useful for debugging time-travel replay scenarios.
+    OffsetMap {
+        /// Pipeline name to inspect.
+        #[arg(long)]
+        pipeline: String,
+
+        /// Maximum number of rows to show (default: 100).
+        #[arg(long, default_value = "100")]
+        limit: i64,
 
         /// PostgreSQL URL.  Overrides --postgres-url.
         #[arg(long, env = "PG_TIDE_POSTGRES_URL")]

@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.22.0 — DuckLake Bidirectional Flow & Ecosystem Surface](#0220--2026-05-19--ducklake-bidirectional-flow--ecosystem-surface)
 - [0.21.0 — DuckLake Streaming, Inlining & Schema Evolution](#0210--2026-05-19--ducklake-streaming-inlining--schema-evolution)
 - [0.20.0 — DuckLake Native Catalog Integration](#0200--2026-05-19--ducklake-native-catalog-integration)
 - [0.19.0 — Supply Chain, Observability & Operational Docs](#0190--2026-05-14--supply-chain-observability--operational-docs)
@@ -29,6 +30,96 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.22.0] — 2026-05-19 — DuckLake Bidirectional Flow & Ecosystem Surface
+
+v0.22.0 completes the pg-tide × DuckLake integration by opening the reverse
+direction (DuckLake → pg-tide inbox), adding cross-lake replication helpers,
+and shipping the full ecosystem surface: `pg-tide ducklake` CLI subcommands,
+a Docker Compose getting-started example, five written tutorials, and four
+conference demo scripts.  Any DuckDB engine — DataFusion, Spark, Trino — can
+now write to a DuckLake and have pg-tide stream those changes back into
+application services via the familiar pg-tide inbox API.
+
+### Reverse Relay — DuckLake Source
+
+- **`DuckLakeSource`** — new source implementation (`source/ducklake.rs`)
+  that polls `ducklake_snapshot` for new snapshots beyond the last-seen ID,
+  fetches incremental data-file metadata, and delivers `RelayMessage` objects
+  to a pg-tide inbox.  Feature-gated under `--features ducklake`.
+- **`tide.ducklake_source_config` table** — catalog table that stores
+  DuckLake reverse-relay pipeline configuration: catalog connection URL,
+  `catalog_schema`, `dl_schema`, `dl_table`, `snapshot_poll_interval_ms`,
+  and `consumer_group`.  Added by `sql/pg_tide--0.21.0--0.22.0.sql`.
+- **`tide.relay_set_inbox_v2(..., "source_type": "ducklake", ...)`** —
+  configure via the existing JSONB inbox API with keys `catalog_connection`,
+  `catalog_schema`, `schema`, `table`, `snapshot_poll_interval_ms`.
+
+### Cross-Lake Replication
+
+- **`tide.ducklake_replicate(source_catalog, source_schema, source_table,
+  dest_catalog, dest_schema, dest_table)`** — convenience SQL function that
+  registers a DuckLake source config entry for the source table and returns a
+  human-readable summary.  Idempotent: calling it again updates the config
+  without error.  Chain with a DuckLake sink pipeline for full cross-lake
+  fan-out with pg-tide handling delivery guarantees and deduplication.
+- **`tide.ducklake_source_last_snapshot(pipeline_name)`** — SQL function
+  that returns the last acknowledged DuckLake `snapshot_id` for a reverse
+  relay pipeline (stored in `tide.ducklake_offset_map` under consumer group
+  `'__ducklake_source'`).
+
+### `pg-tide ducklake` CLI Subcommands
+
+- **`pg-tide ducklake snapshots --pipeline <name>`** — lists DuckLake
+  snapshots for a pipeline with timestamps, record counts, and file counts.
+- **`pg-tide ducklake checkpoint --pipeline <name>`** — reports catalog state
+  and provides DuckDB `CHECKPOINT` command for physical compaction.
+- **`pg-tide ducklake flush-inlined --pipeline <name>`** — reports inlined
+  data tables pending flush and provides DuckDB guidance.
+- **`pg-tide ducklake offset-map --pipeline <name>`** — prints the
+  `tide.ducklake_offset_map` consumer-offset-to-snapshot-ID mapping table in
+  human-readable form for debugging time-travel replay scenarios.
+
+### Docker Compose Getting-Started Example
+
+- **`examples/ducklake/docker-compose.yml`** — single `docker compose up`
+  environment with PostgreSQL 18 + pg_tide, MinIO (S3-compatible object
+  storage), pg-tide relay, DuckDB shell container, and Grafana with the relay
+  health dashboard.  A `docker compose run seed` publishes 1 000 synthetic
+  order events and demonstrates querying the live lake from DuckDB.
+
+### Tutorial Suite
+
+- **`docs/src/guides/ducklake/01-from-transaction-to-data-lake.md`** —
+  "From Transaction to Data Lake in 5 Minutes": end-to-end walkthrough.
+- **`docs/src/guides/ducklake/02-real-time-analytics.md`** — "Real-Time
+  Analytics with DuckDB": live aggregation queries and time-travel patterns.
+- **`docs/src/guides/ducklake/03-multi-tenant.md`** — "Multi-Tenant Data
+  Lake with Row-Level Security": tenant discriminator + RLS + bucket
+  partitioning.
+- **`docs/src/guides/ducklake/04-event-sourcing.md`** — "Event Sourcing
+  with DuckLake as the Event Store": append-only event log, projection
+  rebuilds, time-travel replay.
+- **`docs/src/guides/ducklake/05-migrating-from-kafka-connect.md`** —
+  "Migrating from Kafka Connect": side-by-side comparison and step-by-step
+  migration checklist.
+
+### Conference Demo Scripts
+
+- **`examples/ducklake/demos/01-zero-to-data-lake.sh`** — "Zero to Data
+  Lake" lightning demo (~5 min): publish events, check relay status, query
+  from DuckDB.
+- **`examples/ducklake/demos/02-impossible-guarantee.sh`** — "The Impossible
+  Guarantee" crash-recovery demo (~8 min): exactly-once delivery demonstrated
+  with `atomic_lake_writes = true`.
+- **`examples/ducklake/demos/03-streaming-sensor-dashboard.sh`** —
+  "Streaming Sensor Dashboard" interactive demo (~10 min): live sensor
+  ingest with data inlining and DuckDB aggregation.
+- **`examples/ducklake/demos/04-compliance-replay.sh`** — "Compliance
+  Replay" enterprise demo (~12 min): audit replay using offset-map and
+  DuckDB time-travel.
 
 ---
 

@@ -100,6 +100,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Asyncapi(asyncapi_cmd)) => {
             return cmd::asyncapi::run_asyncapi_command(asyncapi_cmd, &cfg.postgres_url).await;
         }
+        Some(Commands::Ducklake(ducklake_cmd)) => {
+            return cmd::ducklake::run_ducklake_command(ducklake_cmd, &cfg.postgres_url).await;
+        }
         Some(Commands::Sweep {
             outbox,
             postgres_url,
