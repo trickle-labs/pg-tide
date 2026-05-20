@@ -83,17 +83,9 @@ async fn test_ha_failover_surviving_coordinator_takes_over() {
         format!("host=127.0.0.1 port={port} user=postgres password=postgres dbname=postgres");
     let pg_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-    // Install schema.
+    // Install full schema through v0.30.0 (coordinator queries tenant_name added in v0.14.0).
     let setup_client = connect_with_retry(&conn_str).await;
-    setup_client
-        .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
-        .await
-        .expect("create schema");
-    let schema_sql = include_str!("../../sql/pg_tide--0.1.0.sql");
-    setup_client
-        .batch_execute(schema_sql)
-        .await
-        .expect("install schema");
+    common::install_full_schema(&setup_client).await;
 
     // Register a single enabled pipeline for takeover testing.
     setup_client
