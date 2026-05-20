@@ -150,14 +150,19 @@ async fn test_ha_failover_surviving_coordinator_takes_over() {
             .await
     });
 
-    // Give coordinator A time to acquire the pipeline.
-    tokio::time::sleep(Duration::from_millis(600)).await;
-
-    // Verify A holds at least one advisory lock.
-    let locks_before = count_advisory_locks(&setup_client).await;
+    // Poll for coordinator A to acquire the advisory lock (up to 10 s).
+    let deadline_a = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut locks_before = 0i64;
+    while tokio::time::Instant::now() < deadline_a {
+        locks_before = count_advisory_locks(&setup_client).await;
+        if locks_before >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
     assert!(
         locks_before >= 1,
-        "coordinator A should hold at least 1 advisory lock; found {locks_before}"
+        "coordinator A should hold at least 1 advisory lock within 10 s; found {locks_before}"
     );
 
     // "Kill" coordinator A by shutting it down abruptly (signals shutdown).
