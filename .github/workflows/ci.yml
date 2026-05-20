@@ -538,7 +538,8 @@ jobs:
             sql/pg_tide--0.26.0--0.27.0.sql \
             sql/pg_tide--0.27.0--0.28.0.sql \
             sql/pg_tide--0.28.0--0.29.0.sql \
-            sql/pg_tide--0.29.0--0.30.0.sql; do
+            sql/pg_tide--0.29.0--0.30.0.sql \
+            sql/pg_tide--0.30.0--0.31.0.sql; do
             psql -h 127.0.0.1 -U postgres -d fresh_schema -f "$f"
           done
 
@@ -590,7 +591,8 @@ jobs:
             sql/pg_tide--0.26.0--0.27.0.sql \
             sql/pg_tide--0.27.0--0.28.0.sql \
             sql/pg_tide--0.28.0--0.29.0.sql \
-            sql/pg_tide--0.29.0--0.30.0.sql; do
+            sql/pg_tide--0.29.0--0.30.0.sql \
+            sql/pg_tide--0.30.0--0.31.0.sql; do
             psql -h 127.0.0.1 -U postgres -d upgrade_schema -f "$f"
           done
 
@@ -683,3 +685,99 @@ jobs:
             exit 1
           fi
           echo "OK: All version files are in sync at ${CARGO_VERSION}"
+
+  # v0.31.0: Guard against unquoted SQL identifier interpolation in relay source.
+  # Flags any format!() call that produces tide.{ident} without surrounding double quotes.
+  lint-quoting:
+    name: No unquoted SQL identifier interpolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert no unquoted SQL identifiers in relay source
+        run: |
+          python3 - <<'EOF'
+          import os, sys, re
+          violations = []
+          src_dir = "pg-tide-relay/src"
+          unquoted_pattern = re.compile(r'tide\.\{(?!")')
+          for root, dirs, files in os.walk(src_dir):
+              for fname in files:
+                  if not fname.endswith(".rs"):
+                      continue
+                  path = os.path.join(root, fname)
+                  with open(path) as f:
+                      lines = f.readlines()
+                  in_test_depth = 0
+                  pending_test = False
+                  for i, line in enumerate(lines):
+                      stripped = line.strip()
+                      if re.search(r'#\[cfg\(.*\btest\b', stripped):
+                          pending_test = True
+                      opens = stripped.count("{")
+                      closes = stripped.count("}")
+                      if pending_test and opens > 0:
+                          in_test_depth = opens - closes
+                          pending_test = False
+                      elif in_test_depth > 0:
+                          in_test_depth += opens - closes
+                          if in_test_depth <= 0:
+                              in_test_depth = 0
+                      if in_test_depth > 0:
+                          continue
+                      if stripped.startswith("//"):
+                          continue
+                      # Skip display/log lines — println!, eprintln!, tracing macros
+                      if re.search(r'println!\s*\(|eprintln!\s*\(|tracing::|format_args!', stripped):
+                          continue
+                      if not unquoted_pattern.search(stripped):
+                          continue
+                      window = lines[max(0, i-3):i]
+                      if any("// QUOTED:" in l for l in window):
+                          continue
+                      violations.append(f"{path}:{i+1}: {line.rstrip()}")
+          if violations:
+              print("ERROR: unquoted identifier interpolation in relay SQL format strings:")
+              for v in violations:
+                  print(" ", v)
+              print()
+              print("Change tide.{name} to tide.\"{name}\" (double-quoted),")
+              print("or add a '// QUOTED:' comment within 3 lines above.")
+              sys.exit(1)
+          print("OK: No unquoted SQL identifier interpolation found.")
+          EOF
+
+  # v0.31.0: Migration test currency check.
+  # Asserts that migration_test.rs covers the current workspace version.
+  migration-test-currency:
+    name: Migration Test Currency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert migration_test.rs covers current workspace version
+        run: |
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          # Derive the expected final UPGRADES entry from the version.
+          # Format: "X.Y-1.Z → X.Y.Z" where we compute the previous minor.
+          MAJOR=$(echo "${CARGO_VERSION}" | cut -d. -f1)
+          MINOR=$(echo "${CARGO_VERSION}" | cut -d. -f2)
+          PATCH=$(echo "${CARGO_VERSION}" | cut -d. -f3)
+          PREV_MINOR=$((MINOR - 1))
+          EXPECTED_LABEL="${MAJOR}.${PREV_MINOR}.${PATCH} → ${MAJOR}.${MINOR}.${PATCH}"
+          echo "Workspace version: ${CARGO_VERSION}"
+          echo "Expected migration label: ${EXPECTED_LABEL}"
+          if ! grep -q "\"${EXPECTED_LABEL}\"" pg-tide-relay/tests/migration_test.rs; then
+            echo "ERROR: migration_test.rs does not contain the expected upgrade label:"
+            echo "  \"${EXPECTED_LABEL}\""
+            echo ""
+            echo "Add the following to the UPGRADES array in migration_test.rs:"
+            echo "  (\"${EXPECTED_LABEL}\", V$(echo ${MAJOR}_${PREV_MINOR}_0_TO_${MAJOR}_${MINOR}_0 | tr '.' '_')),"
+            echo ""
+            echo "And add the corresponding const at the top of the file:"
+            PREV_PADDED=$(echo "${CARGO_VERSION}" | sed "s/\.${MINOR}\./\.${PREV_MINOR}\./" )
+            echo "  const V$(echo ${MAJOR}_${PREV_MINOR}_0_TO_${MAJOR}_${MINOR}_0 | tr '.' '_'): &str ="
+            echo "      include_str!(\"../../sql/pg_tide--${PREV_PADDED}--${CARGO_VERSION}.sql\");"
+            exit 1
+          fi
+          echo "OK: migration_test.rs covers the current workspace version ${CARGO_VERSION}"

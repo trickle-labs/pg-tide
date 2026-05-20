@@ -113,6 +113,8 @@ pub async fn decode_payload(
             return Err(RelayError::PayloadDecode {
                 outbox: outbox_name.clone(),
                 outbox_id,
+                // QUOTED: Human-readable error message — not SQL. The actual SQL cursor
+                // uses the properly-quoted delta_table from fetch_claim_check_rows() below.
                 reason: format!(
                     "claim-check guard: tide.{delta_table_name} does not exist. \
                      This outbox requires pg_trickle >= 0.46.0 with claim-check tables enabled. \
@@ -162,7 +164,10 @@ async fn fetch_claim_check_rows(
     outbox_id: i64,
 ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), RelayError> {
     let cursor_name = format!("relay_cc_{outbox_id}_{}", Uuid::new_v4().simple());
-    let delta_table = format!("tide.outbox_delta_rows_{outbox_name}");
+    // v0.31.0: Double-quote the identifier to handle outbox names with hyphens.
+    // QUOTED: tide."outbox_delta_rows_{outbox_name}" — identifier validated at
+    // construction via validate_relay_identifier() in OutboxPollerSource::new_simple_with_mode().
+    let delta_table = format!("tide.\"outbox_delta_rows_{outbox_name}\"");
 
     // Open cursor — embed outbox_id literal (it's an i64 from DB, not user input).
     db.batch_execute(&format!(
@@ -476,8 +481,11 @@ async fn poll_simple(
     raw_mode: bool,
     pending_cc_oids: &mut Vec<u32>,
 ) -> Result<Vec<RelayMessage>, RelayError> {
-    // Outbox tables are in the tide schema: tide.outbox_<stream_table>
-    let outbox_schema_table = format!("tide.{outbox_table_name}");
+    // Outbox tables are in the tide schema: tide."<outbox_table_name>"
+    // v0.31.0: Double-quote the identifier to handle names containing hyphens.
+    // QUOTED: tide."{outbox_table_name}" — identifier validated at construction
+    // via validate_relay_identifier() in OutboxPollerSource::new_simple_with_mode().
+    let outbox_schema_table = format!("tide.\"{outbox_table_name}\"");
     let rows = db
         .query(
             &format!(
@@ -648,5 +656,57 @@ mod tests {
         let v = payload.get("v").and_then(|v| v.as_i64()).unwrap_or(0);
         assert_eq!(v, 99);
         // Would return RelayError::UnsupportedPayloadVersion(99) if we called decode_payload.
+    }
+
+    // v0.31.0: Verify that poll_simple() generates properly double-quoted SQL
+    // for outbox names containing hyphens.
+    #[test]
+    fn test_poll_simple_quoted_sql_plain_name() {
+        let outbox_table_name = "outbox_orders";
+        let quoted = format!("tide.\"{outbox_table_name}\"");
+        let sql = format!(
+            "SELECT id, payload FROM {table} WHERE id > $1 ORDER BY id LIMIT $2",
+            table = quoted
+        );
+        assert!(
+            sql.contains(r#"tide."outbox_orders""#),
+            "plain name should be double-quoted: {sql}"
+        );
+        assert!(
+            !sql.contains("tide.outbox_orders "),
+            "plain name must not appear unquoted: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_poll_simple_quoted_sql_hyphenated_name() {
+        let outbox_table_name = "outbox_order-events";
+        let quoted = format!("tide.\"{outbox_table_name}\"");
+        let sql = format!(
+            "SELECT id, payload FROM {table} WHERE id > $1 ORDER BY id LIMIT $2",
+            table = quoted
+        );
+        assert!(
+            sql.contains(r#"tide."outbox_order-events""#),
+            "hyphenated name should be double-quoted: {sql}"
+        );
+        // Without quoting, PostgreSQL would parse the hyphen as minus, producing
+        // invalid SQL like `FROM tide.outbox_order-events WHERE`.
+        assert!(
+            !sql.contains("tide.outbox_order-events "),
+            "hyphenated name must not appear unquoted: {sql}"
+        );
+    }
+
+    // v0.31.0: Verify that fetch_claim_check_rows() generates properly
+    // double-quoted SQL for outbox names containing hyphens.
+    #[test]
+    fn test_fetch_claim_check_rows_quoted_sql_hyphenated_name() {
+        let outbox_name = "order-events";
+        let delta_table = format!("tide.\"outbox_delta_rows_{outbox_name}\"");
+        assert!(
+            delta_table.contains(r#"tide."outbox_delta_rows_order-events""#),
+            "delta_table should be double-quoted: {delta_table}"
+        );
     }
 }

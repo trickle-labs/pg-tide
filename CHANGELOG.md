@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.31.0 — Assessment-6 P1/P2 Bug Fixes, Identifier Quoting Hardening & Release-Process Automation](#0310--assessment-6-p1p2-bug-fixes-identifier-quoting-hardening--release-process-automation)
 - [0.30.0 — Pipeline Dependency DAG, AsyncAPI Completeness & Pre-GA Final Hardening](#0300--pipeline-dependency-dag-asyncapi-completeness--pre-ga-final-hardening)
 - [0.29.0 — Pipeline Templates, Multi-Outbox Fan-In, Lifecycle Management & Backfill Completion](#0290--pipeline-templates-multi-outbox-fan-in-lifecycle-management--backfill-completion)
 - [0.28.0 — Delivery Receipts, Canonical Config & Native Claim-Check](#0280--delivery-receipts-canonical-config--native-claim-check)
@@ -38,6 +39,39 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.31.0] — Assessment-6 P1/P2 Bug Fixes, Identifier Quoting Hardening & Release-Process Automation
+
+Every outbox and inbox name that contains a hyphen — a natural choice for system architects who follow kebab-case naming conventions — produced a silent SQL syntax error in two relay code paths. The `PgInboxSink` used an unquoted table reference (`tide.order-events_inbox`) when constructing its UNNEST batch insert, causing PostgreSQL to reject the statement with an operator-not-found error. The `poll_simple()` source path had the same problem: `SELECT id, payload FROM tide.outbox_order-events WHERE id > $1` was rejected by the parser because the hyphen was treated as arithmetic subtraction. Any cross-database inbox delivery pipeline or any relay pipeline targeting a hyphenated outbox was silently broken for the entire v0.23.0 release series. Both identifiers are now properly double-quoted, matching the convention already applied by the local `InboxSink` that has been correct since v0.13.0.
+
+To prevent this class of regression from re-entering the codebase, this release adds a `lint-quoting` CI recipe and GitHub Actions job that flags any `format!()` call producing an unquoted `tide.{ident}` SQL pattern in production relay code. Exempt sites are annotated with a `// QUOTED:` comment that documents the upstream validation guaranteeing the identifier is safe. The check runs on every pull request, making SQL identifier injection and hyphen-in-name failures statically detectable before merge.
+
+Two release-process gaps from overall-assessment-6 are also closed. The migration test chain was extended to cover v0.30.0→v0.31.0, and a `migration-test-currency` CI job now fails the build if the migration test does not cover the current workspace version, making future migration gaps self-detecting. The `just bump-version` recipe already updates `Cargo.toml`, `pg_tide.control`, and `helm/pg-tide/Chart.yaml` atomically; this release verifies it works correctly for v0.31.0.
+
+### Relay binary fixes
+
+- **`PgInboxSink` table identifier now double-quoted** — the INSERT SQL in `pg-tide-relay/src/sink/pg_outbox.rs` now uses `tide."<inbox_table>"` instead of `tide.<inbox_table>`, preventing SQL syntax errors for inbox names containing hyphens (e.g. `order-events`). Any cross-database inbox delivery pipeline using a hyphenated inbox name has been silently broken since v0.23.0; this fix restores correct operation.
+- **`poll_simple()` outbox identifier now double-quoted** — the SELECT SQL in `pg-tide-relay/src/source/outbox.rs` now uses `tide."<outbox_table_name>"`, preventing SQL syntax errors for outbox names containing hyphens.
+- **`fetch_claim_check_rows()` delta table identifier now double-quoted** — the cursor DECLARE in the claim-check polling path now uses `tide."outbox_delta_rows_<name>"`, closing the last unquoted identifier in the relay source.
+
+### New tests
+
+- **Hyphenated inbox name integration test** — `tests/pg_inbox_sink_test.rs` now includes `test_pg_inbox_sink_hyphenated_name()`: creates `tide."order-events_inbox"`, publishes 20 messages via `PgInboxSink`, and asserts correct column values and deduplication. This permanently guards the quoting fix.
+- **Quoted SQL generation unit tests** — three `#[cfg(test)]` unit tests in `source/outbox.rs` assert that `poll_simple()` and `fetch_claim_check_rows()` produce syntactically valid, double-quoted SQL for both plain and hyphenated outbox names.
+
+### CI / release-process improvements
+
+- **`lint-quoting` justfile recipe** — scans `pg-tide-relay/src/` for unquoted `tide.{ident}` SQL format patterns; fails on any unquoted site not annotated with `// QUOTED:`.
+- **`lint-quoting` CI job** — runs the `lint-quoting` check on every pull request, making the regression class statically detectable before merge.
+- **`migration-test-currency` CI job** — asserts that `migration_test.rs` contains the expected upgrade label for the current workspace version; fails with a descriptive error and remediation instructions if the migration test lags behind the workspace version.
+- **Migration test extended to v0.31.0** — `V0_30_0_TO_0_31_0` constant and `("0.30.0 → 0.31.0", ...)` entry added to `migration_test.rs` and `common/mod.rs`.
+- **Schema-diff CI updated** — `schema-diff` job now applies `sql/pg_tide--0.30.0--0.31.0.sql` in both the fresh-install and upgrade chains.
+
+### No SQL schema changes
+
+v0.31.0 contains no DDL changes. The upgrade script `sql/pg_tide--0.30.0--0.31.0.sql` only updates the extension version comment. All fixes are in the relay binary.
 
 ---
 

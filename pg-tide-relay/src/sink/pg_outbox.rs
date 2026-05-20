@@ -76,11 +76,16 @@ impl super::Sink for PgInboxSink {
         let payload_params: Vec<Json<&serde_json::Value>> = payloads.iter().map(Json).collect();
         let header_params: Vec<Json<&serde_json::Value>> = headers.iter().map(Json).collect();
 
+        // v0.31.0: Double-quote the table identifier to handle inbox names
+        // containing hyphens (e.g. "order-events").  Consistent with the
+        // quoting already applied by the local InboxSink at sink/inbox.rs.
+        // QUOTED: tide."{inbox_table}" — identifier validated at construction
+        // via validate_relay_identifier() in PgInboxSink::new().
         let sql = format!(
-            "INSERT INTO tide.{table} (event_id, source, payload, headers) \
+            "INSERT INTO tide.\"{}\" (event_id, source, payload, headers) \
              SELECT * FROM UNNEST($1::text[], $2::text[], $3::jsonb[], $4::jsonb[]) \
              ON CONFLICT (event_id) DO NOTHING",
-            table = self.inbox_table
+            self.inbox_table
         );
 
         let inserted = self

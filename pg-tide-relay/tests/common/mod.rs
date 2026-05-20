@@ -41,7 +41,7 @@ use tokio_postgres::{Client, NoTls};
 /// SQL schema for pg_tide — loaded from the extension's migration file.
 const SCHEMA_SQL: &str = include_str!("../../../sql/pg_tide--0.1.0.sql");
 
-/// All upgrade migration scripts from v0.1.0 through v0.30.0.
+/// All upgrade migration scripts from v0.1.0 through v0.31.0.
 pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0.1.0 -> 0.2.0",
@@ -159,9 +159,13 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0.29.0 -> 0.30.0",
         include_str!("../../../sql/pg_tide--0.29.0--0.30.0.sql"),
     ),
+    (
+        "0.30.0 -> 0.31.0",
+        include_str!("../../../sql/pg_tide--0.30.0--0.31.0.sql"),
+    ),
 ];
 
-/// Install the v0.1.0 base schema then apply all migrations through v0.30.0.
+/// Install the v0.1.0 base schema then apply all migrations through v0.31.0.
 pub async fn install_full_schema(client: &tokio_postgres::Client) {
     client
         .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")

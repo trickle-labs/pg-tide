@@ -127,6 +127,84 @@ async fn test_pg_inbox_sink_empty_batch_is_no_op() {
     assert_eq!(count, 0, "empty batch should not insert any rows");
 }
 
+/// v0.31.0: Hyphenated inbox name — guards the double-quoting fix in PgInboxSink.
+///
+/// Before v0.31.0, `PgInboxSink` used `tide.{table}` (unquoted), which produced
+/// invalid SQL for inbox names containing hyphens:
+///   INSERT INTO tide.order-events_inbox … (PostgreSQL interprets `-` as minus)
+///
+/// After the fix, the identifier is properly double-quoted:
+///   INSERT INTO tide."order-events_inbox" …
+#[tokio::test]
+async fn test_pg_inbox_sink_hyphenated_name() {
+    let db = PgTideTestDb::start().await;
+
+    // Create inbox with a hyphenated name; setup_inbox creates tide."order-events_inbox".
+    db.setup_inbox("order-events").await;
+
+    let postgres_url = format!(
+        "host=127.0.0.1 port={} user=postgres password=postgres dbname=postgres",
+        db.host_port
+    );
+
+    let mut sink = PgInboxSink::new(&postgres_url, "order-events_inbox")
+        .await
+        .expect("PgInboxSink::new should accept hyphenated table names");
+
+    // Publish 20 messages — with an unquoted identifier this would produce a
+    // SQL syntax error.
+    let messages: Vec<RelayMessage> = (1..=20_u32)
+        .map(|i| {
+            make_message(
+                &format!("order-evt-{i:04}"),
+                "orders.placed",
+                serde_json::json!({"order_id": i}),
+            )
+        })
+        .collect();
+
+    sink.publish(&messages)
+        .await
+        .expect("publish to hyphenated inbox should not produce a SQL syntax error");
+
+    // Assert all 20 rows appear with correct column values.
+    let rows = db
+        .client
+        .query(
+            r#"SELECT event_id, source FROM tide."order-events_inbox" ORDER BY id"#,
+            &[],
+        )
+        .await
+        .expect("query hyphenated inbox table");
+
+    assert_eq!(rows.len(), 20, "expected 20 rows in order-events_inbox");
+
+    let first_event_id: String = rows[0].get("event_id");
+    assert_eq!(first_event_id, "order-evt-0001");
+
+    let first_source: String = rows[0].get("source");
+    assert_eq!(first_source, "orders.placed");
+
+    // Deduplication still works with hyphenated names.
+    sink.publish(&messages)
+        .await
+        .expect("second publish to hyphenated inbox should succeed");
+
+    let count_row = db
+        .client
+        .query_one(
+            r#"SELECT COUNT(*)::bigint FROM tide."order-events_inbox""#,
+            &[],
+        )
+        .await
+        .expect("count hyphenated inbox rows");
+    let count: i64 = count_row.get(0);
+    assert_eq!(
+        count, 20,
+        "re-publishing to hyphenated inbox should not create duplicates"
+    );
+}
+
 #[tokio::test]
 async fn test_pg_inbox_sink_invalid_table_rejected() {
     let postgres_url =
