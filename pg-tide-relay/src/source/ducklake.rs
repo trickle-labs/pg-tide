@@ -24,6 +24,7 @@
 /// ```
 ///
 /// Feature-gated: only compiled with `--features ducklake`.
+#[allow(unused_imports)]
 use crate::envelope::{AckToken, RelayMessage};
 use crate::error::RelayError;
 
@@ -66,6 +67,7 @@ impl DuckLakeSourceConfig {
 pub struct DuckLakeSource {
     config: DuckLakeSourceConfig,
     /// The last snapshot ID that has been fully processed and acknowledged.
+    #[allow(dead_code)]
     last_snapshot_id: i64,
 }
 

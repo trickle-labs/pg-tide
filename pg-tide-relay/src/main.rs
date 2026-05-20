@@ -12,7 +12,7 @@ use pg_tide_relay::pg_tls;
 mod cli;
 mod cmd;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,6 +22,23 @@ use tracing_subscriber::EnvFilter;
 
 use cli::{Cli, Commands};
 use config::{LogFormat, RelayConfig};
+
+/// v0.27.0: Emit a clap-formatted "missing required argument" error and exit
+/// with code 2 when a PostgreSQL URL is absent for a command that requires it.
+///
+/// Using `Cli::command().error().exit()` produces the same structured output
+/// as clap's own validation errors — consistent format, correct exit code, and
+/// no bare `eprintln!` calls violating the project logging convention.
+fn require_postgres_url(url: &str, for_cmd: &str) {
+    if url.is_empty() {
+        Cli::command()
+            .error(
+                clap::error::ErrorKind::MissingRequiredArgument,
+                format!("--postgres-url (or $PG_TIDE_POSTGRES_URL) is required for `{for_cmd}`"),
+            )
+            .exit();
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -79,10 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
-            if url.is_empty() {
-                eprintln!("error: --postgres-url is required for doctor");
-                std::process::exit(1);
-            }
+            require_postgres_url(&url, "doctor");
             return cmd::doctor::run_doctor(&url).await;
         }
         Some(Commands::ValidateConfig {
@@ -92,10 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
-            if url.is_empty() {
-                eprintln!("error: --postgres-url is required for validate-config");
-                std::process::exit(1);
-            }
+            require_postgres_url(&url, "validate-config");
             return cmd::validate_config::run_validate_config(&url, &pipeline).await;
         }
         Some(Commands::Replay(replay_cmd)) => {
@@ -114,20 +125,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
-            if url.is_empty() {
-                eprintln!("error: --postgres-url is required for sweep");
-                std::process::exit(1);
-            }
+            require_postgres_url(&url, "sweep");
             return cmd::sweep::run_sweep(&url, outbox.as_deref()).await;
         }
         Some(Commands::Status { postgres_url }) => {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
-            if url.is_empty() {
-                eprintln!("error: --postgres-url is required for status");
-                std::process::exit(1);
-            }
+            require_postgres_url(&url, "status");
             return cmd::status::run_status(&url).await;
         }
         None => {}
@@ -136,17 +141,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // v0.25.0: Handle --self-test flag: verify connectivity, schema, and
     // advisory lock, then exit 0 on success or 1 on failure.
     if cli.self_test {
-        if cfg.postgres_url.is_empty() {
-            eprintln!("error: --postgres-url is required for --self-test");
-            std::process::exit(1);
-        }
+        require_postgres_url(&cfg.postgres_url, "--self-test");
         return cmd::self_test::run_self_test(&cfg.postgres_url).await;
     }
 
-    if cfg.postgres_url.is_empty() {
-        eprintln!("error: --postgres-url is required (or set PG_TIDE_POSTGRES_URL)");
-        std::process::exit(1);
-    }
+    require_postgres_url(&cfg.postgres_url, "relay daemon");
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),

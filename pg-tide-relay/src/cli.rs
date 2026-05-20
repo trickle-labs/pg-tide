@@ -1,6 +1,48 @@
 /// CLI argument definitions for pg-tide.
 use clap::{Parser, Subcommand};
 
+/// v0.27.0: Validate that a `--postgres-url` value, when provided, begins with
+/// a recognised PostgreSQL URI scheme (`postgres://` or `postgresql://`).
+///
+/// This runs at argument-parse time so malformed URLs produce an immediate
+/// `clap`-formatted diagnostic rather than a confusing runtime `RelayError::Db`.
+fn validate_postgres_url_scheme(value: &str) -> Result<String, String> {
+    if value.starts_with("postgres://") || value.starts_with("postgresql://") {
+        Ok(value.to_string())
+    } else {
+        Err(format!(
+            "connection URL must begin with 'postgres://' or 'postgresql://'; got '{}'",
+            value
+        ))
+    }
+}
+
+/// v0.27.0: Validate that `--tenant-id`, when provided, is a non-empty
+/// identifier that does not contain NUL bytes, double-quotes, or
+/// semicolons, and does not exceed 63 bytes (PostgreSQL `NAMEDATALEN`).
+///
+/// This mirrors the `validate_relay_identifier()` check applied at
+/// coordinator startup and closes the defence-in-depth gap where an invalid
+/// tenant ID could only be detected after the PostgreSQL connection is open.
+fn validate_tenant_id_str(value: &str) -> Result<String, String> {
+    if value.is_empty() {
+        return Err("tenant-id must not be empty".to_string());
+    }
+    if value.len() > 63 {
+        return Err(format!(
+            "tenant-id must not exceed 63 bytes (got {} bytes)",
+            value.len()
+        ));
+    }
+    if value.contains('\0') || value.contains('"') || value.contains(';') {
+        return Err(format!(
+            "tenant-id contains disallowed characters (NUL, '\"', or ';'): '{}'",
+            value
+        ));
+    }
+    Ok(value.to_string())
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "pg-tide",
@@ -16,7 +58,12 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     /// PostgreSQL connection string (required for relay mode; optional for diagnostics).
     /// Example: postgres://user:pass@localhost:5432/mydb
-    #[arg(long, env = "PG_TIDE_POSTGRES_URL", help = "PostgreSQL connection URL")]
+    #[arg(
+        long,
+        env = "PG_TIDE_POSTGRES_URL",
+        help = "PostgreSQL connection URL",
+        value_parser = validate_postgres_url_scheme
+    )]
     pub postgres_url: Option<String>,
 
     /// Path to a file containing the PostgreSQL connection string.
@@ -124,7 +171,8 @@ pub struct Cli {
     #[arg(
         long = "tenant-id",
         env = "PG_TIDE_TENANT_ID",
-        help = "Tenant ID for multi-tenant relay groups (default: no filtering)"
+        help = "Tenant ID for multi-tenant relay groups (default: no filtering)",
+        value_parser = validate_tenant_id_str
     )]
     pub tenant_id: Option<String>,
 
@@ -158,7 +206,7 @@ pub enum Commands {
     /// problem.
     Doctor {
         /// PostgreSQL URL to diagnose.  Overrides --postgres-url.
-        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
 
@@ -174,7 +222,7 @@ pub enum Commands {
         pipeline: String,
 
         /// PostgreSQL URL.  Overrides --postgres-url.
-        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
 
@@ -201,7 +249,7 @@ pub enum Commands {
         outbox: Option<String>,
 
         /// PostgreSQL URL.  Overrides --postgres-url.
-        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
 
@@ -213,7 +261,7 @@ pub enum Commands {
     /// Exits 0 on success, 1 on connection failure.
     Status {
         /// PostgreSQL URL.  Overrides --postgres-url.
-        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
 }
@@ -322,8 +370,27 @@ pub enum AsyncapiCommands {
         #[arg(long)]
         output: Option<String>,
 
+        /// v0.27.0: Sample up to 10 recent messages per outbox and include
+        /// observed payload field names as AsyncAPI schema properties.
+        #[arg(long, default_value = "false")]
+        full_schema: bool,
+
         /// PostgreSQL URL.  Overrides --postgres-url.
-        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// v0.27.0: Validate live relay catalog against an external AsyncAPI spec.
+    ///
+    /// Fetches the spec from the given URL, compares channels to the live
+    /// relay catalog, and reports pipelines that are undocumented or missing.
+    Validate {
+        /// URL of the AsyncAPI spec to validate against.
+        #[arg(long)]
+        spec_url: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
 }

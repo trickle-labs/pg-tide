@@ -706,52 +706,10 @@ async fn worker_inner(
 
         // v0.16.0: Schema evolution check — compare payload schema fingerprint
         // against stored fingerprint and apply the configured policy.
-        {
-            let topic = batch
-                .first()
-                .map(|m| m.subject.as_str())
-                .unwrap_or("unknown");
-            let columns: Vec<String> = batch
-                .first()
-                .and_then(|m| m.payload.as_object())
-                .map(|obj| obj.keys().cloned().collect())
-                .unwrap_or_default();
-
-            let se_span = tracing::info_span!(
-                "relay.schema_evolution.check",
-                pipeline = %pipeline.name,
-                topic,
-            );
-            let _enter = se_span.enter();
-            match schema_guard.observe(topic, &columns).await {
-                Ok((
-                    crate::schema_evolution::SchemaChangeKind::Breaking,
-                    crate::schema_evolution::OnSchemaChange::Pause,
-                )) => {
-                    tracing::warn!(
-                        pipeline = %pipeline.name,
-                        topic,
-                        "breaking schema change detected — pausing pipeline per policy"
-                    );
-                    continue;
-                }
-                Ok((kind, policy)) => {
-                    if kind != crate::schema_evolution::SchemaChangeKind::NoChange
-                        && kind != crate::schema_evolution::SchemaChangeKind::Initial
-                    {
-                        tracing::warn!(
-                            pipeline = %pipeline.name,
-                            topic,
-                            change_kind = ?kind,
-                            policy = policy.as_str(),
-                            "schema change detected"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(pipeline = %pipeline.name, error = %e, "schema evolution check error — continuing");
-                }
-            }
+        // v0.27.0: Extracted into apply_schema_evolution_check() for independent
+        // testability and fuzz coverage.
+        if apply_schema_evolution_check(&batch, &mut schema_guard, &pipeline.name).await {
+            continue;
         }
 
         // v0.7.0: Apply content-based routing.
@@ -818,67 +776,17 @@ async fn worker_inner(
             .with_label_values(&[pipeline.name.as_str(), sink.name()])
             .observe(publish_duration);
 
-        match publish_outcome {
-            PublishOutcome::CircuitBreakerOpen => {
-                tracing::warn!(
-                    pipeline = %pipeline.name,
-                    "circuit breaker open — routing batch to DLQ or sleeping"
-                );
-                if dlq_config.enabled {
-                    let entries: Vec<DlqEntry> = batch
-                        .iter()
-                        .map(|msg| {
-                            DlqEntry::from_message(
-                                &direction_label,
-                                &pipeline.name,
-                                source.name(),
-                                sink.name(),
-                                msg,
-                                "circuit breaker open",
-                                ErrorKind::SinkPermanent,
-                            )
-                        })
-                        .collect();
-                    // v0.16.0: OTel span around DLQ insert.
-                    let dlq_span = tracing::info_span!(
-                        "relay.dlq.insert",
-                        pipeline = %pipeline.name,
-                        count = entries.len(),
-                        reason = "circuit_breaker_open",
-                    );
-                    let _enter = dlq_span.enter();
-                    // v0.18.0: Use route_to_dlq() helper for consistent error handling.
-                    match route_to_dlq(
-                        &db,
-                        &entries,
-                        &pipeline.name,
-                        &direction_label,
-                        &tenant_label,
-                        &metrics,
-                    )
-                    .await
-                    {
-                        DlqOutcome::Written => {
-                            if let Some(last) = batch.last() {
-                                let _ = source.acknowledge(last).await;
-                            }
-                        }
-                        DlqOutcome::TransientError => {} // retry next iteration
-                        DlqOutcome::PermanentError(e) => {
-                            return Err(e);
-                        }
-                    }
-                } else {
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
-                        _ = stop_rx.changed() => { break; }
-                    }
-                }
-                continue;
-            }
-            PublishOutcome::Success => {
-                consecutive_failures = 0;
+        // v0.27.0: Use handle_publish_outcome() to determine the next action.
+        // Async side-effects (acknowledge, DLQ write) are executed below.
+        let directive = handle_publish_outcome(
+            &publish_outcome,
+            &mut consecutive_failures,
+            &dlq_config,
+            poll_interval_ms,
+        );
 
+        match directive {
+            WorkerDirective::Continue => {
                 if let Some(last) = batch.last() {
                     // v0.13.0: OTel span around acknowledge.
                     let ack_span = tracing::info_span!(
@@ -912,84 +820,115 @@ async fn worker_inner(
                     .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                     .inc_by(batch.len() as u64);
             }
-            PublishOutcome::Failure(e) => {
-                consecutive_failures += 1;
 
-                tracing::warn!(
-                    pipeline = %pipeline.name,
-                    error = %e,
-                    consecutive_failures,
-                    "publish error"
-                );
-
-                // v0.13.0: Set pipeline_healthy gauge to 0 on error.
-                metrics
-                    .pipeline_healthy
-                    .with_label_values(&[&pipeline.name, &tenant_label])
-                    .set(0);
-
-                metrics
-                    .publish_errors
-                    .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
-                    .inc();
-
-                // v0.7.0: Route to DLQ when max retries exceeded.
-                if dlq_config.enabled && consecutive_failures > dlq_config.max_retries {
+            WorkerDirective::BackoffMs(sleep_ms) => {
+                if let PublishOutcome::Failure(ref e) = publish_outcome {
                     tracing::warn!(
                         pipeline = %pipeline.name,
-                        "max retries ({}) exceeded — routing batch to DLQ",
-                        dlq_config.max_retries
+                        error = %e,
+                        consecutive_failures,
+                        "publish error"
                     );
-                    let entries: Vec<DlqEntry> = batch
-                        .iter()
-                        .map(|msg| {
-                            DlqEntry::from_message(
-                                &direction_label,
-                                &pipeline.name,
-                                source.name(),
-                                sink.name(),
-                                msg,
-                                &e.to_string(),
-                                ErrorKind::MaxRetriesExceeded,
-                            )
-                        })
-                        .collect();
-                    // v0.16.0: OTel span around DLQ insert on max retries.
-                    let dlq_span = tracing::info_span!(
-                        "relay.dlq.insert",
+                    metrics
+                        .pipeline_healthy
+                        .with_label_values(&[&pipeline.name, &tenant_label])
+                        .set(0);
+                    metrics
+                        .publish_errors
+                        .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
+                        .inc();
+                } else {
+                    // CircuitBreakerOpen with DLQ disabled.
+                    tracing::warn!(
                         pipeline = %pipeline.name,
-                        count = entries.len(),
-                        reason = "max_retries_exceeded",
+                        "circuit breaker open — sleeping (DLQ disabled)"
                     );
-                    let _enter = dlq_span.enter();
-                    // v0.18.0: Use route_to_dlq() helper for consistent error handling.
-                    match route_to_dlq(
-                        &db,
-                        &entries,
-                        &pipeline.name,
-                        &direction_label,
-                        &tenant_label,
-                        &metrics,
-                    )
-                    .await
-                    {
-                        DlqOutcome::Written => {
-                            if let Some(last) = batch.last() {
-                                let _ = source.acknowledge(last).await;
-                            }
-                            consecutive_failures = 0;
-                        }
-                        DlqOutcome::TransientError => {} // retry next iteration
-                        DlqOutcome::PermanentError(e) => {
-                            return Err(e);
-                        }
-                    }
                 }
-
                 tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+                    _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
                     _ = stop_rx.changed() => { break; }
                 }
+            }
+
+            WorkerDirective::RouteToDlq { reason, error_kind } => {
+                let dlq_reason_label = match error_kind {
+                    ErrorKind::SinkPermanent => "circuit_breaker_open",
+                    ErrorKind::MaxRetriesExceeded => "max_retries_exceeded",
+                    _ => "unknown",
+                };
+                if let PublishOutcome::Failure(ref e) = publish_outcome {
+                    tracing::warn!(
+                        pipeline = %pipeline.name,
+                        error = %e,
+                        consecutive_failures,
+                        "publish error"
+                    );
+                    metrics
+                        .pipeline_healthy
+                        .with_label_values(&[&pipeline.name, &tenant_label])
+                        .set(0);
+                    metrics
+                        .publish_errors
+                        .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
+                        .inc();
+                } else {
+                    tracing::warn!(
+                        pipeline = %pipeline.name,
+                        "circuit breaker open — routing batch to DLQ"
+                    );
+                }
+                let entries: Vec<DlqEntry> = batch
+                    .iter()
+                    .map(|msg| {
+                        DlqEntry::from_message(
+                            &direction_label,
+                            &pipeline.name,
+                            source.name(),
+                            sink.name(),
+                            msg,
+                            &reason,
+                            error_kind,
+                        )
+                    })
+                    .collect();
+                let dlq_span = tracing::info_span!(
+                    "relay.dlq.insert",
+                    pipeline = %pipeline.name,
+                    count = entries.len(),
+                    reason = dlq_reason_label,
+                );
+                let _enter = dlq_span.enter();
+                match route_to_dlq(
+                    &db,
+                    &entries,
+                    &pipeline.name,
+                    &direction_label,
+                    &tenant_label,
+                    &metrics,
+                )
+                .await
+                {
+                    DlqOutcome::Written => {
+                        if let Some(last) = batch.last() {
+                            let _ = source.acknowledge(last).await;
+                        }
+                        consecutive_failures = 0;
+                    }
+                    DlqOutcome::TransientError => {
+                        // Retry next iteration — sleep briefly.
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+                            _ = stop_rx.changed() => { break; }
+                        }
+                    }
+                    DlqOutcome::PermanentError(e) => {
+                        return Err(e);
+                    }
+                }
+            }
+
+            WorkerDirective::Shutdown(e) => {
+                return Err(e);
             }
         }
     } // end loop
@@ -1146,7 +1085,7 @@ async fn poll_and_decode(
 
 /// Outcome of a `publish_with_circuit_breaker` call.
 #[derive(Debug)]
-enum PublishOutcome {
+pub(crate) enum PublishOutcome {
     /// Batch published successfully; source should be acknowledged.
     Success,
     /// Publish failed; caller should handle retry / DLQ logic.
@@ -1178,6 +1117,139 @@ async fn publish_with_circuit_breaker(
         Err(e) => {
             circuit_breaker.record_failure();
             PublishOutcome::Failure(e)
+        }
+    }
+}
+
+// ── v0.27.0 worker decomposition helpers ─────────────────────────────────
+
+/// Directive returned by `handle_publish_outcome()` to tell `worker_inner()`
+/// what action to take after a publish attempt.
+///
+/// v0.27.0: Extracted from the post-publish match arm in `worker_inner()` so
+/// the branching logic can be unit-tested independently of the async pipeline.
+#[derive(Debug)]
+pub(crate) enum WorkerDirective {
+    /// Publish succeeded; acknowledge the source, update metrics, and continue.
+    Continue,
+    /// Sleep for the given number of milliseconds then retry.
+    BackoffMs(u64),
+    /// Route the batch to the DLQ with the given reason and error classification.
+    RouteToDlq {
+        reason: String,
+        error_kind: ErrorKind,
+    },
+    /// Stop the pipeline immediately due to a permanent error.
+    /// Currently unused by `handle_publish_outcome()`; reserved for future
+    /// permanent-error detection paths that bypass the DLQ.
+    #[allow(dead_code)]
+    Shutdown(RelayError),
+}
+
+/// Determine the post-publish worker directive based on the publish outcome.
+///
+/// This function contains only branching logic — no async operations.
+/// `worker_inner()` executes the async side-effects (acknowledge, DLQ write)
+/// indicated by the returned `WorkerDirective`.
+///
+/// v0.27.0: Extracted from `worker_inner()` for independent unit-testability.
+/// Closes the last major untested branch in the coordinator.
+pub(crate) fn handle_publish_outcome(
+    outcome: &PublishOutcome,
+    consecutive_failures: &mut u32,
+    dlq_config: &DlqConfig,
+    poll_interval_ms: u64,
+) -> WorkerDirective {
+    match outcome {
+        PublishOutcome::Success => {
+            *consecutive_failures = 0;
+            WorkerDirective::Continue
+        }
+        PublishOutcome::CircuitBreakerOpen => {
+            if dlq_config.enabled {
+                WorkerDirective::RouteToDlq {
+                    reason: "circuit breaker open".to_string(),
+                    error_kind: ErrorKind::SinkPermanent,
+                }
+            } else {
+                WorkerDirective::BackoffMs(poll_interval_ms)
+            }
+        }
+        PublishOutcome::Failure(e) => {
+            *consecutive_failures += 1;
+            if dlq_config.enabled && *consecutive_failures > dlq_config.max_retries {
+                WorkerDirective::RouteToDlq {
+                    reason: e.to_string(),
+                    error_kind: ErrorKind::MaxRetriesExceeded,
+                }
+            } else {
+                WorkerDirective::BackoffMs(poll_interval_ms)
+            }
+        }
+    }
+}
+
+/// Apply the configured schema evolution policy to a batch.
+///
+/// Returns `true` if the batch should be **skipped** (breaking change +
+/// `Pause` policy triggered). Returns `false` if the batch may proceed.
+///
+/// v0.27.0: Extracted from `worker_inner()` so the schema evolution path is
+/// independently fuzzable and unit-testable.
+async fn apply_schema_evolution_check(
+    batch: &[crate::envelope::RelayMessage],
+    schema_guard: &mut crate::schema_evolution::SchemaEvolutionGuard,
+    pipeline_name: &str,
+) -> bool {
+    let topic = batch
+        .first()
+        .map(|m| m.subject.as_str())
+        .unwrap_or("unknown");
+    let columns: Vec<String> = batch
+        .first()
+        .and_then(|m| m.payload.as_object())
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+
+    let se_span = tracing::info_span!(
+        "relay.schema_evolution.check",
+        pipeline = %pipeline_name,
+        topic,
+    );
+    let _enter = se_span.enter();
+    match schema_guard.observe(topic, &columns).await {
+        Ok((
+            crate::schema_evolution::SchemaChangeKind::Breaking,
+            crate::schema_evolution::OnSchemaChange::Pause,
+        )) => {
+            tracing::warn!(
+                pipeline = %pipeline_name,
+                topic,
+                "breaking schema change detected — pausing pipeline per policy"
+            );
+            true // skip this batch
+        }
+        Ok((kind, policy)) => {
+            if kind != crate::schema_evolution::SchemaChangeKind::NoChange
+                && kind != crate::schema_evolution::SchemaChangeKind::Initial
+            {
+                tracing::warn!(
+                    pipeline = %pipeline_name,
+                    topic,
+                    change_kind = ?kind,
+                    policy = policy.as_str(),
+                    "schema change detected"
+                );
+            }
+            false // proceed
+        }
+        Err(e) => {
+            tracing::warn!(
+                pipeline = %pipeline_name,
+                error = %e,
+                "schema evolution check error — continuing"
+            );
+            false // proceed on error
         }
     }
 }
@@ -1963,5 +2035,112 @@ mod tests {
         // Full integration tests use Testcontainers.
         let group_id = "test-group";
         assert_eq!(group_id, "test-group");
+    }
+
+    // ── v0.27.0: handle_publish_outcome() unit tests ──────────────────────
+
+    fn make_dlq_config(enabled: bool, max_retries: u32) -> DlqConfig {
+        DlqConfig {
+            enabled,
+            max_retries,
+            ..DlqConfig::default()
+        }
+    }
+
+    #[test]
+    fn handle_publish_outcome_success_resets_failures() {
+        let mut failures: u32 = 5;
+        let dlq = make_dlq_config(true, 3);
+        let directive = handle_publish_outcome(&PublishOutcome::Success, &mut failures, &dlq, 1000);
+        assert_eq!(failures, 0, "consecutive_failures must be reset on success");
+        assert!(
+            matches!(directive, WorkerDirective::Continue),
+            "success must return Continue"
+        );
+    }
+
+    #[test]
+    fn handle_publish_outcome_circuit_open_with_dlq() {
+        let mut failures: u32 = 0;
+        let dlq = make_dlq_config(true, 3);
+        let directive = handle_publish_outcome(
+            &PublishOutcome::CircuitBreakerOpen,
+            &mut failures,
+            &dlq,
+            1000,
+        );
+        assert!(
+            matches!(
+                directive,
+                WorkerDirective::RouteToDlq {
+                    error_kind: ErrorKind::SinkPermanent,
+                    ..
+                }
+            ),
+            "open circuit breaker with DLQ enabled must route to DLQ"
+        );
+    }
+
+    #[test]
+    fn handle_publish_outcome_circuit_open_no_dlq() {
+        let mut failures: u32 = 0;
+        let dlq = make_dlq_config(false, 3);
+        let directive = handle_publish_outcome(
+            &PublishOutcome::CircuitBreakerOpen,
+            &mut failures,
+            &dlq,
+            2000,
+        );
+        assert!(
+            matches!(directive, WorkerDirective::BackoffMs(2000)),
+            "open circuit breaker without DLQ must backoff"
+        );
+    }
+
+    #[test]
+    fn handle_publish_outcome_failure_below_max_retries() {
+        let mut failures: u32 = 0;
+        let dlq = make_dlq_config(true, 3);
+        let e = RelayError::Other("sink error".into());
+        let directive =
+            handle_publish_outcome(&PublishOutcome::Failure(e), &mut failures, &dlq, 1000);
+        assert_eq!(failures, 1);
+        assert!(
+            matches!(directive, WorkerDirective::BackoffMs(1000)),
+            "failure below max_retries must backoff"
+        );
+    }
+
+    #[test]
+    fn handle_publish_outcome_failure_exceeds_max_retries() {
+        let mut failures: u32 = 3; // already at max_retries=3
+        let dlq = make_dlq_config(true, 3);
+        let e = RelayError::Other("persistent sink error".into());
+        let directive =
+            handle_publish_outcome(&PublishOutcome::Failure(e), &mut failures, &dlq, 1000);
+        assert_eq!(failures, 4, "failure count must be incremented");
+        assert!(
+            matches!(
+                directive,
+                WorkerDirective::RouteToDlq {
+                    error_kind: ErrorKind::MaxRetriesExceeded,
+                    ..
+                }
+            ),
+            "exceeding max_retries must route to DLQ"
+        );
+    }
+
+    #[test]
+    fn handle_publish_outcome_failure_no_dlq() {
+        let mut failures: u32 = 100; // way above any threshold
+        let dlq = make_dlq_config(false, 0);
+        let e = RelayError::Other("sink error".into());
+        let directive =
+            handle_publish_outcome(&PublishOutcome::Failure(e), &mut failures, &dlq, 500);
+        assert!(
+            matches!(directive, WorkerDirective::BackoffMs(500)),
+            "failure without DLQ enabled must always backoff"
+        );
     }
 }
