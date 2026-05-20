@@ -103,8 +103,8 @@ async fn test_sustained_throughput_50k_messages() {
             for seq in 0..messages_per_outbox {
                 client
                     .execute(
-                        "INSERT INTO tide.tide_outbox_messages (stream_table, subject, payload) \
-                         VALUES ($1, 'load-test', $2::jsonb)",
+                        "INSERT INTO tide.tide_outbox_messages (outbox_name, payload) \
+                         VALUES ($1, $2::jsonb)",
                         &[
                             &outbox_name,
                             &serde_json::json!({ "outbox": i, "seq": seq }),

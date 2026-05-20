@@ -642,7 +642,9 @@ jobs:
           key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        # rustix (a dep of cargo-fuzz) sometimes fails to compile on GitHub-hosted runners
+        # without this flag; forcing libc-based auxv makes it succeed.
+        run: RUSTFLAGS="--cfg=rustix_use_libc" cargo install cargo-fuzz
 
       - name: Run wire format fuzz target (60 seconds)
         run: |
