@@ -111,7 +111,10 @@ impl PipelineRateLimiter {
 
         // Use individual token acquisition in a loop for simplicity.
         // For high-throughput paths, batch acquisition can be added.
-        let cells = NonZeroU32::new(count).unwrap_or(NonZeroU32::new(1).expect("1 is non-zero"));
+        // v0.24.0: Use NonZeroU32::MIN (stable since Rust 1.79) instead of
+        // .expect("1 is non-zero") to remove the last production-reachable
+        // expect() in the rate-limiter path.
+        let cells = NonZeroU32::new(count).unwrap_or(NonZeroU32::MIN);
         // governor's `until_n_ready` is the correct API for bulk acquire.
         if let Err(_insufficient) = limiter.check_n(cells) {
             // Not enough burst capacity — wait until all tokens are available.

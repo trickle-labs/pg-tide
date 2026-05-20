@@ -96,6 +96,25 @@ autoscaling:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 80
 
+# v0.24.0: PodDisruptionBudget — recommended for HA deployments where multiple
+# relay replicas own disjoint pipeline sets via max_owned_pipelines.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# v0.24.0: Prometheus Operator ServiceMonitor — auto-discovers /metrics endpoint
+# and scrapes all pg_tide_relay_* metrics without manual scrape configuration.
+serviceMonitor:
+  enabled: false
+  # Additional labels to add to the ServiceMonitor resource.
+  additionalLabels: {}
+  # Namespace where the Prometheus Operator is deployed (defaults to release namespace).
+  namespace: ""
+  # How frequently Prometheus scrapes the /metrics endpoint.
+  interval: 30s
+  # Scrape timeout.
+  scrapeTimeout: 10s
+
 nodeSelector: {}
 tolerations: []
 affinity: {}

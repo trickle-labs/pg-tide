@@ -1,0 +1,41 @@
+{{- if .Values.serviceMonitor.enabled -}}
+# v0.24.0: Prometheus Operator ServiceMonitor.
+#
+# Auto-discovers the /metrics endpoint and scrapes all pg_tide_relay_* metrics
+# without manual Prometheus scrape configuration.
+#
+# Prerequisites:
+#   - Prometheus Operator (kube-prometheus-stack or victoria-metrics-operator)
+#     must be installed in the cluster.
+#   - The Prometheus custom resource must select this ServiceMonitor via its
+#     serviceMonitorSelector (e.g. matchLabels: release: kube-prometheus-stack).
+#
+# To enable:
+#   serviceMonitor:
+#     enabled: true
+#     additionalLabels:
+#       release: kube-prometheus-stack   # match your Prometheus selector
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "pg-tide.fullname" . }}
+  {{- if .Values.serviceMonitor.namespace }}
+  namespace: {{ .Values.serviceMonitor.namespace }}
+  {{- else }}
+  namespace: {{ .Release.Namespace }}
+  {{- end }}
+  labels:
+    {{- include "pg-tide.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "pg-tide.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+{{- end }}

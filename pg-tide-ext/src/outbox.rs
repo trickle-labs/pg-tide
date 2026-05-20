@@ -29,15 +29,6 @@ pub fn outbox_exists(outbox_name: &str) -> Result<bool, PgTideError> {
     .map_err(|e| PgTideError::SpiError(format!("outbox_exists SPI error: {e}")))
 }
 
-/// Get the retention_hours for a named outbox (returns None if not found).
-fn get_outbox_retention(outbox_name: &str) -> Option<i32> {
-    Spi::get_one_with_args::<i32>(
-        "SELECT retention_hours FROM tide.tide_outbox_config WHERE outbox_name = $1",
-        &[outbox_name.into()],
-    )
-    .unwrap_or(None)
-}
-
 // ── TIDE-API: outbox_create ───────────────────────────────────────────────
 
 /// Create a new named outbox.
@@ -154,6 +145,7 @@ fn outbox_publish_impl(
     // v0.13.0: Publisher ACL enforcement.
     // When the outbox_publishers table exists and has ACL entries for this
     // outbox, only listed roles (or superusers) may publish.
+    // v0.24.0: Fold current_user into the ACL lookup to save one SPI round-trip.
     let acl_count: i64 = Spi::get_one_with_args::<i64>(
         "SELECT COUNT(*) FROM tide.outbox_publishers WHERE outbox_name = $1",
         &[name.into()],
@@ -162,12 +154,9 @@ fn outbox_publish_impl(
     .unwrap_or(0);
 
     if acl_count > 0 {
-        let current_role = Spi::get_one::<String>("SELECT current_user")
-            .unwrap_or(None)
-            .unwrap_or_default();
         let is_superuser: bool = Spi::get_one_with_args::<bool>(
-            "SELECT rolsuper FROM pg_roles WHERE rolname = $1",
-            &[current_role.as_str().into()],
+            "SELECT rolsuper FROM pg_roles WHERE rolname = current_user::text",
+            &[],
         )
         .unwrap_or(None)
         .unwrap_or(false);
@@ -175,12 +164,16 @@ fn outbox_publish_impl(
         if !is_superuser {
             let allowed: bool = Spi::get_one_with_args::<bool>(
                 "SELECT EXISTS(SELECT 1 FROM tide.outbox_publishers \
-                 WHERE outbox_name = $1 AND role_name = $2)",
-                &[name.into(), current_role.as_str().into()],
+                 WHERE outbox_name = $1 AND role_name = current_user::text)",
+                &[name.into()],
             )
             .unwrap_or(None)
             .unwrap_or(false);
             if !allowed {
+                // Retrieve current_user for the error message only.
+                let current_role = Spi::get_one::<String>("SELECT current_user")
+                    .unwrap_or(None)
+                    .unwrap_or_default();
                 return Err(PgTideError::InvalidArgument(format!(
                     "role '{}' is not authorized to publish to outbox '{}'",
                     current_role, name
@@ -272,30 +265,33 @@ fn outbox_status_impl(name: &str) -> Result<pgrx::JsonB, PgTideError> {
         return Err(PgTideError::OutboxNotFound(name.to_string()));
     }
 
-    let pending: i64 = Spi::get_one_with_args::<i64>(
-        "SELECT COUNT(*) FROM tide.tide_outbox_messages \
-         WHERE outbox_name = $1 AND consumed_at IS NULL",
-        &[name.into()],
-    )
-    .unwrap_or(None)
-    .unwrap_or(0);
-
-    let total: i64 = Spi::get_one_with_args::<i64>(
-        "SELECT COUNT(*) FROM tide.tide_outbox_messages WHERE outbox_name = $1",
-        &[name.into()],
-    )
-    .unwrap_or(None)
-    .unwrap_or(0);
-
-    let oldest_age_secs: Option<f64> = Spi::get_one_with_args::<f64>(
-        "SELECT EXTRACT(EPOCH FROM (now() - MIN(created_at))) \
-         FROM tide.tide_outbox_messages \
-         WHERE outbox_name = $1 AND consumed_at IS NULL",
-        &[name.into()],
-    )
-    .unwrap_or(None);
-
-    let retention: i32 = get_outbox_retention(name).unwrap_or(24);
+    // v0.24.0: Single SPI call using FILTER aggregates — eliminates 2× round-trips
+    // compared to the previous three-query approach.
+    // Drive from config (always 1 row) LEFT JOIN messages so that an empty outbox
+    // still returns a row instead of 0 rows (which would cause an SpiTupleTable
+    // "positioned before start or after end" error when calling .get()).
+    let (pending, total, oldest_age_secs, retention) = Spi::connect(|client| {
+        let tup = client.select(
+            "SELECT \
+               COUNT(m.id) FILTER (WHERE m.consumed_at IS NULL)::bigint, \
+               COUNT(m.id)::bigint, \
+               EXTRACT(epoch FROM now() - MIN(m.created_at) FILTER (WHERE m.consumed_at IS NULL))::float8, \
+               COALESCE(c.retention_hours, 24)::int \
+             FROM tide.tide_outbox_config c \
+             LEFT JOIN tide.tide_outbox_messages m ON m.outbox_name = c.outbox_name \
+             WHERE c.outbox_name = $1 \
+             GROUP BY c.retention_hours",
+            None,
+            &[name.into()],
+        )?;
+        let first = tup.first();
+        let pending: i64 = first.get(1)?.unwrap_or(0);
+        let total: i64 = first.get(2)?.unwrap_or(0);
+        let oldest_age_secs: Option<f64> = first.get(3)?;
+        let retention: i32 = first.get(4)?.unwrap_or(24);
+        Ok::<_, pgrx::spi::SpiError>((pending, total, oldest_age_secs, retention))
+    })
+    .map_err(|e| PgTideError::SpiError(format!("outbox_status SPI error: {e}")))?;
 
     let status = serde_json::json!({
         "outbox_name": name,
