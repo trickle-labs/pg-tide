@@ -1,5 +1,6 @@
 [workspace]
 members = ["pg-tide-ext", "pg-tide-relay"]
+exclude = ["pg-tide-relay/fuzz"]
 resolver = "2"
 
 [workspace.package]
