@@ -815,7 +815,7 @@ async fn worker_inner(
         let publish_duration = publish_start.elapsed().as_secs_f64();
         metrics
             .sink_publish_duration_seconds
-            .with_label_values(&[&pipeline.name, sink.name()])
+            .with_label_values(&[pipeline.name.as_str(), sink.name()])
             .observe(publish_duration);
 
         match publish_outcome {
