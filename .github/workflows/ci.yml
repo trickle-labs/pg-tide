@@ -539,7 +539,8 @@ jobs:
             sql/pg_tide--0.27.0--0.28.0.sql \
             sql/pg_tide--0.28.0--0.29.0.sql \
             sql/pg_tide--0.29.0--0.30.0.sql \
-            sql/pg_tide--0.30.0--0.31.0.sql; do
+            sql/pg_tide--0.30.0--0.31.0.sql \
+            sql/pg_tide--0.31.0--0.32.0.sql; do
             psql -h 127.0.0.1 -U postgres -d fresh_schema -f "$f"
           done
 
@@ -592,7 +593,8 @@ jobs:
             sql/pg_tide--0.27.0--0.28.0.sql \
             sql/pg_tide--0.28.0--0.29.0.sql \
             sql/pg_tide--0.29.0--0.30.0.sql \
-            sql/pg_tide--0.30.0--0.31.0.sql; do
+            sql/pg_tide--0.30.0--0.31.0.sql \
+            sql/pg_tide--0.31.0--0.32.0.sql; do
             psql -h 127.0.0.1 -U postgres -d upgrade_schema -f "$f"
           done
 

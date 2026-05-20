@@ -532,9 +532,11 @@ impl Coordinator {
                     tracing::error!(
                         pipeline = %pipeline.name,
                         error = %e,
+                        // v0.32.0 P3: use explicit "{}" fallback instead of unwrap_or_default()
+                        // which returns "" (not valid JSON for a config object).
                         masked_config = %serde_json::to_string(
                             &mask_secrets_for_logging(&pipeline.config)
-                        ).unwrap_or_default(),
+                        ).unwrap_or_else(|_| "{}".to_string()),
                         "secret resolution failed — pipeline disabled"
                     );
                     if let Err(re) = self.release_lock(&pipeline.name).await {
