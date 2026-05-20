@@ -7,6 +7,10 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+# Declare this crate as its own workspace so cargo-fuzz can build it
+# independently of the root pg-tide workspace.
+[workspace]
+
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
