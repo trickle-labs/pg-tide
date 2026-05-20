@@ -11,6 +11,15 @@ build-dir   = "docs/book"
 command     = "mdbook-admonish"
 assets_version = "3.0.2"
 
+# v0.27.0: Define the current release version as a book variable.
+# Used by mdbook-variables preprocessor (if installed) via {{current_version}}.
+# Even without the preprocessor, this entry documents the release version.
+[preprocessor.variables]
+command = "mdbook-variables"
+
+[preprocessor.variables.variables]
+current_version = "0.27.0"
+
 [output.html]
 default-theme           = "navy"
 preferred-dark-theme    = "navy"

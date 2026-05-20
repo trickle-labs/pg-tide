@@ -73,10 +73,11 @@ Let's verify it's installed correctly:
 SELECT extname, extversion FROM pg_extension WHERE extname = 'pg_tide';
 ```
 
+The output shows the current installed version, e.g.:
 ```
  extname | extversion
 ---------+------------
- pg_tide | 0.1.0
+ pg_tide | 0.27.0
 ```
 
 Behind the scenes, this created:
@@ -246,7 +247,7 @@ pg-tide --postgres-url "postgres://postgres:postgres@localhost:5432/app"
 You'll see log output like:
 
 ```
-INFO  pg_tide_relay: Starting pg-tide relay v0.1.0
+INFO  pg_tide_relay: Starting pg-tide relay v0.27.0
 INFO  pg_tide_relay: Connected to PostgreSQL
 INFO  pg_tide_relay: Discovered pipeline: orders-to-nats (forward, nats)
 INFO  pg_tide_relay: Acquired advisory lock for pipeline: orders-to-nats

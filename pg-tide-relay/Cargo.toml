@@ -19,7 +19,7 @@ default = ["nats", "webhook", "stdout"]
 
 # Optional backends (each adds a Cargo dependency)
 nats            = ["dep:async-nats"]
-webhook         = ["dep:reqwest", "dep:hmac"]
+webhook         = ["dep:hmac"]
 kafka           = ["dep:rdkafka"]
 stdout          = []
 redis           = ["dep:redis"]
@@ -30,30 +30,30 @@ rabbitmq        = ["dep:lapin"]
 # via the platform OpenSSL stack (postgres-openssl crate).
 native-tls      = ["dep:postgres-openssl", "dep:openssl"]
 # v0.5.0: Cloud provider parity + analytics backends
-elasticsearch   = ["dep:reqwest", "dep:base64"]
-pubsub          = ["dep:reqwest", "dep:base64"]
+elasticsearch   = ["dep:base64"]
+pubsub          = ["dep:base64"]
 kinesis         = ["dep:aws-sdk-kinesis", "dep:aws-config"]
-servicebus      = ["dep:reqwest", "dep:hmac", "dep:base64"]
+servicebus      = ["dep:hmac", "dep:base64"]
 # v0.6.0: IoT and data lake backends
 mqtt            = ["dep:rumqttc"]
-eventhubs       = ["dep:reqwest", "dep:hmac", "dep:base64"]
+eventhubs       = ["dep:hmac", "dep:base64"]
 object-storage  = ["dep:object_store", "dep:parquet"]
 # v0.7.0: Operational excellence features
 schema-registry = ["dep:apache-avro"]
 otel            = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
 # v0.8.0: Notification sinks + Arrow Flight
-slack           = ["dep:reqwest"]
-discord         = ["dep:reqwest"]
-pagerduty       = ["dep:reqwest"]
+slack           = []
+discord         = []
+pagerduty       = []
 arrow-flight    = ["dep:arrow-array", "dep:arrow-schema", "dep:arrow-flight", "dep:tonic"]
 # v0.9.0: Connector ecosystem
 singer          = []
 airbyte         = []
 # v0.10.0: Analytics sinks
-clickhouse      = ["dep:reqwest"]
+clickhouse      = []
 mongodb         = ["dep:mongodb"]
-snowflake       = ["dep:reqwest"]
-bigquery        = ["dep:reqwest"]
+snowflake       = []
+bigquery        = []
 iceberg         = ["dep:object_store", "dep:parquet"]
 delta           = ["dep:object_store", "dep:parquet"]
 ducklake        = ["dep:object_store", "dep:parquet"]
@@ -93,7 +93,7 @@ prometheus = "0.14"
 
 # Optional sink/source backends
 async-nats = { version = "0.47", optional = true }
-reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false, optional = true }
+reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
 rdkafka = { version = "0.39", optional = true }
 redis = { version = "1.2", features = ["tokio-comp", "streams"], optional = true }
 aws-sdk-sqs = { version = "1.98", optional = true }

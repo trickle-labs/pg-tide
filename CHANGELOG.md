@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.27.0 — Observability Expansion, CLI Ergonomics & Pre-GA Documentation Polish](#0270--2026-05-20--observability-expansion-cli-ergonomics--pre-ga-documentation-polish)
 - [0.26.0 — Partition Safety, Defence-in-Depth & Test Coverage Completion](#0260--2026-05-20--partition-safety-defence-in-depth--test-coverage-completion)
 - [0.25.0 — Outbox Table Partitioning, Multi-Tenant Relay Completion & Pre-GA Hardening](#0250--2026-05-20--outbox-table-partitioning-multi-tenant-relay-completion--pre-ga-hardening)
 - [0.24.0 — Code Quality, Performance & Helm Production Maturity](#0240--2026-05-19--code-quality-performance--helm-production-maturity)
@@ -34,6 +35,89 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.27.0] — 2026-05-20 — Observability Expansion, CLI Ergonomics & Pre-GA Documentation Polish
+
+v0.27.0 completes the observability surface promised by v0.24.0, delivers the
+`worker_inner()` decomposition with full unit-test coverage, hardens the CLI
+with `clap` value-parser validation, and polishes the documentation for the
+v1.0.0 GA milestone.
+
+### Breaking changes
+
+None.
+
+### What's new
+
+**Grafana dashboard — relay-health.json**
+- Added **Pipeline Health** row at the top: Total/Healthy/Paused Pipelines stat
+  panels, Total Consumer Lag stat, and a Pipeline Status Table.
+- Added **Sink Latency** row: P50/P95/P99 latency timeseries + Top-5 Slowest
+  Sinks table (sourced from `pg_tide_relay_sink_publish_duration_seconds`).
+- Added **Connection Pool** row: stacked area chart for pool connections and
+  P95 pool-acquire duration.
+- Added **Per-Tenant Overview** row: messages/sec, consumer lag, and healthy
+  pipeline count broken down by `tenant` label.
+- Added `tenant` template variable for dashboard-level filtering.
+- Fixed invalid JSON in existing panels (unescaped `"reverse"` in PromQL
+  `direction` label selector).
+- Dashboard version bumped to 3.
+
+**Prometheus alerting rules — alerts.yaml** (new file)
+- `PgTideRelayPipelinePaused` — fires after 5 min of `pipeline_healthy == 0`.
+- `PgTideRelayHighConsumerLag` — fires when consumer lag > 10 000 for 2 min.
+- `PgTideRelayDLQDepthHigh` — fires when DLQ intake rate > 100 msg/hr.
+- `PgTideRelayDLQWriteError` — critical alert on any DLQ write failure.
+- `PgTideRelayConnectionPoolSaturated` — fires when pool-waiting fraction > 10 %
+  for 1 min.
+
+**coordinator.rs — worker_inner() decomposition**
+- Extracted `handle_publish_outcome()` pure function (6 unit tests).
+- Extracted `apply_schema_evolution_check()` async helper.
+- Added `WorkerDirective` enum to decouple decision logic from execution.
+
+**CLI hardening (v0.27.0)**
+- Added `validate_postgres_url_scheme()` value-parser: rejects any
+  `--postgres-url` that does not start with `postgres://` or `postgresql://`.
+- Added `validate_tenant_id_str()` value-parser: rejects tenant IDs that are
+  empty, exceed 63 bytes, or contain `NUL`, `"`, or `;`.
+- Applied both parsers to every `--postgres-url` and `--tenant-id` occurrence
+  in the CLI tree.
+- Replaced all `eprintln!` + `process::exit(1)` patterns with
+  `Cli::command().error(MissingRequiredArgument, …).exit()` — consistent
+  clap-formatted output with exit code 2.
+
+**AsyncAPI catalog reflection (v0.27.0)**
+- `pg-tide asyncapi export --full-schema`: samples up to 10 recent messages per
+  outbox and includes observed JSON payload field names as AsyncAPI schema
+  properties.
+- `pg-tide asyncapi validate --spec-url <URL>`: fetches an external AsyncAPI
+  spec and reports catalog/spec channel mismatches.
+- `asyncapi export` now surfaces the optional `description` column (added to
+  `tide.tide_outbox_config` in this release) as the AsyncAPI channel
+  description.
+
+**SQL migration (0.26.0 → 0.27.0)**
+- Added optional `description TEXT` column to `tide.tide_outbox_config`.
+- Added optional `description TEXT` column to `tide.tide_inbox_config`.
+
+**Documentation**
+- New runbook: [Partition Management](docs/src/operations/partition-management.md)
+  covering strategy selection, `outbox_convert_to_partitioned()` prerequisites,
+  rollback, monitoring with `pg-tide doctor --partition-check`, manual partition
+  creation, emergency partition drop, and pruning verification with
+  `EXPLAIN (PARTITIONS)` and `pg_inherits`.
+- Updated `docs/src/getting-started/first-pipeline.md` to remove hardcoded
+  version strings (`0.1.0`).
+- Added `[preprocessor.variables]` with `current_version = "0.27.0"` to
+  `book.toml`.
+
+**reqwest promoted to non-optional dependency**
+- `reqwest` is now a required dependency of `pg-tide-relay` (was previously
+  optional, gated by individual sink features).  This enables the
+  `asyncapi validate` command without requiring any sink feature to be active.
 
 ---
 
