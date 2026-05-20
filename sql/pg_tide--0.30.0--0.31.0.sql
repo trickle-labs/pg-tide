@@ -1,0 +1,35 @@
+-- pg_tide 0.30.0 → 0.31.0
+--
+-- v0.31.0: Assessment-6 P1/P2 Bug Fixes, Identifier Quoting Hardening
+--          & Release-Process Automation
+--
+-- Changes (no DDL changes in this release — all fixes are in the relay binary):
+--
+--   RELAY BINARY FIXES:
+--   1. PgInboxSink: double-quote inbox table identifier in INSERT SQL
+--      (tide.{table} → tide."{table}"), fixing SQL syntax errors for hyphenated
+--      inbox names such as "order-events".
+--
+--   2. poll_simple(): double-quote outbox table identifier in SELECT SQL
+--      (tide.{outbox_table_name} → tide."{outbox_table_name}"), fixing SQL
+--      syntax errors for outbox names containing hyphens.
+--
+--   3. fetch_claim_check_rows(): double-quote delta table identifier
+--      (tide.outbox_delta_rows_{name} → tide."outbox_delta_rows_{name}"),
+--      fixing SQL syntax errors for hyphenated outbox names in claim-check mode.
+--
+--   CI / RELEASE PROCESS:
+--   4. lint-quoting: new justfile recipe and CI job that flags any
+--      format!() call producing unquoted tide.{ident} SQL patterns.
+--
+--   5. migration-test-currency: new CI job that asserts migration_test.rs
+--      covers the current workspace version, preventing silent migration gaps.
+--
+-- This migration script contains no DDL changes. The upgrade bumps the
+-- extension version to 0.31.0 and ensures the relay binary is upgraded to
+-- the fixed version before re-enabling pipelines with hyphenated names.
+
+-- Bump the extension's version comment so pg_upgrade and version-check
+-- queries reflect the correct version.
+COMMENT ON EXTENSION pg_tide IS
+    'Transactional outbox, idempotent inbox, and relay catalog for PostgreSQL — v0.31.0';

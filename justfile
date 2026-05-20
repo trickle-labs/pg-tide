@@ -85,6 +85,78 @@ lint-expect:
     else:
         print("OK: No bare expect() calls in production relay code.")
 
+# v0.31.0: Guard against unquoted identifier interpolation in relay SQL format strings.
+# Flags any format!() call that produces tide.{ident} (without surrounding double quotes).
+# Permitted: tide."{ident}" (double-quoted) or static identifiers that never contain hyphens.
+# Annotate permitted sites with: // QUOTED: tide."{name}" — <reason>
+lint-quoting:
+    #!/usr/bin/env python3
+    import os, sys, re
+
+    violations = []
+    src_dir = "pg-tide-relay/src"
+
+    # Match: tide.{ but NOT tide."{ and NOT preceded by // QUOTED:
+    unquoted_pattern = re.compile(r'tide\.\{(?!")')
+
+    for root, dirs, files in os.walk(src_dir):
+        for fname in files:
+            if not fname.endswith(".rs"):
+                continue
+            path = os.path.join(root, fname)
+            with open(path) as f:
+                lines = f.readlines()
+
+            in_test_depth = 0
+            pending_test = False
+
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+
+                if re.search(r'#\[cfg\(.*\btest\b', stripped):
+                    pending_test = True
+
+                opens = stripped.count("{")
+                closes = stripped.count("}")
+
+                if pending_test and opens > 0:
+                    in_test_depth = opens - closes
+                    pending_test = False
+                elif in_test_depth > 0:
+                    in_test_depth += opens - closes
+                    if in_test_depth <= 0:
+                        in_test_depth = 0
+
+                if in_test_depth > 0:
+                    continue
+                if stripped.startswith("//"):
+                    continue
+                # Skip display/log lines — println!, eprintln!, tracing macros
+                # These are human-readable messages, not SQL query strings.
+                if re.search(r'println!\s*\(|eprintln!\s*\(|tracing::|format_args!', stripped):
+                    continue
+
+                if not unquoted_pattern.search(stripped):
+                    continue
+
+                # Allow if a // QUOTED: comment appears within 3 preceding lines
+                window = lines[max(0, i-3):i]
+                if any("// QUOTED:" in l for l in window):
+                    continue
+
+                violations.append(f"{path}:{i+1}: {line.rstrip()}")
+
+    if violations:
+        print("ERROR: unquoted identifier interpolation in relay SQL format strings:")
+        for v in violations:
+            print(" ", v)
+        print()
+        print("Change tide.{name} to tide.\"{name}\" (double-quoted),")
+        print("or add a '// QUOTED: tide.\"{name}\" — <reason>' comment within 3 lines above.")
+        sys.exit(1)
+    else:
+        print("OK: No unquoted SQL identifier interpolation found.")
+
 # Run unit tests (no DB required)
 test-unit:
     cargo test --package {{PG_TIDE_EXT}} --lib -- --test-threads=4
