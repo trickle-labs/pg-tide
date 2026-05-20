@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.32.0 — Performance Engineering, Code Internals Quality & Benchmark Hardening](#0320--2026-05-20--performance-engineering-code-internals-quality--benchmark-hardening)
 - [0.31.0 — Assessment-6 P1/P2 Bug Fixes, Identifier Quoting Hardening & Release-Process Automation](#0310--assessment-6-p1p2-bug-fixes-identifier-quoting-hardening--release-process-automation)
 - [0.30.0 — Pipeline Dependency DAG, AsyncAPI Completeness & Pre-GA Final Hardening](#0300--pipeline-dependency-dag-asyncapi-completeness--pre-ga-final-hardening)
 - [0.29.0 — Pipeline Templates, Multi-Outbox Fan-In, Lifecycle Management & Backfill Completion](#0290--pipeline-templates-multi-outbox-fan-in-lifecycle-management--backfill-completion)
@@ -39,6 +40,49 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.32.0] — 2026-05-20 — Performance Engineering, Code Internals Quality & Benchmark Hardening
+
+This release performs a comprehensive performance engineering sweep across both the extension and relay hot paths. The publisher-ACL authorization path in `outbox_publish()` has been issuing three sequential SPI round-trips on every call since the ACL system was introduced in v0.13.0. A single CASE-expression query now covers all three authorization decisions in one round-trip, reducing SPI overhead for ACL-checked publishes by approximately 60%. The inbox fleet summary (`tide.inbox_status(NULL)`) had an N+1 query problem: 20 configured inboxes produced 21 SPI calls. This is now a fixed 2-round-trip operation using a dynamically assembled UNION ALL query, with explicit error propagation instead of silently returning empty results on SPI failures.
+
+The relay codebase achieves full `lint-expect` compliance with the replacement of the last bare `.expect()` call in the webhook HMAC path with `.unwrap_or_else(|_| unreachable!())`, accompanied by the appropriate `// SAFETY:` comment documenting why the branch is provably unreachable. The coordinator's secrets-logging serialization fallback now returns `"{}"` (a valid JSON object) instead of `""` (an empty string that is not valid JSON for a config object).
+
+The Criterion benchmark suite gains a new `bench_consumer_group_poll_decode` benchmark covering the consumer-group polling path at 1 KB, 10 KB, and 100 KB payload sizes, providing a regression gate for the more complex consumer-group decode path that was previously unmeasured. The `bench_inbox_unnest_params` benchmark is extended to include a 500-row batch size alongside the existing 1/10/100/1000 sizes.
+
+The v0.32.0 release also ships the WAL logical-replication source groundwork: a `PgLogicalSource` proof-of-concept behind a `wal-source` feature flag that validates the `tokio-postgres` replication connection lifecycle, slot creation, and LSN-to-offset mapping strategy. ADR-009 documents the full design, open questions, and the tradeoffs between ephemeral and permanent slots, establishing the design contract for the v1.1.0 full implementation.
+
+### Extension performance improvements
+
+- **Publisher-ACL SPI consolidation** — the three sequential SPI calls in `outbox_publish_impl()` (count publishers, check rolsuper, check allowed) are replaced with a single `CASE` expression query that returns `'no_acl'`, `'superuser'`, `'allowed'`, or `'denied'` in one round-trip. For high-frequency event streams with ACLs enabled, this reduces authorization overhead from 3 SPI calls to 1 per publish — approximately 60% fewer round-trips on the hot publish path. ACL semantics are unchanged.
+- **`inbox_status()` fleet summary N+1 elimination** — `inbox_status_impl()` in fleet mode (called as `tide.inbox_status(NULL)`) previously issued one `COUNT(*)` query per configured inbox. With 20 inboxes that was 21 SPI calls. The implementation now assembles a single `UNION ALL` query across all inbox tables and executes it in one round-trip, reducing the total SPI calls to 2 regardless of inbox count. The improvement is proportional: 50 inboxes drops from 51 calls to 2.
+- **Fleet `inbox_status()` SPI error propagation** — the `Spi::connect()` call in the fleet path previously used `.unwrap_or_default()`, silently returning an empty inbox list if the SPI connection failed. It now returns a `PgTideError::SpiError` to the SQL caller, making catalog access failures visible instead of silently returning `{"inboxes":[]}`.
+
+### Relay binary improvements
+
+- **Webhook HMAC `expect()` → `unreachable!()`** — the last bare `.expect()` call in production relay code (`<Hmac<Sha256>>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key size")`) is replaced with `.unwrap_or_else(|_| unreachable!())` with a `// SAFETY: HMAC-SHA256 accepts any key length (RFC 2104 §3); this branch is unreachable.` comment. This achieves full `just lint-expect` compliance across all production relay source files.
+- **Coordinator secrets-logging `unwrap_or_default` fix** — `serde_json::to_string(&mask_secrets_for_logging(&pipeline.config)).unwrap_or_default()` is replaced with `.unwrap_or_else(|_| "{}".to_string())`. The previous form returned `""` on serialization failure (an invalid JSON string); the new form returns `"{}"` (a valid empty JSON object), avoiding confusing log entries when logging pipeline config during startup errors.
+
+### New benchmarks
+
+- **`bench_consumer_group_poll_decode`** — new Criterion benchmark covering the consumer-group polling path decode step with 1 000-row batches at 1 KB, 10 KB, and 100 KB payload sizes. This path was previously unmeasured; the benchmark establishes a baseline for the `poll_consumer_group()` code path and serves as a regression gate alongside the existing `poll_simple` benchmark.
+- **`bench_inbox_unnest_params` extended** — the `bench_inbox_unnest_params` benchmark now covers batch sizes of 1, 10, 100, **500**, and 1 000 rows. The 500-row point was previously missing from the scaling profile, leaving a gap in the sub-linear throughput assertion.
+
+### WAL logical-replication source groundwork (`wal-source` feature)
+
+- **`PgLogicalSource` proof-of-concept** — a new `pg-tide-relay/src/source/pg_logical.rs` module implements `PgLogicalSource` behind the `wal-source` Cargo feature flag. The spike validates: replication connection establishment (appending `replication=database` to the connection URL), temporary logical replication slot creation (`CREATE_REPLICATION_SLOT … TEMPORARY LOGICAL pgoutput`), LSN parsing and tracking, and `RelayMessage` emission equivalent to `OutboxPollerSource` for INSERT events. Not enabled in default CI; skipped unless `--features wal-source` is specified.
+- **ADR-009: WAL logical-replication source** — `docs/adr/adr-009-wal-logical-replication-source.md` documents the design decisions: replication slot lifecycle (ephemeral vs. permanent), LSN-to-consumer-offset mapping strategy, at-least-once delivery guarantee via standby status updates, interaction with outbox table partitioning (requiring `publish_via_partition_root = true`), advisory lock coordination, and a comparison table of polling source vs. WAL source tradeoffs. The ADR is a prerequisite for the full v1.1.0 implementation.
+- **Unit tests for WAL source** — `pg_logical.rs` includes `#[cfg(all(test, feature = "wal-source"))]` unit tests for `parse_lsn()` (zero, simple, high-word, and error cases) and the replication URL construction logic.
+
+### Migration test & CI updates
+
+- **Migration test extended to v0.32.0** — `V0_31_0_TO_0_32_0` constant and `("0.31.0 → 0.32.0", ...)` entry added to `pg-tide-relay/tests/migration_test.rs` and `common/mod.rs`. The `migration-test-currency` CI job validates the chain stays current.
+- **Schema-diff CI updated** — `schema-diff` job now applies `sql/pg_tide--0.31.0--0.32.0.sql` in both the fresh-install and upgrade chains.
+
+### No SQL schema changes
+
+v0.32.0 contains no DDL changes. The upgrade script `sql/pg_tide--0.31.0--0.32.0.sql` only updates the extension version comment. All improvements are in the extension's Rust hot paths and the relay binary.
 
 ---
 

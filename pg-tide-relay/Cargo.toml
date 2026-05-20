@@ -62,6 +62,12 @@ debezium        = []
 maxwell         = []
 canal           = []
 cdc-json        = []
+# v0.32.0: WAL logical-replication source — feasibility spike (pgoutput protocol).
+# Enables the PgLogicalSource which establishes a replication connection and
+# decodes pgoutput messages for INSERT events without polling.
+# Not enabled by default; skipped in CI unless explicitly requested.
+# See docs/adr/adr-009-wal-logical-replication-source.md for design details.
+wal-source      = []
 
 [dependencies]
 # Core async runtime + CLI

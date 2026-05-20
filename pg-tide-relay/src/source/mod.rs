@@ -48,6 +48,12 @@ pub mod airbyte;
 // v0.22.0: DuckLake reverse relay source
 pub mod ducklake;
 
+// v0.32.0: WAL logical-replication source groundwork (feature-gated spike).
+// Enabled only with --features wal-source; skipped in default CI.
+// See docs/adr/adr-009-wal-logical-replication-source.md for design.
+#[cfg(feature = "wal-source")]
+pub mod pg_logical;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;

@@ -192,7 +192,7 @@ fn bench_outbox_poll_decode(c: &mut Criterion) {
 fn bench_inbox_unnest_params(c: &mut Criterion) {
     let mut group = c.benchmark_group("inbox_unnest_params");
 
-    for &batch_size in &[1_usize, 10, 100, 1_000] {
+    for &batch_size in &[1_usize, 10, 100, 500, 1_000] {
         group.bench_with_input(
             BenchmarkId::new("build_unnest_vecs", batch_size),
             &batch_size,
@@ -289,6 +289,66 @@ fn bench_worker_inner_orchestration(c: &mut Criterion) {
     group.finish();
 }
 
+// ── OutboxPollerSource consumer-group poll simulation ─────────────────────
+
+/// Simulates the consumer-group polling path (poll_consumer_group) payload
+/// decode step with a 1 000-row batch at varying payload sizes.
+///
+/// The consumer-group path carries advisory-lock metadata alongside each row
+/// (consumer_id, committed_offset fields), modelling a slightly richer decode
+/// compared to poll_simple. This benchmark isolates per-row deserialization
+/// and envelope-key extraction overhead from PostgreSQL I/O.
+///
+/// v0.32.0: Added per the roadmap to complement the existing poll_simple
+/// benchmark and to establish a regression gate for the consumer-group path.
+fn bench_consumer_group_poll_decode(c: &mut Criterion) {
+    let mut group = c.benchmark_group("consumer_group_poll_decode");
+
+    for &(label, payload_bytes) in &[
+        ("1kb", 1_024_usize),
+        ("10kb", 10_240_usize),
+        ("100kb", 102_400_usize),
+    ] {
+        // Consumer-group rows include consumer metadata alongside the payload.
+        let rows: Vec<String> = (0..1_000_u64)
+            .map(|i| {
+                let p = sized_payload(i, payload_bytes);
+                serde_json::to_string(&serde_json::json!({
+                    "id":              i,
+                    "consumer_id":     "relay-worker-0",
+                    "committed_offset": i.saturating_sub(1),
+                    "dedup_key":       format!("evt-{i:08}"),
+                    "payload":         p,
+                }))
+                .unwrap()
+            })
+            .collect();
+
+        group.bench_with_input(
+            BenchmarkId::new("decode_consumer_group_1000", label),
+            &rows,
+            |b, rows| {
+                b.iter(|| {
+                    rows.iter()
+                        .map(|s| {
+                            let v = serde_json::from_str::<serde_json::Value>(s).unwrap();
+                            // Simulate extracting the fields a relay worker reads.
+                            let _id = v["id"].as_u64();
+                            let _consumer = v["consumer_id"].as_str();
+                            let _offset = v["committed_offset"].as_u64();
+                            let _dedup = v["dedup_key"].as_str();
+                            let _payload = v["payload"].clone();
+                            v
+                        })
+                        .collect::<Vec<_>>()
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_payload_serialization,
@@ -296,6 +356,7 @@ criterion_group!(
     bench_subject_rendering,
     bench_dedup_hashing,
     bench_outbox_poll_decode,
+    bench_consumer_group_poll_decode,
     bench_inbox_unnest_params,
     bench_worker_inner_orchestration,
 );

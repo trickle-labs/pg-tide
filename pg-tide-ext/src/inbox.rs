@@ -240,7 +240,12 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
     }
 
     // Fleet summary: collect every configured inbox with a basic count.
-    let rows = Spi::connect(|client| {
+    // v0.32.0 P2: Replace the N+1 SPI query loop with a single dynamic UNION ALL
+    // aggregation so that fleet status executes only 2 SPI round-trips regardless
+    // of the number of configured inboxes (down from N+1 at N=20 that's 21 calls).
+    // P3-9: Replace .unwrap_or_default() with explicit error propagation so that
+    // SPI connection failures surface to the SQL caller instead of returning empty.
+    let rows: Vec<(String, String)> = Spi::connect(|client| {
         let mut entries = Vec::new();
         let tup = client.select(
             "SELECT inbox_name, inbox_schema FROM tide.tide_inbox_config ORDER BY inbox_name",
@@ -254,21 +259,53 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
         }
         Ok::<_, pgrx::spi::SpiError>(entries)
     })
-    .unwrap_or_default();
+    .map_err(|e| PgTideError::SpiError(format!("fleet inbox list: {e}")))?;
 
-    let mut summaries = Vec::new();
-    for (iname, ischema) in &rows {
-        let pending_sql = format!(
-            r#"SELECT COUNT(*) FROM "{ischema}"."{iname}_inbox" WHERE processed_at IS NULL"#
-        );
-        let pending: i64 = Spi::get_one::<i64>(&pending_sql)
-            .unwrap_or(None)
-            .unwrap_or(0);
-        summaries.push(serde_json::json!({
-            "inbox_name": iname,
-            "pending": pending,
-        }));
+    if rows.is_empty() {
+        return Ok(pgrx::JsonB(serde_json::json!({ "inboxes": [] })));
     }
+
+    // Build a single UNION ALL query that counts pending messages across all
+    // inbox tables in one database round-trip.
+    // Example for 2 inboxes:
+    //   SELECT 'a' AS n, COUNT(*) FROM "tide"."a_inbox" WHERE processed_at IS NULL
+    //   UNION ALL
+    //   SELECT 'b' AS n, COUNT(*) FROM "tide"."b_inbox" WHERE processed_at IS NULL
+    let union_sql: String = rows
+        .iter()
+        .map(|(iname, ischema)| {
+            format!(
+                r#"SELECT '{iname}' AS inbox_name, COUNT(*) AS pending FROM "{ischema}"."{iname}_inbox" WHERE processed_at IS NULL"#,
+                iname = iname.replace('\'', "''"),
+                ischema = ischema.replace('\'', "''"),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+
+    let mut pending_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    Spi::connect(|client| {
+        let tup = client.select(&union_sql, None, &[])?;
+        for row in tup {
+            let iname: String = row.get(1)?.unwrap_or_default();
+            let pending: i64 = row.get(2)?.unwrap_or(0);
+            pending_map.insert(iname, pending);
+        }
+        Ok::<_, pgrx::spi::SpiError>(())
+    })
+    .map_err(|e| PgTideError::SpiError(format!("fleet inbox pending counts: {e}")))?;
+
+    let summaries: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|(iname, _)| {
+            let pending = pending_map.get(iname).copied().unwrap_or(0);
+            serde_json::json!({
+                "inbox_name": iname,
+                "pending": pending,
+            })
+        })
+        .collect();
+
     Ok(pgrx::JsonB(serde_json::json!({ "inboxes": summaries })))
 }
 

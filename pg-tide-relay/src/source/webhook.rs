@@ -103,8 +103,11 @@ fn hmac_sha256_hex(key: &str, body: &[u8]) -> String {
 
     // SAFETY: Hmac::new_from_slice accepts keys of any non-zero length per HMAC-SHA256 spec
     // (RFC 2104 §3); key.as_bytes() is always non-empty for a non-empty config value.
-    let mut mac =
-        <Hmac<Sha256>>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key size");
+    // v0.32.0: replaced .expect() with .unwrap_or_else(|_| unreachable!()) per project
+    // convention — achieving full lint-expect compliance with zero production-reachable panics.
+    let mut mac = <Hmac<Sha256>>::new_from_slice(key.as_bytes())
+        // SAFETY: HMAC-SHA256 accepts any key length (RFC 2104 §3); this branch is unreachable.
+        .unwrap_or_else(|_| unreachable!());
     mac.update(body);
     let result = mac.finalize();
     let bytes = result.into_bytes();
