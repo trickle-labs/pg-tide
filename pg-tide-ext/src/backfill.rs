@@ -234,7 +234,10 @@ fn backfill_status_impl(job_name: Option<&str>) -> Result<pgrx::JsonB, PgTideErr
 ///
 /// Sets `status = 'failed'` with `error_message = 'cancelled by operator'`.
 /// Once cancelled, a job cannot be resumed.
-#[pg_extern(schema = "tide")]
+///
+/// NOTE: The PostgreSQL-facing function is defined in the migration SQL as a
+/// plain PL/pgSQL function.  This Rust implementation is used internally by
+/// the relay coordinator and by pgrx tests only.
 pub fn backfill_cancel(p_job_name: &str) {
     backfill_cancel_impl(p_job_name).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
