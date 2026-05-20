@@ -114,6 +114,34 @@ pub struct Cli {
     )]
     pub max_connections: Option<usize>,
 
+    /// Tenant ID for multi-tenant relay groups.
+    ///
+    /// When set, the coordinator filters pipeline discovery to only own
+    /// pipelines belonging to this tenant (`tenant_name = $TENANT_ID` in the
+    /// catalog).  Advisory lock keys incorporate the tenant hash, preventing
+    /// cross-tenant pipeline collisions on shared databases.
+    /// Injected as the `tenant` label on all Prometheus metrics.
+    #[arg(
+        long = "tenant-id",
+        env = "PG_TIDE_TENANT_ID",
+        help = "Tenant ID for multi-tenant relay groups (default: no filtering)"
+    )]
+    pub tenant_id: Option<String>,
+
+    /// Run a self-test and exit.
+    ///
+    /// Connects to PostgreSQL, verifies the extension version, checks TLS
+    /// state, acquires and immediately releases an advisory lock, queries
+    /// `tide.relay_outbox_config`, then exits 0 on success or 1 with a
+    /// descriptive error on failure.  Designed for use in Kubernetes
+    /// initContainers, container health checks, and CI/CD pre-deployment gates.
+    #[arg(
+        long = "self-test",
+        env = "PG_TIDE_SELF_TEST",
+        help = "Run startup self-test and exit (0=pass, 1=fail)"
+    )]
+    pub self_test: bool,
+
     /// Optional subcommand.  When absent the relay daemon is started.
     #[command(subcommand)]
     pub command: Option<Commands>,

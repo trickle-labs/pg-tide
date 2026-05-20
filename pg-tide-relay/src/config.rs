@@ -41,6 +41,12 @@ pub struct RelayConfig {
     /// v0.15.0: Maximum number of connections in the coordinator connection pool.
     /// `--max-connections` / `PG_TIDE_MAX_CONNECTIONS` / TOML `max_connections`.
     pub max_connections: usize,
+
+    /// v0.25.0: Tenant ID for multi-tenant relay groups.
+    /// When set, the coordinator filters pipeline discovery to only own pipelines
+    /// belonging to this tenant.  Advisory lock keys incorporate the tenant hash.
+    /// `--tenant-id` / `PG_TIDE_TENANT_ID` / TOML `tenant_id`.
+    pub tenant_id: Option<String>,
 }
 
 impl Default for RelayConfig {
@@ -56,6 +62,7 @@ impl Default for RelayConfig {
             sink_max_inflight: 1_000,
             max_owned_pipelines: 50,
             max_connections: 52, // 2 coordinator + 50 workers by default
+            tenant_id: None,
         }
     }
 }
@@ -388,6 +395,7 @@ mod tests {
             sink_max_inflight: 500,
             max_owned_pipelines: 30,
             max_connections: 32,
+            tenant_id: None,
         };
         let toml_str = toml::to_string(&cfg).unwrap();
         let decoded: RelayConfig = toml::from_str(&toml_str).unwrap();

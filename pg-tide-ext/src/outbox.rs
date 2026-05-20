@@ -41,30 +41,48 @@ pub fn outbox_create(
     p_name: &str,
     p_retention_hours: default!(i32, 24),
     p_inline_threshold: default!(i32, 10000),
+    p_partition_strategy: default!(&str, "'none'"),
 ) {
-    outbox_create_impl(p_name, p_retention_hours, p_inline_threshold)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    outbox_create_impl(
+        p_name,
+        p_retention_hours,
+        p_inline_threshold,
+        p_partition_strategy,
+    )
+    .unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn outbox_create_impl(
     name: &str,
     retention_hours: i32,
     inline_threshold: i32,
+    partition_strategy: &str,
 ) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(name)?;
+    let strategy = partition_strategy.trim_matches('\'');
+    if !matches!(strategy, "none" | "daily" | "weekly" | "monthly") {
+        return Err(PgTideError::InvalidArgument(format!(
+            "partition_strategy must be 'none', 'daily', 'weekly', or 'monthly'; got '{strategy}'"
+        )));
+    }
     if outbox_exists(name)? {
         return Err(PgTideError::OutboxAlreadyExists(name.to_string()));
     }
 
     Spi::run_with_args(
         "INSERT INTO tide.tide_outbox_config \
-         (outbox_name, retention_hours, inline_threshold) \
-         VALUES ($1, $2, $3)",
-        &[name.into(), retention_hours.into(), inline_threshold.into()],
+         (outbox_name, retention_hours, inline_threshold, partition_strategy) \
+         VALUES ($1, $2, $3, $4)",
+        &[
+            name.into(),
+            retention_hours.into(),
+            inline_threshold.into(),
+            strategy.into(),
+        ],
     )
     .map_err(|e| PgTideError::SpiError(format!("INSERT tide_outbox_config: {e}")))?;
 
-    pgrx::log!("[pg_tide] outbox_create: created outbox '{name}'");
+    pgrx::log!("[pg_tide] outbox_create: created outbox '{name}' (partition_strategy={strategy})");
     Ok(())
 }
 
@@ -80,30 +98,48 @@ pub fn outbox_create_if_not_exists(
     p_name: &str,
     p_retention_hours: default!(i32, 24),
     p_inline_threshold: default!(i32, 10000),
+    p_partition_strategy: default!(&str, "'none'"),
 ) -> bool {
-    outbox_create_if_not_exists_impl(p_name, p_retention_hours, p_inline_threshold)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    outbox_create_if_not_exists_impl(
+        p_name,
+        p_retention_hours,
+        p_inline_threshold,
+        p_partition_strategy,
+    )
+    .unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn outbox_create_if_not_exists_impl(
     name: &str,
     retention_hours: i32,
     inline_threshold: i32,
+    partition_strategy: &str,
 ) -> Result<bool, PgTideError> {
     crate::validation::validate_identifier(name)?;
+    let strategy = partition_strategy.trim_matches('\'');
+    if !matches!(strategy, "none" | "daily" | "weekly" | "monthly") {
+        return Err(PgTideError::InvalidArgument(format!(
+            "partition_strategy must be 'none', 'daily', 'weekly', or 'monthly'; got '{strategy}'"
+        )));
+    }
     if outbox_exists(name)? {
         return Ok(false);
     }
 
     Spi::run_with_args(
         "INSERT INTO tide.tide_outbox_config \
-         (outbox_name, retention_hours, inline_threshold) \
-         VALUES ($1, $2, $3)",
-        &[name.into(), retention_hours.into(), inline_threshold.into()],
+         (outbox_name, retention_hours, inline_threshold, partition_strategy) \
+         VALUES ($1, $2, $3, $4)",
+        &[
+            name.into(),
+            retention_hours.into(),
+            inline_threshold.into(),
+            strategy.into(),
+        ],
     )
     .map_err(|e| PgTideError::SpiError(format!("INSERT tide_outbox_config: {e}")))?;
 
-    pgrx::log!("[pg_tide] outbox_create_if_not_exists: created outbox '{name}'");
+    pgrx::log!("[pg_tide] outbox_create_if_not_exists: created outbox '{name}' (partition_strategy={strategy})");
     Ok(true)
 }
 

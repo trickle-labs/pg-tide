@@ -31,6 +31,17 @@ fn order_payload(n: u64) -> serde_json::Value {
     })
 }
 
+/// Build a payload of a specific size (approximate bytes).
+fn sized_payload(n: u64, approx_bytes: usize) -> serde_json::Value {
+    let pad = "x".repeat(approx_bytes.saturating_sub(80));
+    serde_json::json!({
+        "event_id":   format!("evt-{n:08}"),
+        "event_type": "order.created",
+        "order_id":   n,
+        "data":       pad,
+    })
+}
+
 // ── Serialisation benchmarks ───────────────────────────────────────────────
 
 fn bench_payload_serialization(c: &mut Criterion) {
@@ -136,11 +147,156 @@ fn bench_dedup_hashing(c: &mut Criterion) {
     group.finish();
 }
 
+// ── OutboxPollerSource poll simulation ────────────────────────────────────
+
+/// Simulates the payload decode step of OutboxPollerSource::poll():
+/// deserialise a batch of 1000 rows at varying payload sizes.
+///
+/// This isolates orchestration overhead from PostgreSQL I/O.
+fn bench_outbox_poll_decode(c: &mut Criterion) {
+    let mut group = c.benchmark_group("outbox_poll_decode");
+
+    for &(label, payload_bytes) in &[
+        ("1kb", 1_024_usize),
+        ("10kb", 10_240_usize),
+        ("100kb", 102_400_usize),
+    ] {
+        // Pre-build the raw JSON strings that would arrive from PostgreSQL.
+        let rows: Vec<String> = (0..1_000_u64)
+            .map(|i| {
+                let p = sized_payload(i, payload_bytes);
+                serde_json::to_string(&p).unwrap()
+            })
+            .collect();
+
+        group.bench_with_input(
+            BenchmarkId::new("decode_batch_1000", label),
+            &rows,
+            |b, rows| {
+                b.iter(|| {
+                    rows.iter()
+                        .map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
+                        .collect::<Vec<_>>()
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ── InboxSink batch UNNEST parameter building ─────────────────────────────
+
+/// Simulates InboxSink::publish(): building the four UNNEST parameter Vecs
+/// from a batch of messages.  This is the hot path for the pg-inbox sink.
+fn bench_inbox_unnest_params(c: &mut Criterion) {
+    let mut group = c.benchmark_group("inbox_unnest_params");
+
+    for &batch_size in &[1_usize, 10, 100, 1_000] {
+        group.bench_with_input(
+            BenchmarkId::new("build_unnest_vecs", batch_size),
+            &batch_size,
+            |b, &n| {
+                let messages: Vec<serde_json::Value> = (0..n as u64)
+                    .map(|i| {
+                        serde_json::json!({
+                            "event_id": format!("evt-{i:08}"),
+                            "source":   "orders",
+                            "payload":  order_payload(i),
+                            "headers":  {"event_type": "order.created"},
+                        })
+                    })
+                    .collect();
+
+                b.iter(|| {
+                    let mut event_ids = Vec::with_capacity(n);
+                    let mut sources = Vec::with_capacity(n);
+                    let mut payloads = Vec::with_capacity(n);
+                    let mut headers = Vec::with_capacity(n);
+                    for msg in &messages {
+                        event_ids.push(msg["event_id"].as_str().unwrap_or("").to_string());
+                        sources.push(msg["source"].as_str().unwrap_or("").to_string());
+                        payloads.push(serde_json::to_string(&msg["payload"]).unwrap());
+                        headers.push(serde_json::to_string(&msg["headers"]).unwrap());
+                    }
+                    (event_ids, sources, payloads, headers)
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ── Coordinator worker_inner orchestration mock ───────────────────────────
+
+/// Simulates the coordinator's worker_inner() orchestration loop overhead
+/// independently of PostgreSQL I/O.  Measures: poll_and_decode overhead,
+/// routing decision, and batch aggregation for a mock source→sink path.
+fn bench_worker_inner_orchestration(c: &mut Criterion) {
+    use std::collections::HashMap;
+
+    let mut group = c.benchmark_group("worker_inner_orchestration");
+
+    // Simulate the per-message routing + envelope building overhead.
+    for &batch_size in &[10_usize, 100, 1_000] {
+        group.bench_with_input(
+            BenchmarkId::new("routing_and_envelope", batch_size),
+            &batch_size,
+            |b, &n| {
+                let messages: Vec<serde_json::Value> = (0..n as u64)
+                    .map(|i| {
+                        serde_json::json!({
+                            "id":          i,
+                            "outbox_name": "orders",
+                            "payload":     order_payload(i),
+                            "headers":     {},
+                            "dedup_key":   format!("evt-{i:08}"),
+                            "created_at":  "2026-01-01T00:00:00Z",
+                        })
+                    })
+                    .collect();
+
+                b.iter(|| {
+                    // Simulate routing: partition messages by event_type.
+                    let mut routed: HashMap<&str, Vec<&serde_json::Value>> = HashMap::new();
+                    for msg in &messages {
+                        let event_type = msg["payload"]["event_type"].as_str().unwrap_or("unknown");
+                        routed.entry(event_type).or_default().push(msg);
+                    }
+                    // Simulate envelope wrapping for sink publish.
+                    routed
+                        .values()
+                        .flat_map(|batch| {
+                            batch.iter().map(|msg| {
+                                serde_json::json!({
+                                    "v": 1,
+                                    "id": msg["id"],
+                                    "subject": format!(
+                                        "orders.{}",
+                                        msg["payload"]["event_type"].as_str().unwrap_or("event")
+                                    ),
+                                    "payload": &msg["payload"],
+                                })
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_payload_serialization,
     bench_batch_construction,
     bench_subject_rendering,
     bench_dedup_hashing,
+    bench_outbox_poll_decode,
+    bench_inbox_unnest_params,
+    bench_worker_inner_orchestration,
 );
 criterion_main!(benches);

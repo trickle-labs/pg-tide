@@ -3,6 +3,14 @@ use pg_tide_relay::pg_tls;
 
 /// Validate PostgreSQL connectivity, schema presence, and catalog health.
 pub async fn run_doctor(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    run_doctor_with_threshold(url, 100).await
+}
+
+/// Run the doctor checks with a configurable DLQ warn threshold.
+pub async fn run_doctor_with_threshold(
+    url: &str,
+    dlq_warn_threshold: i64,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("pg-tide doctor v{}", env!("CARGO_PKG_VERSION"));
     println!("Connecting to PostgreSQL...");
 
@@ -16,6 +24,42 @@ pub async fn run_doctor(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     println!("  [OK] Connected to PostgreSQL");
+
+    // v0.25.0: TLS version check — query pg_ssl for negotiated TLS version.
+    let tls_row = client
+        .query_opt(
+            "SELECT ssl, version FROM pg_ssl WHERE pid = pg_backend_pid()",
+            &[],
+        )
+        .await
+        .ok()
+        .flatten();
+    if let Some(row) = tls_row {
+        let ssl: bool = row.get(0);
+        if ssl {
+            let tls_version: String = row.get(1);
+            if tls_version.contains("TLSv1.1") || tls_version.contains("TLSv1.0") {
+                println!(
+                    "  [WARN] TLS version {tls_version} is outdated — upgrade server to TLS 1.2+"
+                );
+            } else {
+                println!("  [OK] TLS connection: {tls_version}");
+            }
+        } else {
+            // Check if the URL requested TLS but we got plaintext.
+            if url.contains("sslmode=require")
+                || url.contains("sslmode=verify-ca")
+                || url.contains("sslmode=verify-full")
+            {
+                println!(
+                    "  [WARN] sslmode=require/verify-* requested but connection is plaintext \
+                     — native-tls feature may not be compiled in"
+                );
+            } else {
+                println!("  [INFO] Connection is plaintext (no sslmode=require)");
+            }
+        }
+    }
 
     // Check schema exists.
     let schema_exists: bool = client
@@ -156,6 +200,78 @@ pub async fn run_doctor(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("  [FAIL] LISTEN on tide_relay_config denied — hot-reload will not function");
         all_ok = false;
+    }
+
+    // v0.25.0: DuckLake catalog health check.
+    let ducklake_tables = ["ducklake_snapshot", "ducklake_data_file", "ducklake_column"];
+    let mut ducklake_ok = true;
+    for table in &ducklake_tables {
+        let exists: bool = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+                 WHERE table_name = $1)",
+                &[table],
+            )
+            .await
+            .map(|r| r.get(0))
+            .unwrap_or(false);
+        if !exists {
+            ducklake_ok = false;
+            break;
+        }
+    }
+    if ducklake_ok {
+        println!("  [OK] DuckLake catalog tables accessible");
+    } else {
+        println!(
+            "  [INFO] DuckLake catalog tables not found — DuckLake sink/source requires \
+             v0.20.0+ schema and DuckLake extension"
+        );
+    }
+
+    // v0.25.0: DLQ depth warning — check hourly DLQ write rate.
+    let dlq_hourly: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM tide.relay_dlq \
+             WHERE created_at > now() - interval '1 hour'",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(0);
+    if dlq_hourly > dlq_warn_threshold {
+        println!(
+            "  [WARN] DLQ received {dlq_hourly} entries in the last hour \
+             (threshold: {dlq_warn_threshold}) — check upstream data quality"
+        );
+    } else {
+        println!("  [OK] DLQ hourly rate: {dlq_hourly} (threshold: {dlq_warn_threshold})");
+    }
+
+    // v0.25.0: Partition capacity check — warn when next partition boundary
+    // is within 48 hours of the most recently written row.
+    let partition_warning: Option<String> = client
+        .query_opt(
+            "SELECT c.outbox_name \
+             FROM tide.tide_outbox_config c \
+             WHERE c.partition_strategy <> 'none' \
+               AND EXISTS ( \
+                   SELECT 1 FROM tide.tide_outbox_messages m \
+                   WHERE m.outbox_name = c.outbox_name \
+                     AND m.created_at > now() - interval '48 hours' \
+               ) \
+             LIMIT 1",
+            &[],
+        )
+        .await
+        .ok()
+        .flatten()
+        .map(|r| r.get(0));
+    if let Some(outbox) = partition_warning {
+        println!(
+            "  [WARN] Outbox '{outbox}' is partitioned and has recent writes — \
+             verify next partition is provisioned (run 'pg-tide sweep')"
+        );
     }
 
     if all_ok {

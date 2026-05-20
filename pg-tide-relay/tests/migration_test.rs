@@ -34,6 +34,8 @@ const V0_19_0_TO_0_20_0: &str = include_str!("../../sql/pg_tide--0.19.0--0.20.0.
 const V0_20_0_TO_0_21_0: &str = include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql");
 const V0_21_0_TO_0_22_0: &str = include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql");
 const V0_22_0_TO_0_23_0: &str = include_str!("../../sql/pg_tide--0.22.0--0.23.0.sql");
+const V0_23_0_TO_0_24_0: &str = include_str!("../../sql/pg_tide--0.23.0--0.24.0.sql");
+const V0_24_0_TO_0_25_0: &str = include_str!("../../sql/pg_tide--0.24.0--0.25.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -59,6 +61,8 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.20.0 → 0.21.0", V0_20_0_TO_0_21_0),
     ("0.21.0 → 0.22.0", V0_21_0_TO_0_22_0),
     ("0.22.0 → 0.23.0", V0_22_0_TO_0_23_0),
+    ("0.23.0 → 0.24.0", V0_23_0_TO_0_24_0),
+    ("0.24.0 → 0.25.0", V0_24_0_TO_0_25_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
@@ -287,4 +291,88 @@ async fn test_sequential_migration_upgrade() {
         has_admin_rewind,
         "after v0.23.0 upgrade, tide.admin_rewind_offset() must exist"
     );
+
+    // After v0.25.0 upgrade: partition_strategy column should exist.
+    let has_partition_strategy: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'tide' AND table_name = 'tide_outbox_config' \
+             AND column_name = 'partition_strategy')",
+            &[],
+        )
+        .await
+        .expect("column check")
+        .get(0);
+    assert!(
+        has_partition_strategy,
+        "after v0.25.0 upgrade, tide_outbox_config must have partition_strategy column"
+    );
+
+    // retention_partitions column should exist.
+    let has_retention_partitions: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'tide' AND table_name = 'tide_outbox_config' \
+             AND column_name = 'retention_partitions')",
+            &[],
+        )
+        .await
+        .expect("column check")
+        .get(0);
+    assert!(
+        has_retention_partitions,
+        "after v0.25.0 upgrade, tide_outbox_config must have retention_partitions column"
+    );
+
+    // tide_partition_events table should exist.
+    let has_partition_events: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'tide' AND table_name = 'tide_partition_events')",
+            &[],
+        )
+        .await
+        .expect("table check")
+        .get(0);
+    assert!(
+        has_partition_events,
+        "after v0.25.0 upgrade, tide.tide_partition_events must exist"
+    );
+
+    // outbox_convert_to_partitioned() function should exist.
+    let has_convert_fn: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.routines \
+             WHERE routine_schema = 'tide' AND routine_name = 'outbox_convert_to_partitioned')",
+            &[],
+        )
+        .await
+        .expect("function check")
+        .get(0);
+    assert!(
+        has_convert_fn,
+        "after v0.25.0 upgrade, tide.outbox_convert_to_partitioned() must exist"
+    );
+
+    // partition_strategy column accepts only valid values.
+    client
+        .execute(
+            "INSERT INTO tide.tide_outbox_config \
+             (outbox_name, partition_strategy, retention_partitions) \
+             VALUES ('test_partition_outbox', 'daily', 7)",
+            &[],
+        )
+        .await
+        .expect("insert with partition_strategy=daily");
+
+    let strategy: String = client
+        .query_one(
+            "SELECT partition_strategy FROM tide.tide_outbox_config \
+             WHERE outbox_name = 'test_partition_outbox'",
+            &[],
+        )
+        .await
+        .expect("select partition_strategy")
+        .get(0);
+    assert_eq!(strategy, "daily", "partition_strategy should be 'daily'");
 }
