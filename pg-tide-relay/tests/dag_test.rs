@@ -249,8 +249,8 @@ async fn test_dag_on_idle_policy_gates_downstream() {
         client
             .execute(
                 "INSERT INTO tide.tide_outbox_messages \
-                 (stream_table, subject, payload) \
-                 VALUES ('pipeline-a', 'test', $1::jsonb)",
+                 (outbox_name, payload) \
+                 VALUES ('pipeline-a', $1::jsonb)",
                 &[&serde_json::json!({ "seq": i })],
             )
             .await
@@ -259,7 +259,7 @@ async fn test_dag_on_idle_policy_gates_downstream() {
 
     let max_id: i64 = client
         .query_one(
-            "SELECT MAX(id) FROM tide.tide_outbox_messages WHERE stream_table = 'pipeline-a'",
+            "SELECT MAX(id) FROM tide.tide_outbox_messages WHERE outbox_name = 'pipeline-a'",
             &[],
         )
         .await
@@ -275,7 +275,7 @@ async fn test_dag_on_idle_policy_gates_downstream() {
             "SELECT COALESCE(MAX(id), 0) - COALESCE(\
                 (SELECT last_change_id FROM tide.relay_consumer_offsets \
                  WHERE pipeline_id = 'pipeline-a' AND relay_group_id = 'default'), 0) \
-             FROM tide.tide_outbox_messages WHERE stream_table = 'pipeline-a'",
+             FROM tide.tide_outbox_messages WHERE outbox_name = 'pipeline-a'",
             &[],
         )
         .await
@@ -303,7 +303,7 @@ async fn test_dag_on_idle_policy_gates_downstream() {
             "SELECT COALESCE(MAX(id), 0) - COALESCE(\
                 (SELECT last_change_id FROM tide.relay_consumer_offsets \
                  WHERE pipeline_id = 'pipeline-a' AND relay_group_id = 'default'), 0) \
-             FROM tide.tide_outbox_messages WHERE stream_table = 'pipeline-a'",
+             FROM tide.tide_outbox_messages WHERE outbox_name = 'pipeline-a'",
             &[],
         )
         .await
