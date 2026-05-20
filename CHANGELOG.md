@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.33.0 — Pre-GA Supply-Chain Hardening, KMS Foundation & v1.0 Readiness](#0330--2026-05-20--pre-ga-supply-chain-hardening-kms-foundation--v10-readiness)
 - [0.32.0 — Performance Engineering, Code Internals Quality & Benchmark Hardening](#0320--2026-05-20--performance-engineering-code-internals-quality--benchmark-hardening)
 - [0.31.0 — Assessment-6 P1/P2 Bug Fixes, Identifier Quoting Hardening & Release-Process Automation](#0310--assessment-6-p1p2-bug-fixes-identifier-quoting-hardening--release-process-automation)
 - [0.30.0 — Pipeline Dependency DAG, AsyncAPI Completeness & Pre-GA Final Hardening](#0300--pipeline-dependency-dag-asyncapi-completeness--pre-ga-final-hardening)
@@ -40,6 +41,51 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.33.0] — 2026-05-20 — Pre-GA Supply-Chain Hardening, KMS Foundation & v1.0 Readiness
+
+This release closes all remaining assessment-6 "Must-do" and "Should-do" items, establishes the formal v1.0.0 stability contract, and lays the structural groundwork for envelope encryption. The nine `cargo audit` ignores in `audit.toml` are formally re-evaluated against the v0.33.0 dependency tree and all confirmed to affect optional or test-only paths. ADR-010 specifies the full KMS envelope encryption design (AES-256-GCM, four provider backends, DEK caching, key rotation policy). The SQL schema gains a `tide.outbox_encryption_config` table and a SQL function skeleton ready for the v1.0.0 implementation. The relay gains a feature-gated `EncryptionEnvelope` async trait and provider stubs in `encryption.rs` behind the `kms` Cargo feature.
+
+The v1.0.0 stability contract is now formally documented in `docs/src/stability-guarantees.md`: stable SQL function signatures (`_v2` forms), catalog table columns, Prometheus metric names, configuration keys, and wire format schemas. The v0.x → v1.0.0 migration guide is rewritten comprehensively with a 5-step rolling upgrade procedure, rollback instructions for both unencrypted and encrypted deployments, a feature compatibility matrix, and a deprecation schedule.
+
+The relay CLI gains two new flags: `--inbox-summary` on the `status` subcommand (renders an inbox fleet table by calling `tide.inbox_status(NULL)`) and `--expect-extension-version` on the top-level binary (pre-flight check that the installed extension meets a minimum version). The Grafana relay-health dashboard gains an "Inbox Fleet" row and table panel. The justfile gains `just check-stability` (validates metric names and schema annotations match the stability contract) and `just release-notes-ga` (generates a Production GA announcement with stability guarantee, breaking changes, and migration guide link). Monitoring documentation is updated with an inbox fleet status performance contract (O(n) SQL length, ≥ 60 s panel refresh guidance). The migration test suite is extended to cover the v0.32.0 → v0.33.0 upgrade script.
+
+### Supply-chain hardening
+
+- **`audit.toml` re-evaluation** — all nine `cargo audit` ignore entries (RUSTSEC-2026-0119, -0118, -0104, -0098, -0099, -0049, RUSTSEC-2024-0436, RUSTSEC-2025-0134, RUSTSEC-2021-0127) are re-evaluated against the v0.33.0 dependency tree. Each entry now carries a dated re-evaluation comment confirming the affected crate is optional or test-only, with explicit confirmation that the `kms*` features are not enabled in the default release binary.
+
+### KMS envelope encryption foundation (ADR-010)
+
+- **ADR-010: Envelope encryption — KMS-backed AES-256-GCM** — `docs/adr/adr-010-envelope-encryption-kms.md` specifies the full encryption design: JSON envelope format `{_enc:1, kms, kid, alg, iv, edek, ct}`, four provider backends (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file), DEK caching to amortise KMS round-trips across messages within a relay batch, key rotation by setting `next_key_id` in the outbox catalog config, and the security rationale for relay-side encryption (option C).
+- **`tide.outbox_encryption_config` SQL table** — `sql/pg_tide--0.32.0--0.33.0.sql` creates `tide.outbox_encryption_config(outbox_name, kms_provider, key_id, algorithm, created_at, updated_at)` and a `tide.outbox_encryption_config(name text, ...)` SQL function skeleton. The function emits `NOTICE 'KMS encryption for outbox ... will be active from v1.0.0'` to make the feature's v1.0.0 timeline explicit. The migration is registered in `lib.rs` as `pg_tide_m_0_33`.
+- **`encryption.rs` trait skeleton** — `pg-tide-relay/src/encryption.rs` defines the `EncryptedPayload` struct (serde JSON envelope), `EncryptionEnvelope` async trait, four provider structs (`AwsKms`, `GcpKms`, `VaultKms`, `LocalKeyFile`) with `todo!()` implementations, and `is_encrypted_envelope()` detection helper. The module is gated on `#[cfg(feature = "kms")]`. Four new Cargo features are declared: `kms`, `kms-aws`, `kms-gcp`, `kms-vault`, `kms-local`.
+
+### v1.0.0 readiness documentation
+
+- **`docs/src/stability-guarantees.md`** — new document formally defining the v1.0.0+ stability contract: stable SQL function signatures, catalog table columns, Prometheus metric names, TOML/JSONB config keys, wire format schemas. Includes tables of what is stable, what is not stable, and the deprecation policy with timelines.
+- **`docs/src/operations/v1-migration-guide.md`** — comprehensive rewrite of the v0.x → v1.0.0 upgrade guide. Covers: breaking changes (positional SQL API removal, KMS envelope format), a 5-step rolling upgrade procedure with health-check commands at each step, rollback procedures for both unencrypted and encrypted outbox deployments, feature compatibility matrix (v0.25.0 through v0.33.0), deprecation schedule, and a "What is NOT in v1.0.0" section to set expectations.
+- **`docs/src/operations/pre-ga-checklist.md`** — new "v1.0.0 GA Acceptance Criteria" section listing all assessment-6 "Must-do" and "Should-do" items with resolution versions.
+
+### CLI additions
+
+- **`pg-tide status --inbox-summary`** — the `status` subcommand gains an `--inbox-summary` boolean flag. When set, a fleet-wide inbox summary table is printed after the pipeline status table. The table is populated by calling `tide.inbox_status(NULL)` and rendered with column headers: inbox name, pending, processing, processed, failed, dlq.
+- **`pg-tide --expect-extension-version`** — the top-level binary gains `--expect-extension-version <VERSION>` (also readable from `PG_TIDE_EXPECT_EXTENSION_VERSION`). During `--self-test`, step 6 queries `pg_extension` for the installed `pg_tide` version and verifies it meets the requested minimum using numeric semver comparison. Reports `[PASS]` or `[FAIL]` and exits non-zero if the constraint is not met.
+
+### Observability
+
+- **Grafana Inbox Fleet panel** — `pg-tide/dashboards/relay-health.json` gains an "Inbox Fleet" row header (id=214) and a table panel (id=215) with the SQL query `SELECT * FROM tide.inbox_status(NULL)`, 60 s refresh interval, and threshold-based colour coding for pending messages.
+- **Inbox fleet status performance contract** — `docs/src/operations/monitoring-cookbook.md` is extended with an "Inbox Fleet Status Performance Contract" section documenting O(n) SQL query growth, recommended use cases (Grafana dashboard at ≥ 60 s refresh, `pg-tide status --inbox-summary` on demand), and anti-patterns (per-message loops, high-frequency polling < 5 s). The per-inbox variant `tide.inbox_status('name')` is always O(1).
+
+### Automation
+
+- **`just check-stability`** — new recipe that validates: all `#[pg_extern]` functions carry `schema = "tide"`, the 12 stable Prometheus metric names are present in `metrics.rs`, `docs/src/stability-guarantees.md` exists, and `docs/src/operations/v1-migration-guide.md` exists. Exits non-zero on any failure.
+- **`just release-notes-ga`** — new recipe that generates a Production GA announcement with the full stability guarantee, breaking changes section, migration guide link, headline feature list (30 sink backends, 16 source backends, KMS encryption, DuckLake, pipeline DAG, multi-tenant groups, partitioning), and the final tagging command.
+
+### Migration test & CI updates
+
+- **Migration test extended to v0.33.0** — `V0_32_0_TO_0_33_0` constant and `("0.32.0 → 0.33.0", ...)` entry added to `pg-tide-relay/tests/migration_test.rs`. The `migration-test-currency` CI job validates the chain stays current.
 
 ---
 

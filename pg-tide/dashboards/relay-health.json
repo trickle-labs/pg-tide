@@ -2185,6 +2185,102 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 214,
+      "type": "row",
+      "title": "Inbox Fleet",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 100
+      },
+      "panels": []
+    },
+    {
+      "id": 215,
+      "type": "table",
+      "title": "Inbox Fleet",
+      "description": "Fleet-wide inbox status from tide.inbox_status(NULL). Refresh: 60s. Note: This query scales with inbox count (O(n)); do not set refresh below 30s.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 101
+      },
+      "interval": "60s",
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "pending",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pending"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 100
+                    },
+                    {
+                      "color": "red",
+                      "value": 1000
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "${DS_POSTGRES}"
+          },
+          "rawSql": "SELECT   inbox_name,   total_messages AS total,   pending_messages AS pending,   processed_messages AS processed,   failed_messages AS failed,   last_processed_at FROM tide.inbox_status(NULL) ORDER BY pending DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ]
     }
   ],
   "refresh": "30s",

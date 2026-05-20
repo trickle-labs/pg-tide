@@ -11,6 +11,7 @@ pub mod circuit_breaker;
 pub mod config;
 pub mod coordinator;
 pub mod dlq;
+pub mod encryption;
 pub mod envelope;
 pub mod error;
 pub mod http_util;

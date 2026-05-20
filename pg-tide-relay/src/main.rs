@@ -133,12 +133,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             require_postgres_url(&url, "sweep");
             return cmd::sweep::run_sweep(&url, outbox.as_deref()).await;
         }
-        Some(Commands::Status { postgres_url }) => {
+        Some(Commands::Status {
+            postgres_url,
+            inbox_summary,
+        }) => {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "status");
-            return cmd::status::run_status(&url).await;
+            return cmd::status::run_status(&url, inbox_summary).await;
         }
         Some(Commands::MigrateConfig { postgres_url }) => {
             let url = postgres_url
@@ -252,9 +255,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // v0.25.0: Handle --self-test flag: verify connectivity, schema, and
     // advisory lock, then exit 0 on success or 1 on failure.
+    // v0.33.0: Pass --expect-extension-version if provided.
     if cli.self_test {
         require_postgres_url(&cfg.postgres_url, "--self-test");
-        return cmd::self_test::run_self_test(&cfg.postgres_url).await;
+        return cmd::self_test::run_self_test(
+            &cfg.postgres_url,
+            cli.expect_extension_version.as_deref(),
+        )
+        .await;
     }
 
     require_postgres_url(&cfg.postgres_url, "relay daemon");

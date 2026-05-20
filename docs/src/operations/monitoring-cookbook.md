@@ -218,3 +218,32 @@ pg_stat_activity_count{application_name="pg-tide"}
 - [Metrics](../features/metrics.md) — Full metrics reference
 - [Dashboards](../features/dashboards.md) — Pre-built Grafana dashboard
 - [Troubleshooting](troubleshooting.md) — Diagnosing common issues
+
+---
+
+## Inbox Fleet Status Performance Contract (v0.33.0)
+
+`tide.inbox_status(NULL)` (fleet mode) returns a summary row for every
+configured inbox.  Internally it executes a dynamic `UNION ALL` query across
+all inbox message tables — **one round-trip per call, but the query grows with
+the number of inboxes** (O(n) SQL length, not O(n) round-trips since v0.32.0).
+
+**Guidelines:**
+
+| Use case | Recommendation |
+|---|---|
+| Grafana dashboard panel | ✅ OK — set panel refresh to ≥ 60 s |
+| Monitoring script (cron / runbook) | ✅ OK — run on demand |
+| `pg-tide status --inbox-summary` CLI | ✅ OK — run ad-hoc |
+| Per-message application loop | ❌ Use `tide.inbox_status('inbox_name')` per-inbox instead |
+| High-frequency polling (< 5 s) | ❌ Use Prometheus metrics or per-inbox queries |
+
+The per-inbox variant `tide.inbox_status('my_inbox')` is always O(1) and safe
+to call at any frequency.
+
+**CLI usage:**
+
+```bash
+# Include inbox fleet summary in pg-tide status output:
+pg-tide status --postgres-url "$PG_URL" --inbox-summary
+```

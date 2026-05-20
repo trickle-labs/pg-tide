@@ -112,3 +112,31 @@ If a v1.0.0 deployment needs to be rolled back to v0.25.0:
 | Rollback procedure tested | ☐ | |
 
 Once all items are checked, cut the v1.0.0 tag.
+
+---
+
+## v1.0.0 GA Acceptance Criteria (from assessment cycle 6)
+
+The following items must be resolved before v1.0.0 GA.  Track resolution version
+in the **Resolved in** column.
+
+### Must-do (P0 blockers)
+
+| Item | Description | Resolved in |
+|------|-------------|-------------|
+| Stability contract documented | `docs/src/stability-guarantees.md` published | v0.33.0 |
+| KMS envelope encryption foundation | ADR-010 written, SQL schema added, feature-gated Rust trait skeleton | v0.33.0 |
+| Positional SQL APIs deprecated | `relay_set_outbox` / `relay_set_inbox` 6/8-param forms emit SQL `NOTICE` | v0.30.0 |
+| v0.x → v1.0.0 migration guide | Comprehensive rolling-upgrade guide with rollback procedure | v0.33.0 |
+| supply-chain hardening | `cargo audit` suppress list re-evaluated; all 9 entries confirmed optional-dep only | v0.33.0 |
+| `--expect-extension-version` flag | Relay pre-flight can gate on minimum SQL extension version | v0.33.0 |
+
+### Should-do (P1 polish)
+
+| Item | Description | Resolved in |
+|------|-------------|-------------|
+| Inbox fleet dashboard panel | Grafana panel for `tide.inbox_status(NULL)` added to relay-health.json | v0.33.0 |
+| `pg-tide status --inbox-summary` | Fleet inbox summary in status CLI output | v0.33.0 |
+| `just check-stability` recipe | Automated check that metric names and schema annotations are stable | v0.33.0 |
+| KMS encryption implementation | Actual encryption logic for AwsKms, GcpKms, VaultKms, LocalKeyFile | v1.0.0 |
+| Positional SQL APIs removed | Drop the deprecated 6/8-param forms | v1.0.0 |

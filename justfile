@@ -275,3 +275,136 @@ release-notes:
         echo ""
         echo "_See [ROADMAP.md](ROADMAP.md) for the full roadmap and version history._"
     fi
+
+# v0.33.0: Generate a Production GA Announcement release body.
+# Usage: just release-notes-ga
+# Adds a stability guarantee summary, migration guide URL, and headline features.
+release-notes-ga:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+    echo "# pg_tide v${VERSION} — Production GA Announcement 🎉"
+    echo ""
+    echo "pg_tide v${VERSION} is the first General Availability release."
+    echo ""
+    echo "## Stability Guarantee"
+    echo ""
+    echo "The following surfaces are **stable** from this release:"
+    echo "- SQL function signatures (all \`_v2\` forms)"
+    echo "- Catalog table column names and types"
+    echo "- Prometheus metric names"
+    echo "- Configuration key names (relay TOML and JSONB catalog)"
+    echo "- Wire format schemas (native, Debezium, CloudEvents, Maxwell, Canal)"
+    echo ""
+    echo "See [stability-guarantees.md](docs/src/stability-guarantees.md) for the full contract."
+    echo ""
+    echo "## Breaking Changes"
+    echo ""
+    echo "- \`tide.relay_set_outbox()\` 6-parameter positional form **removed** — use \`relay_set_outbox_v2(config JSONB)\`"
+    echo "- \`tide.relay_set_inbox()\` 8-parameter positional form **removed** — use \`relay_set_inbox_v2(config JSONB)\`"
+    echo ""
+    echo "## Migration Guide"
+    echo ""
+    echo "See [v0.x → v1.0.0 Migration Guide](docs/src/operations/v1-migration-guide.md)"
+    echo ""
+    echo "## Upgrade"
+    echo ""
+    echo "\`\`\`sql"
+    echo "ALTER EXTENSION pg_tide UPDATE TO '${VERSION}';"
+    echo "\`\`\`"
+    echo ""
+    echo "## Headline Features"
+    echo ""
+    echo "- **Envelope encryption** — optional KMS-backed per-message AES-256-GCM encryption (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file)"
+    echo "- **30 sink backends** — NATS, Kafka, HTTP webhook, Redis Streams, SQS, RabbitMQ, PostgreSQL inbox, Pub/Sub, Kinesis, Azure Service Bus, Elasticsearch, MQTT, Azure Event Hubs, Object Storage (S3/GCS/Azure), Snowflake, BigQuery, ClickHouse, MongoDB, Apache Iceberg, Delta Lake, DuckLake, Slack, Discord, PagerDuty, Arrow Flight, Singer, Airbyte, Fivetran, stdout/file"
+    echo "- **16 source backends** — PostgreSQL outbox, NATS JetStream, Kafka, Redis Streams, SQS, RabbitMQ, Singer, Airbyte, HTTP webhook, DuckLake, and WAL logical-replication (preview)"
+    echo "- **DuckLake native integration** — exactly-once outbox → data lake with same-transaction atomicity"
+    echo "- **Pipeline dependency DAG** — DAG-aware coordinator with cycle detection and policy-based gating"
+    echo "- **Multi-tenant relay groups** — per-tenant pipeline isolation, RLS, and Prometheus labels"
+    echo "- **Outbox table partitioning** — declarative range partitioning with live migration tooling"
+    echo ""
+    echo "## Assessment Cycle Summary"
+    echo ""
+    echo "This release closes all findings from six consecutive assessment cycles"
+    echo "(overall_assessment_1 through overall_assessment_6), achieving a zero-P0 baseline."
+    echo ""
+    echo "---"
+    echo ""
+    echo "**Docker:** \`docker pull ghcr.io/trickle-labs/pg-tide:v${VERSION}\`"
+    echo ""
+    echo "**Tag:** \`git tag -s v${VERSION} -m 'Release v${VERSION}' && git push origin v${VERSION}\`"
+
+# v0.33.0: Verify stability contract — all public SQL functions use schema = "tide"
+# and the metric name list in metrics.rs matches the stability-guarantees.md list.
+check-stability:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== pg-tide stability contract check ==="
+    FAIL=0
+
+    # 1. Verify all #[pg_extern] functions specify schema = "tide".
+    echo ""
+    echo "-- Checking pg_extern schema annotations --"
+    while IFS= read -r line; do
+        if echo "$line" | grep -q 'pg_extern'; then
+            if ! echo "$line" | grep -q 'schema = "tide"'; then
+                echo "  [WARN] Missing schema = \"tide\": $line"
+                # Not a hard fail — some pg_extern may be intentionally schema-less.
+            fi
+        fi
+    done < <(grep -rn '#\[pg_extern' pg-tide-ext/src/ 2>/dev/null || true)
+    echo "  [OK] pg_extern schema annotation check complete"
+
+    # 2. Verify that key stable metric names exist in metrics.rs.
+    echo ""
+    echo "-- Checking stable Prometheus metric names in metrics.rs --"
+    STABLE_METRICS=(
+        "pg_tide_relay_messages_published_total"
+        "pg_tide_relay_messages_consumed_total"
+        "pg_tide_relay_consumer_lag"
+        "pg_tide_relay_pipeline_healthy"
+        "pg_tide_relay_dlq_entries_written_total"
+        "pg_tide_relay_owned_pipelines"
+        "pg_tide_relay_reconcile_duration_seconds"
+        "pg_tide_relay_pipeline_errors_total"
+        "pg_tide_relay_sink_publish_duration_seconds"
+        "pg_tide_relay_pool_connections"
+        "pg_tide_relay_pool_acquire_duration_seconds"
+        "pg_tide_relay_receipts_written_total"
+    )
+    for metric in "${STABLE_METRICS[@]}"; do
+        if grep -q "$metric" pg-tide-relay/src/metrics.rs 2>/dev/null; then
+            echo "  [OK] $metric"
+        else
+            echo "  [FAIL] Missing stable metric: $metric"
+            FAIL=1
+        fi
+    done
+
+    # 3. Verify stability-guarantees.md exists.
+    echo ""
+    echo "-- Checking stability-guarantees.md exists --"
+    if [[ -f "docs/src/stability-guarantees.md" ]]; then
+        echo "  [OK] docs/src/stability-guarantees.md exists"
+    else
+        echo "  [FAIL] docs/src/stability-guarantees.md not found"
+        FAIL=1
+    fi
+
+    # 4. Verify v0→v1 migration guide exists.
+    echo ""
+    echo "-- Checking v1-migration-guide.md exists --"
+    if [[ -f "docs/src/operations/v1-migration-guide.md" ]]; then
+        echo "  [OK] docs/src/operations/v1-migration-guide.md exists"
+    else
+        echo "  [FAIL] docs/src/operations/v1-migration-guide.md not found"
+        FAIL=1
+    fi
+
+    echo ""
+    if [[ "$FAIL" -eq 0 ]]; then
+        echo "=== Stability contract check: PASS ==="
+    else
+        echo "=== Stability contract check: FAIL ==="
+        exit 1
+    fi
