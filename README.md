@@ -17,10 +17,11 @@ When you're ready to fan out to Kafka, NATS, Redis Streams, or any analytics pla
 - **Relay Binary** — standalone `pg-tide` process; config lives in PostgreSQL and hot-reloads without restart
 - **15+ Sink Backends** — streaming, cloud, analytics, notifications, connectors, and object storage
 - **Pluggable Wire Formats** — native, Debezium, CloudEvents, Maxwell, Canal, and custom CDC JSON
-- **Multi-Tenant** — row-level security, per-tenant Prometheus labels, and per-outbox publisher ACLs
+- **Multi-Tenant** — row-level security, per-tenant Prometheus labels, per-outbox publisher ACLs, and per-tenant advisory-lock namespacing
+- **Outbox Table Partitioning** — declarative daily/weekly/monthly range partitioning with live migration and relay sweep integration
 - **Replay Workbench** — rewind consumer offsets, preview replays, and manage the DLQ from SQL or CLI
-- **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart
-- **Observable** — OpenTelemetry spans, Prometheus metrics, Grafana dashboard included
+- **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart; `--self-test` flag for Kubernetes readiness probes
+- **Observable** — OpenTelemetry spans, Prometheus metrics, Grafana dashboard, and pre-built alerting rules included
 
 ## Quick Start
 
@@ -119,6 +120,9 @@ The `pg-tide` binary includes several operational subcommands beyond the relay r
 # Check connectivity and schema health
 pg-tide doctor --postgres-url "postgres://..."
 
+# Run startup self-test (for Kubernetes initContainers / CI pre-deployment gates)
+pg-tide --self-test --postgres-url "postgres://..."
+
 # Show all configured pipelines and consumer lag at a glance
 pg-tide status --postgres-url "postgres://..."
 
@@ -132,8 +136,11 @@ pg-tide validate-config --pipeline orders-nats
 pg-tide replay preview  --pipeline orders-nats --from-lsn 0/1000000 --to-lsn 0/2000000
 pg-tide replay dlq-requeue --pipeline orders-nats --event-id abc123
 
-# Generate an AsyncAPI 3.0 document from relay catalog metadata
-pg-tide asyncapi export --postgres-url "postgres://..."
+# Generate an AsyncAPI 3.0 document from relay catalog metadata (with live payload schema sampling)
+pg-tide asyncapi export --postgres-url "postgres://..." --full-schema
+
+# Validate local catalog against a published AsyncAPI spec
+pg-tide asyncapi validate --spec-url https://example.com/asyncapi.yaml
 ```
 
 ## Security
@@ -147,8 +154,9 @@ pg-tide asyncapi export --postgres-url "postgres://..."
 ## Observability
 
 - **OpenTelemetry spans** — `relay.source.poll`, `relay.sink.publish`, `relay.transform.evaluate`, `relay.routing.apply`, `relay.dlq.insert`, `relay.schema_evolution.check`, and more; works with Jaeger, Tempo, Honeycomb, or Datadog
-- **Prometheus metrics** — messages published/consumed, delivery latency histogram, DLQ entries, pipeline health, consumer lag, reconcile duration, and per-tenant labels
-- **Grafana dashboard** — pre-built dashboard in `pg-tide/dashboards/relay-health.json`; metric names validated against `metrics.rs` in CI
+- **Prometheus metrics** — messages published/consumed, sink latency histogram, DLQ entries, pipeline health, consumer lag, connection pool utilisation, and per-tenant labels
+- **Grafana dashboard** — pre-built dashboard in `pg-tide/dashboards/relay-health.json` with pipeline health, sink latency, connection pool, and per-tenant rows; metric names validated against `metrics.rs` in CI
+- **Alerting rules** — `pg-tide/dashboards/alerts.yaml` ships five production-ready Prometheus alerting rules (pipeline paused, high consumer lag, DLQ depth, DLQ write error, pool saturation)
 
 ## SQL API Overview
 
@@ -158,12 +166,13 @@ All functions live in the `tide` schema. Key functions by area:
 
 | Function | Description |
 |----------|-------------|
-| `tide.outbox_create(name, retention_hours, max_size)` | Create a named outbox |
-| `tide.outbox_create_if_not_exists(name, retention_hours, max_size)` | Idempotent create; returns `TRUE` when newly created |
+| `tide.outbox_create(name, retention_hours, max_size, partition_strategy)` | Create a named outbox; `partition_strategy` is `'none'` (default), `'daily'`, `'weekly'`, or `'monthly'` |
+| `tide.outbox_create_if_not_exists(name, retention_hours, max_size, partition_strategy)` | Idempotent create; returns `TRUE` when newly created |
 | `tide.outbox_publish(name, payload, headers)` | Publish a message atomically |
 | `tide.outbox_status(name)` | Status summary as JSONB |
 | `tide.outbox_grant_publish(outbox, role)` | Grant publish permission to a role |
 | `tide.outbox_truncate_delivered(name)` | Delete consumed rows older than retention window; returns row count |
+| `tide.outbox_convert_to_partitioned(name, strategy, confirm_shared_table_migration)` | Live-migrate an unpartitioned outbox to declarative range partitioning |
 
 **Inbox**
 
@@ -245,6 +254,8 @@ Key design decisions are documented in `docs/adr/`:
 | [ADR-003](docs/adr/adr-003-wire-format-abstraction.md) | Pluggable `WireFormat` trait |
 | [ADR-004](docs/adr/adr-004-jsonb-catalog-config.md) | JSONB catalog config |
 | [ADR-005](docs/adr/adr-005-feature-gated-binary.md) | Feature-gated binary |
+| [ADR-006](docs/adr/adr-006-outbox-table-partitioning.md) | Declarative outbox table partitioning |
+| [ADR-007](docs/adr/adr-007-shared-partition-table-semantics.md) | Shared partition table semantics |
 
 ## Documentation
 
@@ -260,8 +271,8 @@ Full documentation is at **[trickle-labs.github.io/pg-tide](https://trickle-labs
 Each release ships an incremental SQL migration script. To upgrade an existing installation:
 
 ```sql
-ALTER EXTENSION pg_tide UPDATE TO '0.16.0';
--- or apply directly: psql -f sql/pg_tide--0.15.0--0.16.0.sql
+ALTER EXTENSION pg_tide UPDATE TO '0.27.0';
+-- or apply directly: psql -f sql/pg_tide--0.26.0--0.27.0.sql
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for per-release migration tables and breaking changes.
