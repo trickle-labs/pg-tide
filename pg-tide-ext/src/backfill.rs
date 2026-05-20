@@ -228,6 +228,48 @@ fn backfill_status_impl(job_name: Option<&str>) -> Result<pgrx::JsonB, PgTideErr
     }
 }
 
+// ── TIDE-API: backfill_cancel (v0.29.0) ──────────────────────────────────
+
+/// Cancel a pending, running, or paused backfill job.
+///
+/// Sets `status = 'failed'` with `error_message = 'cancelled by operator'`.
+/// Once cancelled, a job cannot be resumed.
+///
+/// NOTE: The PostgreSQL-facing function is defined in the migration SQL as a
+/// plain PL/pgSQL function.  This Rust implementation is used internally by
+/// the relay coordinator and by pgrx tests only.
+#[allow(dead_code)]
+pub fn backfill_cancel(p_job_name: &str) {
+    backfill_cancel_impl(p_job_name).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+#[allow(dead_code)]
+fn backfill_cancel_impl(job_name: &str) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(job_name)?;
+    let updated: i64 = Spi::get_one_with_args::<i64>(
+        "WITH u AS ( \
+            UPDATE tide.backfill_jobs \
+            SET status = 'failed', \
+                error_message = 'cancelled by operator', \
+                completed_at = now() \
+            WHERE job_name = $1 AND status IN ('pending', 'running', 'paused') \
+            RETURNING 1 \
+         ) SELECT COUNT(*)::bigint FROM u",
+        &[job_name.into()],
+    )
+    .unwrap_or(None)
+    .unwrap_or(0);
+
+    if updated == 0 {
+        return Err(PgTideError::InvalidArgument(format!(
+            "backfill job '{}' not found or already completed/failed",
+            job_name
+        )));
+    }
+    pgrx::log!("[pg_tide] backfill_cancel: job '{job_name}' cancelled");
+    Ok(())
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(any(test, feature = "pg_test"))]
@@ -344,5 +386,40 @@ mod tests {
             result.is_err(),
             "creating backfill for nonexistent outbox must fail"
         );
+    }
+
+    #[pg_test]
+    fn test_backfill_cancel() {
+        setup_outbox("cancel-outbox");
+        crate::backfill::backfill_create(
+            "cancellable-job",
+            "cancel-outbox",
+            None,
+            0,
+            i64::MAX,
+            500,
+            0,
+        );
+
+        crate::backfill::backfill_cancel("cancellable-job");
+        let status: String = Spi::get_one(
+            "SELECT status FROM tide.backfill_jobs WHERE job_name = 'cancellable-job'",
+        )
+        .unwrap()
+        .unwrap_or_default();
+        assert_eq!(status, "failed");
+
+        let err_msg: String = Spi::get_one(
+            "SELECT error_message FROM tide.backfill_jobs WHERE job_name = 'cancellable-job'",
+        )
+        .unwrap()
+        .unwrap_or_default();
+        assert_eq!(err_msg, "cancelled by operator");
+    }
+
+    #[pg_test]
+    fn test_backfill_cancel_unknown_errors() {
+        let result = crate::backfill::backfill_cancel_impl("nonexistent-job-xyz");
+        assert!(result.is_err(), "cancelling nonexistent job must fail");
     }
 }

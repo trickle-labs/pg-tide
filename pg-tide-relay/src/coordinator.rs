@@ -248,6 +248,65 @@ impl Coordinator {
 
     // ── Private ──────────────────────────────────────────────────────────
 
+    /// v0.29.0: Check for pipelines with auto_resume_after set that have been
+    /// paused longer than the configured interval, and re-enable them.
+    async fn check_auto_resume(&self) {
+        let conn = match self.pool.get().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "auto-resume: failed to get pool connection");
+                return;
+            }
+        };
+        // Query pipelines where: enabled=FALSE, auto_resume_after IS NOT NULL,
+        // and now() - pause_started_at > auto_resume_after.
+        let rows = conn
+            .query(
+                "SELECT roc.name
+                 FROM tide.relay_outbox_config roc
+                 JOIN tide.relay_pipeline_state s ON s.name = roc.name
+                 WHERE roc.enabled = FALSE
+                   AND EXISTS (
+                       SELECT 1 FROM tide.tide_outbox_config toc
+                       WHERE toc.auto_resume_after IS NOT NULL
+                         AND s.pause_started_at IS NOT NULL
+                         AND now() - s.pause_started_at > toc.auto_resume_after
+                   )
+                 UNION ALL
+                 SELECT ric.name
+                 FROM tide.relay_inbox_config ric
+                 JOIN tide.relay_pipeline_state s ON s.name = ric.name
+                 WHERE ric.enabled = FALSE
+                   AND EXISTS (
+                       SELECT 1 FROM tide.tide_inbox_config tic
+                       WHERE tic.auto_resume_after IS NOT NULL
+                         AND s.pause_started_at IS NOT NULL
+                         AND now() - s.pause_started_at > tic.auto_resume_after
+                   )",
+                &[],
+            )
+            .await
+            .unwrap_or_default();
+
+        for row in rows {
+            let name: String = row.get(0);
+            tracing::info!(pipeline = %name, "auto-resume: re-enabling pipeline after pause interval");
+            if let Err(e) = conn
+                .execute(
+                    "UPDATE tide.relay_outbox_config SET enabled = TRUE WHERE name = $1;
+                     UPDATE tide.relay_inbox_config SET enabled = TRUE WHERE name = $1;
+                     UPDATE tide.relay_pipeline_state
+                         SET failure_count = 0, pause_started_at = NULL, last_error = NULL
+                     WHERE name = $1",
+                    &[&name],
+                )
+                .await
+            {
+                tracing::warn!(pipeline = %name, error = %e, "auto-resume: failed to re-enable");
+            }
+        }
+    }
+
     /// Load pipelines, start new ones, stop removed/disabled ones.
     ///
     /// v0.15.0: Also checks for panicked/completed workers and cleans them up
@@ -294,6 +353,9 @@ impl Coordinator {
                 return;
             }
         };
+
+        // v0.29.0: Check for pipelines eligible for auto-resume and re-enable them.
+        self.check_auto_resume().await;
 
         let active_names: HashSet<_> = pipelines.iter().map(|p| p.name.clone()).collect();
 

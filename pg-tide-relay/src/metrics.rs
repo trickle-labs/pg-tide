@@ -27,6 +27,10 @@ pub const METRIC_POOL_CONNECTIONS: &str = "pg_tide_relay_pool_connections";
 pub const METRIC_POOL_ACQUIRE_DURATION: &str = "pg_tide_relay_pool_acquire_duration_seconds";
 /// v0.28.0: Delivery receipt write counter.
 pub const METRIC_RECEIPTS_WRITTEN: &str = "pg_tide_relay_receipts_written_total";
+/// v0.29.0: Fan-in source consumer lag gauge.
+pub const METRIC_FANIN_SOURCE_LAG: &str = "pg_tide_relay_fanin_source_lag";
+/// v0.29.0: Fan-in merged messages counter.
+pub const METRIC_FANIN_MESSAGES_MERGED: &str = "pg_tide_relay_fanin_messages_merged_total";
 
 /// Shared relay metrics.
 pub struct RelayMetrics {
@@ -57,6 +61,10 @@ pub struct RelayMetrics {
     pub pool_acquire_duration_seconds: HistogramVec,
     /// v0.28.0: Delivery receipts written counter (pipeline × sink_type).
     pub receipts_written: IntCounterVec,
+    /// v0.29.0: Fan-in source consumer lag gauge (pipeline × outbox).
+    pub fanin_source_lag: IntGaugeVec,
+    /// v0.29.0: Fan-in merged messages counter (pipeline × outbox).
+    pub fanin_messages_merged: IntCounterVec,
     registry: Registry,
 }
 
@@ -220,6 +228,25 @@ impl RelayMetrics {
         )?;
         registry.register(Box::new(receipts_written.clone()))?;
 
+        // v0.29.0: Fan-in source metrics.
+        let fanin_source_lag = IntGaugeVec::new(
+            prometheus::opts!(
+                METRIC_FANIN_SOURCE_LAG,
+                "Consumer lag per source outbox in fan-in pipelines"
+            ),
+            &["pipeline", "outbox", "tenant"],
+        )?;
+        registry.register(Box::new(fanin_source_lag.clone()))?;
+
+        let fanin_messages_merged = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_FANIN_MESSAGES_MERGED,
+                "Total messages merged from each source outbox in fan-in pipelines"
+            ),
+            &["pipeline", "outbox", "tenant"],
+        )?;
+        registry.register(Box::new(fanin_messages_merged.clone()))?;
+
         Ok(Arc::new(Self {
             messages_published,
             messages_consumed,
@@ -237,6 +264,8 @@ impl RelayMetrics {
             pool_connections,
             pool_acquire_duration_seconds,
             receipts_written,
+            fanin_source_lag,
+            fanin_messages_merged,
             registry,
         }))
     }
