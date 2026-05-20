@@ -238,10 +238,12 @@ fn backfill_status_impl(job_name: Option<&str>) -> Result<pgrx::JsonB, PgTideErr
 /// NOTE: The PostgreSQL-facing function is defined in the migration SQL as a
 /// plain PL/pgSQL function.  This Rust implementation is used internally by
 /// the relay coordinator and by pgrx tests only.
+#[allow(dead_code)]
 pub fn backfill_cancel(p_job_name: &str) {
     backfill_cancel_impl(p_job_name).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
+#[allow(dead_code)]
 fn backfill_cancel_impl(job_name: &str) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(job_name)?;
     let updated: i64 = Spi::get_one_with_args::<i64>(
