@@ -25,6 +25,46 @@ pub async fn decode_payload(
 ) -> Result<OutboxBatch, RelayError> {
     // v0.15.0: Raw mode — treat the whole payload as a native event.
     if raw_mode {
+        // v0.28.0: Native claim-check pathway.
+        // outbox_publish_large() stores large payloads in pg_largeobject and
+        // writes a claim-check envelope {"_cc": true, "oid": "<loid>", "size": N}.
+        // Fetch the real payload transparently before passing to the wire-format
+        // encoder.  The OID is unlinked after ack — see poll_simple()'s ack path.
+        if payload
+            .get("_cc")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let oid_str = payload
+                .get("oid")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RelayError::Other("native claim-check missing 'oid'".into()))?;
+            let loid: u32 = oid_str.parse::<u32>().map_err(|_| {
+                RelayError::Other(format!(
+                    "native claim-check 'oid' not a valid OID: {oid_str}"
+                ))
+            })?;
+            // SAFETY: lo_get is a standard PostgreSQL large-object read function;
+            // the loid was written by outbox_publish_large() and is owned by
+            // the relay's session role.  Any error from lo_get is propagated as
+            // a RelayError and the pipeline will retry on the next poll.
+            let row = db
+                .query_one("SELECT lo_get($1)", &[&(loid as i64)])
+                .await
+                .map_err(|e| RelayError::Other(format!("lo_get({loid}) failed: {e}")))?;
+            let raw_bytes: Vec<u8> = row.get(0);
+            let full_payload: serde_json::Value =
+                serde_json::from_slice(&raw_bytes).map_err(|e| {
+                    RelayError::Other(format!("claim-check payload not valid JSON: {e}"))
+                })?;
+            return Ok(OutboxBatch {
+                outbox_id,
+                refresh_id: None,
+                is_full_refresh: false,
+                inserted: vec![full_payload],
+                deleted: vec![],
+            });
+        }
         return Ok(OutboxBatch {
             outbox_id,
             refresh_id: None,
@@ -210,6 +250,10 @@ pub struct OutboxPollerSource {
     /// v0.15.0: When true, payloads are treated as raw JSONB events rather than
     /// v:1 pg_trickle envelopes.  Set via `source.payload_mode = "raw"`.
     raw_payload_mode: bool,
+    /// v0.28.0: Large-object OIDs to unlink after a confirmed ack.
+    /// Populated during `poll()` for each row whose payload is a native
+    /// claim-check envelope (`_cc: true`).  Cleared in `acknowledge()`.
+    pending_cc_oids: Vec<u32>,
 }
 
 pub struct ConsumerGroupConfig {
@@ -280,6 +324,7 @@ impl OutboxPollerSource {
             consumer_group: None,
             last_offset,
             raw_payload_mode,
+            pending_cc_oids: Vec::new(),
         })
     }
 
@@ -325,6 +370,7 @@ impl OutboxPollerSource {
             }),
             last_offset: 0,
             raw_payload_mode: false, // consumer group mode does not support raw payload mode
+            pending_cc_oids: Vec::new(),
         })
     }
 }
@@ -336,6 +382,10 @@ impl super::Source for OutboxPollerSource {
     }
 
     async fn poll(&mut self, batch_size: i64) -> Result<Vec<RelayMessage>, RelayError> {
+        // v0.28.0: Clear pending claim-check OIDs from the previous poll cycle
+        // before accumulating new ones.
+        self.pending_cc_oids.clear();
+
         if let Some(cg) = &self.consumer_group {
             poll_consumer_group(
                 &self.db,
@@ -357,6 +407,7 @@ impl super::Source for OutboxPollerSource {
                 self.last_offset,
                 batch_size,
                 self.raw_payload_mode,
+                &mut self.pending_cc_oids,
             )
             .await
         }
@@ -387,6 +438,24 @@ impl super::Source for OutboxPollerSource {
                 self.last_offset = offset_i64;
             }
         }
+
+        // v0.28.0: Unlink any large-object OIDs from native claim-check messages
+        // that were fetched during the last poll().  This frees the pg_largeobject
+        // storage after the sink has confirmed delivery.  Errors are logged at WARN
+        // and do not fail the ack — a dangling LO is less harmful than a stuck pipeline.
+        let oids = std::mem::take(&mut self.pending_cc_oids);
+        for loid in oids {
+            // SAFETY: lo_unlink frees the large object; loid was obtained from
+            // the payload written by outbox_publish_large() and is valid.
+            if let Err(e) = self
+                .db
+                .execute("SELECT lo_unlink($1)", &[&(loid as i64)])
+                .await
+            {
+                tracing::warn!(loid, error = %e, "lo_unlink failed after ack (non-fatal)");
+            }
+        }
+
         Ok(())
     }
 
@@ -396,6 +465,7 @@ impl super::Source for OutboxPollerSource {
 }
 
 /// Simple mode: poll directly from the outbox table using stored offset.
+#[allow(clippy::too_many_arguments)]
 async fn poll_simple(
     db: &Client,
     outbox_table_name: &str,
@@ -404,6 +474,7 @@ async fn poll_simple(
     last_offset: i64,
     batch_size: i64,
     raw_mode: bool,
+    pending_cc_oids: &mut Vec<u32>,
 ) -> Result<Vec<RelayMessage>, RelayError> {
     // Outbox tables are in the tide schema: tide.outbox_<stream_table>
     let outbox_schema_table = format!("tide.{outbox_table_name}");
@@ -422,6 +493,21 @@ async fn poll_simple(
     for row in &rows {
         let id: i64 = row.get("id");
         let payload: serde_json::Value = row.get("payload");
+
+        // v0.28.0: Track native claim-check OIDs for post-ack lo_unlink.
+        if raw_mode
+            && payload
+                .get("_cc")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            if let Some(oid_str) = payload.get("oid").and_then(|v| v.as_str()) {
+                if let Ok(loid) = oid_str.parse::<u32>() {
+                    pending_cc_oids.push(loid);
+                }
+            }
+        }
+
         let batch = decode_payload(&payload, db, stream_table_name, id, raw_mode).await?;
         let mut batch_msgs = batch.into_messages(outbox_table_name, subject_template);
         // Attach ack token to the last message in each outbox row.

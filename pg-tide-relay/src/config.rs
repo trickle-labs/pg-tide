@@ -47,6 +47,26 @@ pub struct RelayConfig {
     /// belonging to this tenant.  Advisory lock keys incorporate the tenant hash.
     /// `--tenant-id` / `PG_TIDE_TENANT_ID` / TOML `tenant_id`.
     pub tenant_id: Option<String>,
+
+    /// v0.28.0: Configuration mode for pipeline discovery.
+    /// `catalog_only` — reject TOML [[pipeline]] blocks that have no matching
+    ///   row in tide.tide_outbox_config / tide.tide_inbox_config.
+    /// `toml_allowed` (default) — emit a warning for TOML-only pipelines and
+    ///   continue, preserving backward compatibility.
+    pub config_mode: ConfigMode,
+}
+
+/// v0.28.0: Controls how the relay handles TOML-defined pipeline blocks that
+/// are absent from the PostgreSQL catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigMode {
+    /// Allow TOML-defined pipelines that are not in the catalog (default).
+    /// Emits a `tracing::warn!` for each orphaned TOML pipeline.
+    #[default]
+    TomlAllowed,
+    /// Reject startup if any TOML [[pipeline]] block lacks a matching catalog row.
+    CatalogOnly,
 }
 
 impl Default for RelayConfig {
@@ -63,6 +83,7 @@ impl Default for RelayConfig {
             max_owned_pipelines: 50,
             max_connections: 52, // 2 coordinator + 50 workers by default
             tenant_id: None,
+            config_mode: ConfigMode::TomlAllowed,
         }
     }
 }
@@ -396,6 +417,7 @@ mod tests {
             max_owned_pipelines: 30,
             max_connections: 32,
             tenant_id: None,
+            config_mode: ConfigMode::TomlAllowed,
         };
         let toml_str = toml::to_string(&cfg).unwrap();
         let decoded: RelayConfig = toml::from_str(&toml_str).unwrap();

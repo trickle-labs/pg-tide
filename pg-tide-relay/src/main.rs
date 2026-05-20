@@ -82,6 +82,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ref tid) = cli.tenant_id {
         cfg.tenant_id = Some(tid.clone());
     }
+    // v0.28.0: Config mode enforcement.
+    cfg.config_mode = match cli.config_mode.as_str() {
+        "catalog_only" => config::ConfigMode::CatalogOnly,
+        _ => config::ConfigMode::TomlAllowed,
+    };
     let drain_timeout = Duration::from_secs(cli.drain_timeout);
 
     // Expand ${ENV:VAR_NAME} placeholders in connection strings.
@@ -134,6 +139,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "status");
             return cmd::status::run_status(&url).await;
+        }
+        Some(Commands::MigrateConfig { postgres_url }) => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| cfg.postgres_url.clone());
+            return cmd::migrate_config::run_migrate_config(&cfg, Some(url.as_str())).await;
         }
         None => {}
     }

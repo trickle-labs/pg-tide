@@ -25,6 +25,8 @@ pub const METRIC_SINK_PUBLISH_DURATION: &str = "pg_tide_relay_sink_publish_durat
 pub const METRIC_POOL_CONNECTIONS: &str = "pg_tide_relay_pool_connections";
 /// v0.24.0: Pool acquire duration histogram.
 pub const METRIC_POOL_ACQUIRE_DURATION: &str = "pg_tide_relay_pool_acquire_duration_seconds";
+/// v0.28.0: Delivery receipt write counter.
+pub const METRIC_RECEIPTS_WRITTEN: &str = "pg_tide_relay_receipts_written_total";
 
 /// Shared relay metrics.
 pub struct RelayMetrics {
@@ -53,6 +55,8 @@ pub struct RelayMetrics {
     pub pool_connections: IntGaugeVec,
     /// v0.24.0: Pool acquire duration histogram.
     pub pool_acquire_duration_seconds: HistogramVec,
+    /// v0.28.0: Delivery receipts written counter (pipeline × sink_type).
+    pub receipts_written: IntCounterVec,
     registry: Registry,
 }
 
@@ -206,6 +210,16 @@ impl RelayMetrics {
         registry.register(Box::new(pool_connections.clone()))?;
         registry.register(Box::new(pool_acquire_duration_seconds.clone()))?;
 
+        // v0.28.0: Delivery receipt writes.
+        let receipts_written = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_RECEIPTS_WRITTEN,
+                "Total delivery receipt rows written after confirmed sink publish"
+            ),
+            &["pipeline", "sink_type", "tenant"],
+        )?;
+        registry.register(Box::new(receipts_written.clone()))?;
+
         Ok(Arc::new(Self {
             messages_published,
             messages_consumed,
@@ -222,6 +236,7 @@ impl RelayMetrics {
             sink_publish_duration_seconds,
             pool_connections,
             pool_acquire_duration_seconds,
+            receipts_written,
             registry,
         }))
     }

@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.28.0 — Delivery Receipts, Canonical Config & Native Claim-Check](#0280--delivery-receipts-canonical-config--native-claim-check)
 - [0.27.0 — Observability Expansion, CLI Ergonomics & Pre-GA Documentation Polish](#0270--2026-05-20--observability-expansion-cli-ergonomics--pre-ga-documentation-polish)
 - [0.26.0 — Partition Safety, Defence-in-Depth & Test Coverage Completion](#0260--2026-05-20--partition-safety-defence-in-depth--test-coverage-completion)
 - [0.25.0 — Outbox Table Partitioning, Multi-Tenant Relay Completion & Pre-GA Hardening](#0250--2026-05-20--outbox-table-partitioning-multi-tenant-relay-completion--pre-ga-hardening)
@@ -35,6 +36,65 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.28.0] — Delivery Receipts, Canonical Config & Native Claim-Check
+
+v0.28.0 completes end-to-end delivery accountability for every outbox message,
+introduces catalog-first configuration as a first-class deployment mode, and
+adds native large-payload support via PostgreSQL `pg_largeobject` — all with
+zero breaking changes to existing pipelines.
+
+### Highlights
+
+**Delivery receipts (v0.28.0)**
+- New `tide.relay_delivery_receipts` table records every successfully delivered
+  message with `pipeline_name`, `outbox_name`, `message_id`, `dedup_key`,
+  `delivered_at`, `sink_type`, and `tenant_name`.
+- New SQL functions `tide.outbox_delivery_confirm()` and
+  `tide.relay_truncate_delivery_receipts()` for querying and pruning receipts.
+- New Prometheus metric `pg_tide_relay_receipts_written_total` (labels:
+  `pipeline`, `sink_type`, `tenant`) lets you alert on receipt lag.
+- `pg-tide doctor` now checks INSERT privilege on the receipts table.
+
+**Canonical catalog-first configuration (v0.28.0)**
+- New `--config-mode` CLI flag (`PG_TIDE_CONFIG_MODE` env var) with values
+  `toml_allowed` (default, backward-compatible) and `catalog_only`.
+- In `catalog_only` mode the TOML file is ignored entirely; all pipeline config
+  is loaded from the `tide` catalog at runtime.
+- New `pg-tide migrate-config` subcommand prints the SQL needed to seed the
+  catalog from an existing TOML file.
+- Migration guide: [docs/src/relay-guide/config-migration.md](../relay-guide/config-migration.md).
+
+**Native claim-check via pg_largeobject (v0.28.0)**
+- New `tide.outbox_publish_large(name, payload, dedup_key, threshold_bytes)`
+  transparently stores oversized payloads as PostgreSQL large objects and
+  inserts a claim-check envelope into the outbox table.
+- The relay source automatically fetches the real payload via `lo_get()` before
+  forwarding to the sink, then calls `lo_unlink()` after the ack to reclaim
+  storage — no application changes needed.
+- Architecture rationale: [ADR-008](../../adr/adr-008-claim-check-native-pathway.md).
+- `pg-tide doctor` now checks EXECUTE privilege on `lo_get`.
+
+**Per-tenant DB roles (v0.28.0)**
+- New `tide.relay_tenant_roles` catalog table stores tenant → database role
+  mappings provisioned by `tide.relay_provision_tenant()` /
+  `tide.relay_deprovision_tenant()`.
+- A `db_role TEXT` column is added to both `tide_outbox_config` and
+  `tide_inbox_config` so the relay can issue `SET ROLE` for each pipeline
+  worker, enabling row-level security by tenant.
+
+### Upgrade notes
+
+Run the standard upgrade script:
+
+```sql
+\i pg_tide--0.27.0--0.28.0.sql
+```
+
+No changes to existing outbox/inbox tables or polling semantics. The new
+tables and functions are additive.
 
 ---
 

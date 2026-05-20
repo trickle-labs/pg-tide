@@ -190,6 +190,20 @@ pub struct Cli {
     )]
     pub self_test: bool,
 
+    /// v0.28.0: Configuration mode for pipeline discovery.
+    ///
+    /// `toml_allowed` (default): TOML-defined pipelines without a matching catalog
+    /// row emit a warning but do not prevent startup.
+    /// `catalog_only`: Any TOML [[pipeline]] block that has no matching row in
+    /// tide.tide_outbox_config or tide.tide_inbox_config causes startup to fail.
+    #[arg(
+        long = "config-mode",
+        env = "PG_TIDE_CONFIG_MODE",
+        default_value = "toml_allowed",
+        help = "Pipeline config enforcement mode: toml_allowed | catalog_only (default: toml_allowed)"
+    )]
+    pub config_mode: String,
+
     /// Optional subcommand.  When absent the relay daemon is started.
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -261,6 +275,18 @@ pub enum Commands {
     /// Exits 0 on success, 1 on connection failure.
     Status {
         /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Emit SQL statements to migrate a TOML-centric pipeline config to catalog.
+    ///
+    /// Reads the active TOML config file (specified via --config) and prints
+    /// the equivalent `SELECT tide.relay_set_outbox_v2(...)` / `relay_set_inbox_v2(...)`
+    /// SQL statements to stdout.  Does not write to the database — pipe the
+    /// output into psql to apply the migration.
+    MigrateConfig {
+        /// PostgreSQL URL (used to look up existing catalog entries for comparison).
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
