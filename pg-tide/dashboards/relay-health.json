@@ -2056,6 +2056,135 @@
       ],
       "title": "Receipt Lag (no new receipts window)",
       "type": "timeseries"
+    },
+    {
+      "id": 209,
+      "type": "row",
+      "title": "Fan-In Sources",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 105
+      }
+    },
+    {
+      "id": 210,
+      "type": "table",
+      "title": "Fan-In Source Lag",
+      "description": "Per-source consumer lag for all fan-in pipelines.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 106
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "expr": "pg_tide_relay_fanin_source_lag",
+          "legendFormat": "{{pipeline}} / {{outbox}}",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 211,
+      "type": "timeseries",
+      "title": "Fan-In Messages Merged / sec",
+      "description": "Rate of messages merged per source outbox in fan-in pipelines.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 106
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "expr": "rate(pg_tide_relay_fanin_messages_merged_total[1m])",
+          "legendFormat": "{{pipeline}}/{{outbox}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 212,
+      "type": "row",
+      "title": "Backfill Jobs",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 114
+      }
+    },
+    {
+      "id": 213,
+      "type": "table",
+      "title": "Backfill Jobs",
+      "description": "Active backfill jobs with source outbox, rows processed, percent complete, and estimated completion.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 115
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "${pg_datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pct_complete"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {},
+      "targets": [
+        {
+          "rawSql": "SELECT job_name, outbox_name, status, rows_processed, rows_total, CASE WHEN rows_total > 0 THEN ROUND(rows_processed::numeric/rows_total*100,1) ELSE 0 END AS pct_complete, created_at FROM tide.backfill_jobs WHERE status IN ('pending','running','paused') ORDER BY created_at DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "refresh": "30s",

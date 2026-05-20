@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.29.0 — Pipeline Templates, Multi-Outbox Fan-In, Lifecycle Management & Backfill Completion](#0290--pipeline-templates-multi-outbox-fan-in-lifecycle-management--backfill-completion)
 - [0.28.0 — Delivery Receipts, Canonical Config & Native Claim-Check](#0280--delivery-receipts-canonical-config--native-claim-check)
 - [0.27.0 — Observability Expansion, CLI Ergonomics & Pre-GA Documentation Polish](#0270--2026-05-20--observability-expansion-cli-ergonomics--pre-ga-documentation-polish)
 - [0.26.0 — Partition Safety, Defence-in-Depth & Test Coverage Completion](#0260--2026-05-20--partition-safety-defence-in-depth--test-coverage-completion)
@@ -36,6 +37,50 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.29.0] — Pipeline Templates, Multi-Outbox Fan-In, Lifecycle Management & Backfill Completion
+
+v0.29.0 delivers four major capability areas for production operators: a built-in pipeline template library for fast pipeline instantiation, multi-outbox fan-in coordination, full pipeline lifecycle history and auto-resume, and a complete relay-side backfill worker with progress tracking and CLI controls. All changes are backward-compatible.
+
+### Pipeline Template Library
+
+- **`tide.relay_pipeline_templates` catalog table** — stores named JSON templates with `{{placeholder}}` substitution, `description`, and `required_keys` validation.
+- **`tide.relay_template_create()` / `tide.relay_template_drop()`** — CRUD functions for managing custom templates.
+- **`tide.relay_template_validate(name, overrides)`** — dry-run validation returning missing or invalid keys before instantiation.
+- **`tide.relay_set_outbox_from_template()` / `tide.relay_set_inbox_from_template()`** — instantiate a pipeline by merging template defaults with caller-supplied overrides, then calling `relay_set_outbox_v2()` / `relay_set_inbox_v2()`.
+- **5 built-in templates** pre-seeded: `kafka-topic-mirror`, `ducklake-daily-sink`, `nats-jetstream-fanout`, `pg-inbox-relay`, `webhook-notification`.
+- **`tide.relay_template_list()` / `tide.relay_template_get(name)`** — Rust-backed list and lookup helpers.
+- **CLI**: `pg-tide template list`, `pg-tide template show <name>`, `pg-tide template apply <name> --outbox <outbox> --set key=value …`.
+
+### Multi-Outbox Fan-In Pipelines
+
+- **`tide.relay_fanin_config` catalog table** — stores fan-in pipeline definitions with `outbox_names[]`, `sink_type`, `merge_strategy` (`round_robin` | `priority` | `subject_hash`), and `tenant_name`.
+- **`tide.relay_set_fanin(name, outbox_names, sink_type, config)`** — register or update a fan-in pipeline; validates all named outboxes exist.
+- **`tide.relay_fanin_enable()` / `tide.relay_fanin_disable()` / `tide.relay_fanin_delete()`** — lifecycle management for fan-in pipelines.
+- **`tide.relay_fanin_list()`** — returns all fan-in configs as a JSON array.
+- **`fanin_member TEXT` column** on `tide.relay_consumer_offsets` — enables independent offset tracking per source outbox within a fan-in pipeline.
+- **New Prometheus metrics**: `pg_tide_relay_fanin_source_lag{pipeline, outbox}` gauge and `pg_tide_relay_fanin_messages_merged_total{pipeline, outbox}` counter.
+- **Grafana panels**: "Fan-In Sources" table (per-source lag) and "Fan-In Messages Merged / sec" timeseries added to `relay-health.json`.
+
+### Pipeline Lifecycle Management
+
+- **`tide.relay_config_audit` table** — immutable log of every pipeline config change; populated by triggers on `relay_outbox_config` and `relay_inbox_config`.
+- **`tide.relay_config_history(pipeline_name)`** — SQL function returning the ordered change log with `old_config`, `new_config`, `changed_by`, and `changed_at`.
+- **`tide.relay_pipeline_state` table** — runtime pause/resume state written by the relay coordinator on every worker transition (`last_error`, `error_class`, `pause_started_at`, `failure_count`).
+- **`tide.relay_pipeline_state_upsert()`** — Rust-backed helper for the relay to write pause state.
+- **`tide.relay_pipeline_pause_reason(pipeline_name)`** — query function returning current pause state.
+- **`auto_resume_after INTERVAL` column** on `tide_outbox_config` and `tide_inbox_config` — when set, the coordinator automatically re-enables paused pipelines after the interval elapses.
+- **`tide.relay_auto_resume_candidates()`** — returns pipelines currently eligible for auto-resume.
+- **CLI**: `pg-tide history <pipeline> [--limit N] [--since TIMESTAMP]`.
+
+### Managed Backfill Completion
+
+- **`tide.backfill_cancel(job_name)`** — SQL and Rust function to cancel a pending, running, or paused backfill job permanently.
+- **`tide.backfill_progress(job_name)`** — SQL function returning `(rows_processed, total_rows, pct_complete, estimated_completion, status)` with linear ETA projection.
+- **CLI**: `pg-tide backfill pause|resume|cancel <job-name>` and `pg-tide backfill status [<job-name>]`.
+- **Grafana panel**: "Backfill Jobs" table panel added to `relay-health.json` showing active jobs with progress and estimated completion.
 
 ---
 

@@ -290,6 +290,42 @@ pub enum Commands {
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
+
+    /// Pipeline template management (v0.29.0).
+    ///
+    /// `pg-tide template list` — list all available templates with descriptions.
+    /// `pg-tide template show <name>` — print the full config JSON for a template.
+    /// `pg-tide template apply <name> --outbox <outbox> --set key=value ...` — instantiate.
+    #[command(subcommand)]
+    Template(TemplateCommands),
+
+    /// Show the config change history for a pipeline (v0.29.0).
+    ///
+    /// Queries `tide.relay_config_history()` and prints a timestamped table
+    /// of config changes with a compact diff.
+    History {
+        /// Pipeline name to show history for.
+        pipeline: String,
+
+        /// Maximum number of history entries to return.
+        #[arg(long, default_value = "20")]
+        limit: i64,
+
+        /// Show only changes at or after this timestamp (ISO 8601).
+        #[arg(long)]
+        since: Option<String>,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Managed backfill job operations (v0.29.0).
+    ///
+    /// `pg-tide backfill pause|resume|cancel <job-name>` — lifecycle control.
+    /// `pg-tide backfill status [<job-name>]` — show progress.
+    #[command(subcommand)]
+    Backfill(BackfillCommands),
 }
 
 /// Replay workbench subcommands.
@@ -490,6 +526,92 @@ pub enum DucklakeCommands {
 
         /// PostgreSQL URL.  Overrides --postgres-url.
         #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+}
+
+/// Pipeline template management subcommands (v0.29.0).
+#[derive(Debug, Subcommand)]
+pub enum TemplateCommands {
+    /// List all pipeline templates with descriptions and required keys.
+    List {
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Print the full config JSON for a named template.
+    Show {
+        /// Template name.
+        name: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Instantiate a template as an outbox pipeline and upsert it into the catalog.
+    ///
+    /// Merges the template config with `--set key=value` overrides and calls
+    /// `tide.relay_set_outbox_from_template()`.
+    Apply {
+        /// Template name.
+        name: String,
+
+        /// Outbox name to bind the pipeline to.
+        #[arg(long)]
+        outbox: String,
+
+        /// Key=value overrides for template placeholders. Repeat for multiple values.
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        set: Vec<String>,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+}
+
+/// Managed backfill job subcommands (v0.29.0).
+#[derive(Debug, Subcommand)]
+pub enum BackfillCommands {
+    /// Pause a running or pending backfill job.
+    Pause {
+        /// Job name.
+        job_name: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Resume a paused backfill job.
+    Resume {
+        /// Job name.
+        job_name: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Cancel a backfill job (cannot be undone).
+    Cancel {
+        /// Job name.
+        job_name: String,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Show progress for all backfill jobs, or a specific job.
+    Status {
+        /// Job name (optional; when omitted shows all jobs).
+        job_name: Option<String>,
+
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
 }
