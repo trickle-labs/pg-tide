@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.26.0 — Partition Safety, Defence-in-Depth & Test Coverage Completion](#0260--2026-05-20--partition-safety-defence-in-depth--test-coverage-completion)
 - [0.25.0 — Outbox Table Partitioning, Multi-Tenant Relay Completion & Pre-GA Hardening](#0250--2026-05-20--outbox-table-partitioning-multi-tenant-relay-completion--pre-ga-hardening)
 - [0.24.0 — Code Quality, Performance & Helm Production Maturity](#0240--2026-05-19--code-quality-performance--helm-production-maturity)
 - [0.23.0 — Correctness, Real TLS & Full Migration Coverage](#0230--2026-05-19--correctness-real-tls--full-migration-coverage)
@@ -33,6 +34,82 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.26.0] — 2026-05-20 — Partition Safety, Defence-in-Depth & Test Coverage Completion
+
+v0.26.0 resolves all findings from overall-assessment-5 that were scheduled for
+this release: two P1 correctness/security gaps in partition table naming and the
+global partition swap, four P2 code-quality items (`expect()` elimination and
+`// SAFETY:` annotation), and three persistent test coverage gaps (PgInboxSink
+round-trip, DLQ fault injection, and `pg_dump` schema-diff CI). Also ships
+ADR-007 documenting the shared partition table semantics, a CONTRIBUTING.md
+with the project `// SAFETY:` convention, and a `just lint-expect` recipe.
+
+### Breaking changes
+None.
+
+### What's new
+
+**P1: NAMEDATALEN guard in `outbox_convert_to_partitioned()`**
+- The function now rejects outbox names long enough to produce backup or new
+  table identifiers exceeding PostgreSQL's 63-byte `NAMEDATALEN` limit, emitting
+  a descriptive `RAISE EXCEPTION` with the computed lengths.
+- `outbox_create()` and `outbox_create_if_not_exists()` (Rust) enforce the same
+  constraint at creation time when `partition_strategy <> 'none'`.
+
+**P1: Shared-table prerequisite guard in `outbox_convert_to_partitioned()`**
+- The function now rejects conversion if any other outbox still uses the
+  unpartitioned shared `tide_outbox_messages` table, preventing the global rename
+  from breaking concurrent writers.
+- A new `confirm_shared_table_migration BOOLEAN DEFAULT FALSE` parameter allows
+  operators who understand the global scope to opt in deliberately (following the
+  `admin_rewind_offset()` pattern from v0.23.0).
+- **Note:** The function signature changed from `(TEXT, TEXT)` to `(TEXT, TEXT,
+  BOOLEAN)`. Existing callers with 2 arguments continue to work via the default
+  parameter.
+
+**P2: `expect()` elimination in Arrow Flight, Singer, and Airbyte**
+- `arrow_flight.rs`: `self.channel.as_mut().expect(...)` replaced with
+  `.ok_or_else(|| RelayError::Other("gRPC channel not established after ensure_connected()"))?`.
+- `singer.rs`: `child.stdout.take().expect(...)` replaced with `.ok_or_else(...)?`.
+- `airbyte.rs`: same pattern as singer.
+
+**P2: `// SAFETY:` annotation for webhook HMAC**
+- Updated the HMAC comment in `webhook.rs` to the project-standard format
+  citing RFC 2104 §3 and the config value invariant.
+
+**Test coverage: PgInboxSink round-trip (`tests/pg_inbox_sink_test.rs`)**
+- Spins up a PostgreSQL 18 testcontainer, calls `inbox_create('pg_sink_test')`,
+  publishes 100 messages in a single batch, and asserts correct column values
+  and idempotent re-publishing.
+
+**Test coverage: DLQ fault injection (`tests/dlq_fault_injection_test.rs`)**
+- Tests DLQ write success, INSERT-denied failure path, empty-batch no-op,
+  `ErrorKind` variant classification, and `DlqEntry::from_message()` field mapping.
+
+**CI: `pg_dump` schema-diff job (`schema-diff`)**
+- New GitHub Actions job that creates two PostgreSQL databases (fresh sequential
+  install vs. same sequential chain), captures `pg_dump --schema-only --schema=tide`,
+  and diffs them — failing on any schema drift.
+
+**CI: `lint-expect` job**
+- New GitHub Actions job and `just lint-expect` recipe that scan `pg-tide-relay/src/`
+  for bare `.expect()` calls not preceded by a `// SAFETY:` comment.
+
+**ADR-007: Shared Partition Table Semantics**
+- `docs/adr/adr-007-shared-partition-table-semantics.md` — documents the
+  interaction between ADR-001 (single-table) and ADR-006 (partitioning),
+  the three options considered, and the recommended migration procedure.
+
+**CONTRIBUTING.md**
+- Added `// SAFETY:` convention documentation and CI enforcement instructions.
+
+**SQL migration**
+- `sql/pg_tide--0.25.0--0.26.0.sql` — drops and recreates
+  `tide.outbox_convert_to_partitioned()` with NAMEDATALEN guard, prerequisite
+  check, and `confirm_shared_table_migration` parameter.
 
 ---
 

@@ -154,10 +154,10 @@ impl AirbyteSource {
             inner: format!("failed to spawn Airbyte source '{source_name}': {e}").into(),
         })?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .expect("stdout was piped — handle is always present");
+        let stdout = child.stdout.take().ok_or_else(|| RelayError::SourcePoll {
+            src: "airbyte".to_string(),
+            inner: "stdout handle missing after piped spawn".into(),
+        })?;
 
         tracing::info!(
             pipeline = %pipeline_name,

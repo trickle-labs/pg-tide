@@ -65,6 +65,22 @@ fn outbox_create_impl(
             "partition_strategy must be 'none', 'daily', 'weekly', or 'monthly'; got '{strategy}'"
         )));
     }
+    // v0.26.0: NAMEDATALEN guard — partition table names are derived from the
+    // outbox name.  The backup prefix 'tide_outbox_messages_backup_' is 29 bytes,
+    // leaving at most 34 bytes for the name fragment (after replacing '-' with '_').
+    if strategy != "none" {
+        let fragment = name.replace('-', "_");
+        let backup_len = "tide_outbox_messages_backup_".len() + fragment.len();
+        if backup_len > 63 {
+            return Err(PgTideError::InvalidArgument(format!(
+                "outbox name '{}' is too long for partitioned outbox table naming \
+                 (backup prefix is 29 bytes, max name fragment is 34 bytes, got {} bytes). \
+                 Shorten the outbox name to at most 34 characters.",
+                name,
+                fragment.len()
+            )));
+        }
+    }
     if outbox_exists(name)? {
         return Err(PgTideError::OutboxAlreadyExists(name.to_string()));
     }
@@ -121,6 +137,20 @@ fn outbox_create_if_not_exists_impl(
         return Err(PgTideError::InvalidArgument(format!(
             "partition_strategy must be 'none', 'daily', 'weekly', or 'monthly'; got '{strategy}'"
         )));
+    }
+    // v0.26.0: NAMEDATALEN guard — same check as outbox_create_impl.
+    if strategy != "none" {
+        let fragment = name.replace('-', "_");
+        let backup_len = "tide_outbox_messages_backup_".len() + fragment.len();
+        if backup_len > 63 {
+            return Err(PgTideError::InvalidArgument(format!(
+                "outbox name '{}' is too long for partitioned outbox table naming \
+                 (backup prefix is 29 bytes, max name fragment is 34 bytes, got {} bytes). \
+                 Shorten the outbox name to at most 34 characters.",
+                name,
+                fragment.len()
+            )));
+        }
     }
     if outbox_exists(name)? {
         return Ok(false);

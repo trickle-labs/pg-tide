@@ -159,7 +159,9 @@ impl super::Sink for ArrowFlightSink {
         }
 
         self.ensure_connected().await?;
-        let client = self.channel.as_mut().expect("channel established");
+        let client = self.channel.as_mut().ok_or_else(|| {
+            RelayError::Other("gRPC channel not established after ensure_connected()".into())
+        })?;
 
         let mut response = client
             .do_put(request)

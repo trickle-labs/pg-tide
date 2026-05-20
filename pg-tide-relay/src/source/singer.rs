@@ -90,10 +90,10 @@ impl SingerSource {
             inner: format!("failed to spawn Singer tap '{tap_command}': {e}").into(),
         })?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .expect("stdout was piped — handle is always present");
+        let stdout = child.stdout.take().ok_or_else(|| RelayError::SourcePoll {
+            src: "singer".to_string(),
+            inner: "stdout handle missing after piped spawn".into(),
+        })?;
 
         tracing::info!(
             pipeline = %pipeline_name,

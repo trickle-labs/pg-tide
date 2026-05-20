@@ -179,10 +179,12 @@ jobs:
           cargo test --package pg-tide-relay --test multi_pipeline_test -- --test-threads=1
           cargo test --package pg-tide-relay --test circuit_breaker_test -- --test-threads=1
           cargo test --package pg-tide-relay --test dlq_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test dlq_fault_injection_test -- --test-threads=1
           cargo test --package pg-tide-relay --test consumer_group_test -- --test-threads=1
           cargo test --package pg-tide-relay --test graceful_shutdown_test -- --test-threads=1
           cargo test --package pg-tide-relay --test outbox_source_test -- --test-threads=1
           cargo test --package pg-tide-relay --test batch_inbox_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test pg_inbox_sink_test -- --test-threads=1
           cargo test --package pg-tide-relay --test replay_test -- --test-threads=1
           cargo test --package pg-tide-relay --test dry_run_test -- --test-threads=1
           cargo test --package pg-tide-relay --test sighup_test -- --test-threads=1
@@ -363,3 +365,203 @@ jobs:
 
       - name: Run SQL → relay → sink E2E test
         run: cargo test --package pg-tide-relay --test sql_to_sink_e2e -- --test-threads=1
+
+  # v0.26.0: Guard against expect() calls in production (non-test) relay code.
+  # SAFETY-annotated expect() calls are permitted; bare ones are not.
+  lint-expect:
+    name: No bare expect() in production relay code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert no bare expect() in production relay source
+        run: |
+          python3 - <<'EOF'
+          import os, sys, re
+          violations = []
+          src_dir = "pg-tide-relay/src"
+          for root, dirs, files in os.walk(src_dir):
+              for fname in files:
+                  if not fname.endswith(".rs"):
+                      continue
+                  path = os.path.join(root, fname)
+                  with open(path) as f:
+                      lines = f.readlines()
+                  in_test_depth = 0
+                  pending_test = False
+                  for i, line in enumerate(lines):
+                      stripped = line.strip()
+                      if re.search(r'#\[cfg\(.*\btest\b', stripped):
+                          pending_test = True
+                      opens = stripped.count("{")
+                      closes = stripped.count("}")
+                      if pending_test and opens > 0:
+                          in_test_depth = opens - closes
+                          pending_test = False
+                      elif in_test_depth > 0:
+                          in_test_depth += opens - closes
+                          if in_test_depth <= 0:
+                              in_test_depth = 0
+                      if in_test_depth > 0:
+                          continue
+                      if stripped.startswith("//"):
+                          continue
+                      if ".expect(" not in stripped:
+                          continue
+                      window = lines[max(0, i-5):i]
+                      if not any("// SAFETY:" in l for l in window):
+                          violations.append(f"{path}:{i+1}: {line.rstrip()}")
+          if violations:
+              print("ERROR: bare .expect() calls found in production relay code:")
+              for v in violations:
+                  print(" ", v)
+              print()
+              print("Replace with .ok_or_else(|| RelayError::...) ? propagation,")
+              print("or add a '// SAFETY:' comment within 5 lines before the expect() call.")
+              sys.exit(1)
+          print("OK: No bare expect() calls in production relay code.")
+          EOF
+
+  # v0.26.0: pg_dump schema-diff CI assertion.
+  # Verifies that fresh-install schema matches sequential upgrade schema.
+  schema-diff:
+    name: pg_dump Schema Diff (fresh vs. sequential upgrade)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
+
+      - name: Install fresh schema (single CREATE EXTENSION equivalent)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh_schema;"
+          psql -h 127.0.0.1 -U postgres -d fresh_schema -c "CREATE SCHEMA tide;"
+
+          # Apply base schema and all migrations sequentially (fresh install path).
+          psql -h 127.0.0.1 -U postgres -d fresh_schema \
+            -f sql/pg_tide--0.1.0.sql
+
+          for f in \
+            sql/pg_tide--0.1.0--0.2.0.sql \
+            sql/pg_tide--0.2.0--0.3.0.sql \
+            sql/pg_tide--0.3.0--0.4.0.sql \
+            sql/pg_tide--0.4.0--0.5.0.sql \
+            sql/pg_tide--0.5.0--0.6.0.sql \
+            sql/pg_tide--0.6.0--0.7.0.sql \
+            sql/pg_tide--0.7.0--0.8.0.sql \
+            sql/pg_tide--0.8.0--0.9.0.sql \
+            sql/pg_tide--0.9.0--0.10.0.sql \
+            sql/pg_tide--0.10.0--0.11.0.sql \
+            sql/pg_tide--0.11.0--0.12.0.sql \
+            sql/pg_tide--0.12.0--0.13.0.sql \
+            sql/pg_tide--0.13.0--0.14.0.sql \
+            sql/pg_tide--0.14.0--0.15.0.sql \
+            sql/pg_tide--0.15.0--0.16.0.sql \
+            sql/pg_tide--0.16.0--0.17.0.sql \
+            sql/pg_tide--0.17.0--0.18.0.sql \
+            sql/pg_tide--0.18.0--0.19.0.sql \
+            sql/pg_tide--0.19.0--0.20.0.sql \
+            sql/pg_tide--0.20.0--0.21.0.sql \
+            sql/pg_tide--0.21.0--0.22.0.sql \
+            sql/pg_tide--0.22.0--0.23.0.sql \
+            sql/pg_tide--0.23.0--0.24.0.sql \
+            sql/pg_tide--0.24.0--0.25.0.sql \
+            sql/pg_tide--0.25.0--0.26.0.sql; do
+            psql -h 127.0.0.1 -U postgres -d fresh_schema -f "$f"
+          done
+
+      - name: Capture fresh schema dump
+        env:
+          PGPASSWORD: postgres
+        run: |
+          pg_dump -h 127.0.0.1 -U postgres -d fresh_schema \
+            --schema-only --schema=tide \
+            --no-owner --no-privileges \
+            | grep -v '^--' \
+            | grep -v '^$' \
+            | sort > /tmp/fresh_schema.sql
+
+      - name: Create upgrade schema (base install + apply all migrations)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade_schema;"
+          psql -h 127.0.0.1 -U postgres -d upgrade_schema -c "CREATE SCHEMA tide;"
+          psql -h 127.0.0.1 -U postgres -d upgrade_schema -f sql/pg_tide--0.1.0.sql
+
+          for f in \
+            sql/pg_tide--0.1.0--0.2.0.sql \
+            sql/pg_tide--0.2.0--0.3.0.sql \
+            sql/pg_tide--0.3.0--0.4.0.sql \
+            sql/pg_tide--0.4.0--0.5.0.sql \
+            sql/pg_tide--0.5.0--0.6.0.sql \
+            sql/pg_tide--0.6.0--0.7.0.sql \
+            sql/pg_tide--0.7.0--0.8.0.sql \
+            sql/pg_tide--0.8.0--0.9.0.sql \
+            sql/pg_tide--0.9.0--0.10.0.sql \
+            sql/pg_tide--0.10.0--0.11.0.sql \
+            sql/pg_tide--0.11.0--0.12.0.sql \
+            sql/pg_tide--0.12.0--0.13.0.sql \
+            sql/pg_tide--0.13.0--0.14.0.sql \
+            sql/pg_tide--0.14.0--0.15.0.sql \
+            sql/pg_tide--0.15.0--0.16.0.sql \
+            sql/pg_tide--0.16.0--0.17.0.sql \
+            sql/pg_tide--0.17.0--0.18.0.sql \
+            sql/pg_tide--0.18.0--0.19.0.sql \
+            sql/pg_tide--0.19.0--0.20.0.sql \
+            sql/pg_tide--0.20.0--0.21.0.sql \
+            sql/pg_tide--0.21.0--0.22.0.sql \
+            sql/pg_tide--0.22.0--0.23.0.sql \
+            sql/pg_tide--0.23.0--0.24.0.sql \
+            sql/pg_tide--0.24.0--0.25.0.sql \
+            sql/pg_tide--0.25.0--0.26.0.sql; do
+            psql -h 127.0.0.1 -U postgres -d upgrade_schema -f "$f"
+          done
+
+      - name: Capture upgrade schema dump
+        env:
+          PGPASSWORD: postgres
+        run: |
+          pg_dump -h 127.0.0.1 -U postgres -d upgrade_schema \
+            --schema-only --schema=tide \
+            --no-owner --no-privileges \
+            | grep -v '^--' \
+            | grep -v '^$' \
+            | sort > /tmp/upgrade_schema.sql
+
+      - name: Compare fresh and upgrade schema dumps
+        run: |
+          echo "=== Fresh schema (first 20 lines) ==="
+          head -20 /tmp/fresh_schema.sql
+          echo ""
+          echo "=== Upgrade schema (first 20 lines) ==="
+          head -20 /tmp/upgrade_schema.sql
+          echo ""
+          echo "=== Diff ==="
+          if diff --ignore-space-change /tmp/fresh_schema.sql /tmp/upgrade_schema.sql; then
+            echo "OK: Fresh install and sequential upgrade produce identical schemas."
+          else
+            echo "FAIL: Schema drift detected between fresh install and sequential upgrade."
+            echo "This means the SQL migration files are inconsistent with the base install SQL."
+            exit 1
+          fi
