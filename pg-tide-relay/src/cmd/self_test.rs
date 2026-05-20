@@ -112,6 +112,36 @@ pub async fn run_self_test(url: &str) -> Result<(), Box<dyn std::error::Error>> 
         println!("  [WARN] Schema appears to be pre-v0.25.0 — run ALTER EXTENSION pg_tide UPDATE");
     }
 
+    // 7. v0.30.0: DAG integrity check — run tide.relay_dag_check() when available.
+    let has_dag_check: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.routines \
+             WHERE routine_schema = 'tide' AND routine_name = 'relay_dag_check')",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(false);
+
+    if has_dag_check {
+        let cycle_rows = client
+            .query("SELECT cycle_path FROM tide.relay_dag_check()", &[])
+            .await;
+        match cycle_rows {
+            Ok(rows) if rows.is_empty() => {
+                println!("  [OK] Pipeline DAG: acyclic (no cycles detected)");
+            }
+            Ok(rows) => {
+                let path: Vec<String> = rows[0].get(0);
+                eprintln!("  [FAIL] Pipeline DAG cycle detected: {}", path.join(" → "));
+                std::process::exit(1);
+            }
+            Err(e) => {
+                println!("  [WARN] Pipeline DAG check skipped: {e}");
+            }
+        }
+    }
+
     println!("\npg-tide self-test: PASS");
     Ok(())
 }

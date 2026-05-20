@@ -326,6 +326,14 @@ pub enum Commands {
     /// `pg-tide backfill status [<job-name>]` — show progress.
     #[command(subcommand)]
     Backfill(BackfillCommands),
+
+    /// Pipeline dependency DAG management (v0.30.0).
+    ///
+    /// `pg-tide dag show`   — output the pipeline dependency graph as a Mermaid diagram.
+    /// `pg-tide dag check`  — run cycle detection and exit 1 if a cycle is found.
+    /// `pg-tide dag status` — show each edge with upstream lag and gate state.
+    #[command(subcommand)]
+    Dag(DagCommands),
 }
 
 /// Replay workbench subcommands.
@@ -610,6 +618,43 @@ pub enum BackfillCommands {
         /// Job name (optional; when omitted shows all jobs).
         job_name: Option<String>,
 
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+}
+
+/// Pipeline dependency DAG subcommands (v0.30.0).
+#[derive(Debug, Subcommand)]
+pub enum DagCommands {
+    /// Output the full pipeline dependency graph as a Mermaid diagram.
+    ///
+    /// Queries `tide.relay_pipeline_deps` and emits a Mermaid `graph LR`
+    /// block to stdout.  Pipe the output into a Mermaid renderer or paste it
+    /// into a markdown fence to visualise the DAG.
+    Show {
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Run DAG cycle detection and exit 1 if a cycle is found.
+    ///
+    /// Executes `tide.relay_dag_check()` and prints the cycle path when one
+    /// is detected.  Exits 0 when the graph is acyclic.  Safe to run in CI
+    /// or Kubernetes `initContainers` alongside `--self-test`.
+    Check {
+        /// PostgreSQL URL.  Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+
+    /// Show each DAG edge with current upstream lag and gate state.
+    ///
+    /// Queries `tide.relay_pipeline_deps` and `tide.relay_consumer_offsets`
+    /// to compute upstream consumer lag for every edge, then reports whether
+    /// the downstream pipeline is gated or free to run.
+    Status {
         /// PostgreSQL URL.  Overrides --postgres-url.
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,

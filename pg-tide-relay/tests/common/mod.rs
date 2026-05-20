@@ -41,6 +41,145 @@ use tokio_postgres::{Client, NoTls};
 /// SQL schema for pg_tide — loaded from the extension's migration file.
 const SCHEMA_SQL: &str = include_str!("../../../sql/pg_tide--0.1.0.sql");
 
+/// All upgrade migration scripts from v0.1.0 through v0.30.0.
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0.1.0 -> 0.2.0",
+        include_str!("../../../sql/pg_tide--0.1.0--0.2.0.sql"),
+    ),
+    (
+        "0.2.0 -> 0.3.0",
+        include_str!("../../../sql/pg_tide--0.2.0--0.3.0.sql"),
+    ),
+    (
+        "0.3.0 -> 0.4.0",
+        include_str!("../../../sql/pg_tide--0.3.0--0.4.0.sql"),
+    ),
+    (
+        "0.4.0 -> 0.5.0",
+        include_str!("../../../sql/pg_tide--0.4.0--0.5.0.sql"),
+    ),
+    (
+        "0.5.0 -> 0.6.0",
+        include_str!("../../../sql/pg_tide--0.5.0--0.6.0.sql"),
+    ),
+    (
+        "0.6.0 -> 0.7.0",
+        include_str!("../../../sql/pg_tide--0.6.0--0.7.0.sql"),
+    ),
+    (
+        "0.7.0 -> 0.8.0",
+        include_str!("../../../sql/pg_tide--0.7.0--0.8.0.sql"),
+    ),
+    (
+        "0.8.0 -> 0.9.0",
+        include_str!("../../../sql/pg_tide--0.8.0--0.9.0.sql"),
+    ),
+    (
+        "0.9.0 -> 0.10.0",
+        include_str!("../../../sql/pg_tide--0.9.0--0.10.0.sql"),
+    ),
+    (
+        "0.10.0 -> 0.11.0",
+        include_str!("../../../sql/pg_tide--0.10.0--0.11.0.sql"),
+    ),
+    (
+        "0.11.0 -> 0.12.0",
+        include_str!("../../../sql/pg_tide--0.11.0--0.12.0.sql"),
+    ),
+    (
+        "0.12.0 -> 0.13.0",
+        include_str!("../../../sql/pg_tide--0.12.0--0.13.0.sql"),
+    ),
+    (
+        "0.13.0 -> 0.14.0",
+        include_str!("../../../sql/pg_tide--0.13.0--0.14.0.sql"),
+    ),
+    (
+        "0.14.0 -> 0.15.0",
+        include_str!("../../../sql/pg_tide--0.14.0--0.15.0.sql"),
+    ),
+    (
+        "0.15.0 -> 0.16.0",
+        include_str!("../../../sql/pg_tide--0.15.0--0.16.0.sql"),
+    ),
+    (
+        "0.16.0 -> 0.17.0",
+        include_str!("../../../sql/pg_tide--0.16.0--0.17.0.sql"),
+    ),
+    (
+        "0.17.0 -> 0.18.0",
+        include_str!("../../../sql/pg_tide--0.17.0--0.18.0.sql"),
+    ),
+    (
+        "0.18.0 -> 0.19.0",
+        include_str!("../../../sql/pg_tide--0.18.0--0.19.0.sql"),
+    ),
+    (
+        "0.19.0 -> 0.20.0",
+        include_str!("../../../sql/pg_tide--0.19.0--0.20.0.sql"),
+    ),
+    (
+        "0.20.0 -> 0.21.0",
+        include_str!("../../../sql/pg_tide--0.20.0--0.21.0.sql"),
+    ),
+    (
+        "0.21.0 -> 0.22.0",
+        include_str!("../../../sql/pg_tide--0.21.0--0.22.0.sql"),
+    ),
+    (
+        "0.22.0 -> 0.23.0",
+        include_str!("../../../sql/pg_tide--0.22.0--0.23.0.sql"),
+    ),
+    (
+        "0.23.0 -> 0.24.0",
+        include_str!("../../../sql/pg_tide--0.23.0--0.24.0.sql"),
+    ),
+    (
+        "0.24.0 -> 0.25.0",
+        include_str!("../../../sql/pg_tide--0.24.0--0.25.0.sql"),
+    ),
+    (
+        "0.25.0 -> 0.26.0",
+        include_str!("../../../sql/pg_tide--0.25.0--0.26.0.sql"),
+    ),
+    (
+        "0.26.0 -> 0.27.0",
+        include_str!("../../../sql/pg_tide--0.26.0--0.27.0.sql"),
+    ),
+    (
+        "0.27.0 -> 0.28.0",
+        include_str!("../../../sql/pg_tide--0.27.0--0.28.0.sql"),
+    ),
+    (
+        "0.28.0 -> 0.29.0",
+        include_str!("../../../sql/pg_tide--0.28.0--0.29.0.sql"),
+    ),
+    (
+        "0.29.0 -> 0.30.0",
+        include_str!("../../../sql/pg_tide--0.29.0--0.30.0.sql"),
+    ),
+];
+
+/// Install the v0.1.0 base schema then apply all migrations through v0.30.0.
+pub async fn install_full_schema(client: &tokio_postgres::Client) {
+    client
+        .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
+        .await
+        .expect("create tide schema");
+    client
+        .batch_execute(SCHEMA_SQL)
+        .await
+        .expect("install v0.1.0 base schema");
+    for (label, sql) in MIGRATIONS {
+        let processed = strip_extension_comments(sql);
+        client
+            .batch_execute(&processed)
+            .await
+            .unwrap_or_else(|e| panic!("migration {label} failed: {e}"));
+    }
+}
+
 /// A test database with the pg_tide schema pre-installed.
 pub struct PgTideTestDb {
     pub client: Client,

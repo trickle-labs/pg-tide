@@ -244,6 +244,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Some(Commands::Dag(dag_cmd)) => {
+            return cmd::dag::run_dag_command(dag_cmd, &cfg.postgres_url).await;
+        }
         None => {}
     }
 

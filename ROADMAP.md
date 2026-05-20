@@ -569,7 +569,7 @@ With the zero-defect baseline established through v0.27.0, this tranche pulls fo
 |---------|-------|--------|-------|--------------|
 | v0.28.0 | Delivery receipts, canonical config enforcement, claim-check native pathway & per-tenant DB role provisioning: `tide.relay_delivery_receipts` with relay integration, `config_mode` startup enforcement, large-object claim-check pathway, per-tenant role provisioning API | ✅ Released | Large | — |
 | v0.29.0 | Pipeline templates, multi-outbox fan-in, lifecycle management & backfill completion: built-in template library with CLI, fan-in coordinator worker with parallel polling, pipeline config history and auto-resume, backfill job scheduling with chunking and progress tracking | ✅ Released | Large | — |
-| v0.30.0 | Pipeline dependency DAG, AsyncAPI completeness & pre-GA final hardening: DAG-aware coordinator acquisition, `pg-tide dag` CLI, fuzz corpus for all wire formats, HA failover test suite, v1.0.0 migration guide and scope finalization | 🔜 Planned | Large | — |
+| v0.30.0 | Pipeline dependency DAG, AsyncAPI completeness & pre-GA final hardening: DAG-aware coordinator acquisition, `pg-tide dag` CLI, fuzz corpus for all wire formats, HA failover test suite, v1.0.0 migration guide and scope finalization | ✅ Released | Large | — |
 
 #### v0.28.0 — Delivery Receipts, Canonical Config Enforcement & Claim-Check Native Pathway (detail)
 

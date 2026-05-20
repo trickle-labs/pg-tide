@@ -181,3 +181,25 @@ release-notes:
     echo "**Docker:** \`docker pull ghcr.io/trickle-labs/pg-tide:v${VERSION}\`"
     echo ""
     echo "**Tag:** \`git tag -s v${VERSION} -m 'Release v${VERSION}' && git push origin v${VERSION}\`"
+    echo ""
+    # v0.30.0: For releases in the v0.28–v0.30 range, include a "Features Pulled from v1.x" section
+    # that credits the original roadmap entries for traceability.
+    MAJOR=$(echo "${VERSION}" | cut -d. -f1)
+    MINOR=$(echo "${VERSION}" | cut -d. -f2)
+    if [[ "${MAJOR}" == "0" && "${MINOR}" -ge 28 && "${MINOR}" -le 30 ]]; then
+        echo "---"
+        echo ""
+        echo "## Features Pulled from v1.x Roadmap"
+        echo ""
+        echo "This release incorporates work originally planned for v1.0.0 GA, pulled forward"
+        echo "to stabilise the v0.x series and give early adopters more time with these features:"
+        echo ""
+        # Extract bullet points from ROADMAP.md for this version's section.
+        awk "/^#### v${VERSION}/,/^####/" ROADMAP.md \
+          | grep '^- \*\*' \
+          | sed 's/^- \*\*/- /' \
+          | sed 's/\*\*.*//' \
+          | head -20 || true
+        echo ""
+        echo "_See [ROADMAP.md](ROADMAP.md) for the full roadmap and version history._"
+    fi

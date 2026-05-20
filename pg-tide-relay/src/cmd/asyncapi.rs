@@ -65,13 +65,16 @@ async fn run_asyncapi_export(
     // Load all relay pipelines.
     // v0.27.0: Include the optional `description` column from tide_outbox_config
     // (added in v0.27.0 migration) for AsyncAPI channel descriptions.
+    // v0.30.0: Also fetch template_source to populate template-sourced channel
+    // descriptions from the pipeline template library.
     let outbox_rows = client
         .query(
             "SELECT r.name, r.enabled, r.config, \
-             COALESCE(o.description, '') as description \
+             COALESCE(o.description, '') as description, \
+             COALESCE(r.config->>'template_source', '') as template_source \
              FROM tide.relay_outbox_config r \
              LEFT JOIN tide.tide_outbox_config o ON o.outbox_name = \
-               COALESCE(r.config->>'source'->>'outbox', r.name) \
+               COALESCE((r.config->'source'->>'outbox'), r.name) \
              ORDER BY r.name",
             &[],
         )
@@ -148,6 +151,9 @@ async fn run_asyncapi_export(
         let config: serde_json::Value = row.get(2);
         // v0.27.0: pick up description column when present (4th column).
         let db_description: Option<String> = row.try_get(3).ok().filter(|s: &String| !s.is_empty());
+        // v0.30.0: template_source column for template-derived descriptions.
+        let template_source: Option<String> =
+            row.try_get(4).ok().filter(|s: &String| !s.is_empty());
 
         let sink_type = config
             .get("sink_type")
@@ -162,8 +168,31 @@ async fn run_asyncapi_export(
             .and_then(|v| v.as_str())
             .unwrap_or("native");
 
+        // v0.30.0: template-sourced description takes lowest priority;
+        // explicit outbox description overrides it.
         let channel_description = db_description
+            .or_else(|| {
+                template_source.as_ref().map(|tmpl| {
+                    format!(
+                        "Forward relay: outbox '{}' → {} (instantiated from template '{}')",
+                        outbox_name, sink_type, tmpl
+                    )
+                })
+            })
             .unwrap_or_else(|| format!("Forward relay: outbox '{}' → {}", outbox_name, sink_type));
+
+        // v0.30.0: fan-in pipelines list contributing outboxes in the message schema.
+        let fan_in_sources: Vec<String> = config
+            .pointer("/source/members")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let is_fan_in = !fan_in_sources.is_empty();
 
         channels.insert(
             format!("forward/{name}"),
@@ -201,12 +230,40 @@ async fn run_asyncapi_export(
             })
         };
 
+        // v0.30.0: For fan-in pipelines emit a oneOf message schema that lists
+        // each contributing outbox as a distinct source variant.
+        let message_payload = if is_fan_in {
+            let one_of: Vec<serde_json::Value> = fan_in_sources
+                .iter()
+                .map(|src| {
+                    serde_json::json!({
+                        "type": "object",
+                        "title": format!("From outbox '{}'", src),
+                        "description": format!(
+                            "Message contributed by fan-in member outbox '{}' (wire_format: {})",
+                            src, wire_format
+                        )
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "oneOf": one_of,
+                "description": format!(
+                    "Fan-in pipeline '{}': messages may originate from any of {} contributing outbox(es)",
+                    name,
+                    fan_in_sources.len()
+                )
+            })
+        } else {
+            payload
+        };
+
         messages.insert(
             format!("{name}Message"),
             serde_json::json!({
                 "name": format!("{name}Message"),
                 "contentType": "application/json",
-                "payload": payload
+                "payload": message_payload
             }),
         );
 
@@ -218,6 +275,70 @@ async fn run_asyncapi_export(
                 "description": format!("Publish messages from outbox '{}' to {}", outbox_name, sink_type)
             }),
         );
+    }
+
+    // v0.30.0: Emit a delivery-receipts channel if the table exists.
+    let has_delivery_receipts: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'tide' AND table_name = 'relay_delivery_receipts')",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(false);
+
+    if has_delivery_receipts {
+        // Emit one delivery-receipt channel per forward pipeline.
+        let receipt_rows = client
+            .query(
+                "SELECT DISTINCT pipeline_name FROM tide.relay_delivery_receipts ORDER BY 1",
+                &[],
+            )
+            .await
+            .unwrap_or_default();
+
+        for receipt_row in &receipt_rows {
+            let pipeline: String = receipt_row.get(0);
+            channels.insert(
+                format!("tide/delivery-receipts/{pipeline}"),
+                serde_json::json!({
+                    "address": format!("tide/delivery-receipts/{}", pipeline),
+                    "description": format!(
+                        "Delivery receipt stream for pipeline '{}'. Each message confirms successful \
+                         or failed delivery of an outbox event to the downstream sink.",
+                        pipeline
+                    ),
+                    "messages": {
+                        format!("{pipeline}ReceiptMessage"): {
+                            "$ref": format!("#/components/messages/{}ReceiptMessage", pipeline)
+                        }
+                    }
+                }),
+            );
+            messages.insert(
+                format!("{pipeline}ReceiptMessage"),
+                serde_json::json!({
+                    "name": format!("{pipeline}ReceiptMessage"),
+                    "contentType": "application/json",
+                    "payload": {
+                        "type": "object",
+                        "description": format!(
+                            "Delivery receipt for pipeline '{}' (tide.relay_delivery_receipts)",
+                            pipeline
+                        ),
+                        "properties": {
+                            "pipeline_name": { "type": "string" },
+                            "outbox_message_id": { "type": "integer" },
+                            "delivered_at": { "type": "string", "format": "date-time" },
+                            "status": { "type": "string", "enum": ["delivered", "failed", "dlq"] },
+                            "sink_type": { "type": "string" },
+                            "error_message": { "type": "string" }
+                        }
+                    }
+                }),
+            );
+        }
     }
 
     for row in &inbox_rows {
