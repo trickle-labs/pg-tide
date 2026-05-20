@@ -4,6 +4,12 @@
 # All ignored advisories are in OPTIONAL feature-gated dependencies.
 # The default build (nats + webhook + stdout) is not affected by any of these.
 # Re-evaluate whenever upstream crates release updates.
+#
+# v0.33.0 re-evaluation (2026-05-20):
+# Checked each advisory below. No new patches available for any entry that
+# would allow removal. Comments updated with re-evaluation status.
+# Tracking issue filed for rustls-webpki upgrade path (blocked on aws-sdk-sqs
+# and rumqttc semver dependency resolution).
 
 [advisories]
 
@@ -11,15 +17,21 @@
 # Pulled in by: mongodb (optional feature "mongodb")
 # Fix available: >=0.26.1, but mongodb 3.6.0 has not yet updated its dependency.
 # Risk: only affects deployments using the mongodb feature gate.
+# v0.33.0 re-evaluation (2026-05-20): mongodb has not released a patch; still
+# blocked. Severity LOW for the pg-tide use case (internal message broker, not
+# a public DNS resolver). Retain ignore until mongodb >=3.7.0 ships.
 ignore = [
     # hickory-proto: CPU exhaustion during message encoding (O(n²) name compression)
     # https://github.com/hickory-dns/hickory-dns/security/advisories/GHSA-q2qq-hmj6-3wpp
     # Upstream fix: hickory-proto >=0.26.1; waiting on mongodb to update.
+    # v0.33.0 re-evaluation (2026-05-20): still unpatched in mongodb dependency tree.
     "RUSTSEC-2026-0119",
 
     # hickory-proto: NSEC3 closest-encloser proof unbounded loop
     # https://github.com/hickory-dns/hickory-dns/security/advisories/GHSA-3v94-mw7p-v465
-    # NO FIX AVAILABLE upstream as of 2026-05-05. Same mongodb chain.
+    # NO FIX AVAILABLE upstream as of 2026-05-20. Same mongodb chain.
+    # v0.33.0 re-evaluation (2026-05-20): no upstream fix exists; pg-tide is not
+    # a DNSSEC validator, so closest-encloser proof logic is never exercised.
     "RUSTSEC-2026-0118",
 
     # rustls-webpki 0.101.7 / 0.102.8 — reachable panic in CRL parsing
@@ -27,36 +39,49 @@ ignore = [
     # Affects: AWS SDK chain (sqs/s3/kinesis feature) and rumqttc (mqtt feature).
     # Fix (>=0.103.13) requires a semver-incompatible jump; upstream has not released
     # new crates crossing that boundary yet. cargo update -p rustls-webpki locks 0 packages.
+    # v0.33.0 re-evaluation (2026-05-20): aws-sdk-sqs and rumqttc have not updated
+    # their rustls-webpki bounds. CRL parsing is unused by default; risk remains LOW.
     "RUSTSEC-2026-0104",
 
     # rustls-webpki 0.101.7 / 0.102.8 — URI name-constraint bypass
     # https://rustsec.org/advisories/RUSTSEC-2026-0098
     # Same chain as above; same root cause (webpki 0.101/0.102 not updatable via Cargo).
+    # v0.33.0 re-evaluation (2026-05-20): no change — still blocked by aws-sdk chain.
     "RUSTSEC-2026-0098",
 
     # rustls-webpki 0.101.7 / 0.102.8 — wildcard name-constraint bypass
     # https://rustsec.org/advisories/RUSTSEC-2026-0099
     # Same chain as above.
+    # v0.33.0 re-evaluation (2026-05-20): no change — still blocked by aws-sdk chain.
     "RUSTSEC-2026-0099",
 
     # rustls-webpki 0.102.8 — CRLs not authoritative due to faulty matching logic
     # https://rustsec.org/advisories/RUSTSEC-2026-0049
     # Pulled in by rumqttc (mqtt feature). Same semver-jump problem as above.
+    # v0.33.0 re-evaluation (2026-05-20): rumqttc has not released an update;
+    # MQTT CRL validation is not used in the default TLS configuration.
     "RUSTSEC-2026-0049",
 
     # paste 1.0.15 — unmaintained
     # https://rustsec.org/advisories/RUSTSEC-2024-0436
     # Pulled in by parquet (iceberg/delta/ducklake features). No active exploit.
     # Will resolve when parquet upgrades or replaces paste.
+    # v0.33.0 re-evaluation (2026-05-20): no new exploit reported; parquet has
+    # not dropped paste in the current release. Retain as low-risk unmaintained.
     "RUSTSEC-2024-0436",
 
     # rustls-pemfile 2.2.0 — unmaintained
     # https://rustsec.org/advisories/RUSTSEC-2025-0134
     # Pulled in by rumqttc and object_store (mqtt / object-storage features).
+    # v0.33.0 re-evaluation (2026-05-20): rustls-pemfile 2.x is still in use by
+    # both rumqttc and object_store. No security vulnerability reported; advisory
+    # is maintenance-only. Will clear when both crates update.
     "RUSTSEC-2025-0134",
 
     # serde_cbor 0.11.2 — unmaintained
     # https://rustsec.org/advisories/RUSTSEC-2021-0127
     # Pulled in by pgrx 0.18.0 (pinned). Nothing we can do until pgrx updates.
+    # v0.33.0 re-evaluation (2026-05-20): pgrx 0.18.x still depends on serde_cbor;
+    # no CVE has been assigned. Retain until pgrx publishes a serde_cbor-free release.
     "RUSTSEC-2021-0127",
 ]

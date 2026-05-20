@@ -68,6 +68,17 @@ cdc-json        = []
 # Not enabled by default; skipped in CI unless explicitly requested.
 # See docs/adr/adr-009-wal-logical-replication-source.md for design details.
 wal-source      = []
+# v0.33.0: KMS envelope encryption — interface skeleton (ADR-010).
+# Full provider implementations (AWS KMS, GCP KMS, HashiCorp Vault, local key
+# file) ship in v1.0.0.  This flag gates the EncryptionEnvelope trait and the
+# four stub provider structs so the API surface can be referenced in tests and
+# documentation before the implementation sprint.
+# Sub-features for individual providers (all unimplemented in v0.33.0):
+kms             = []
+kms-aws         = ["kms"]
+kms-gcp         = ["kms"]
+kms-vault       = ["kms"]
+kms-local       = ["kms"]
 
 [dependencies]
 # Core async runtime + CLI

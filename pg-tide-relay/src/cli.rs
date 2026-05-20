@@ -190,6 +190,21 @@ pub struct Cli {
     )]
     pub self_test: bool,
 
+    /// v0.33.0: Minimum pg_tide extension version required by the relay binary.
+    ///
+    /// When `--self-test` is active and this flag is provided, the self-test
+    /// fails with exit code 1 if the installed pg_tide extension version does
+    /// not meet the minimum (e.g. `--expect-extension-version 0.33.0` for the
+    /// v0.33.0 relay binary, or `--expect-extension-version 1.0.0` for the
+    /// v1.0.0 relay binary).  Designed for Kubernetes `initContainers` that
+    /// should block relay startup on an incompatible extension version.
+    #[arg(
+        long = "expect-extension-version",
+        env = "PG_TIDE_EXPECT_EXTENSION_VERSION",
+        help = "Minimum pg_tide extension version required (for --self-test)"
+    )]
+    pub expect_extension_version: Option<String>,
+
     /// v0.28.0: Configuration mode for pipeline discovery.
     ///
     /// `toml_allowed` (default): TOML-defined pipelines without a matching catalog
@@ -274,6 +289,14 @@ pub enum Commands {
     /// consumer lag (outbox pipelines only), and circuit-breaker state.
     /// Exits 0 on success, 1 on connection failure.
     Status {
+        /// v0.33.0: Also print an inbox fleet summary via `tide.inbox_status(NULL)`.
+        ///
+        /// NOTE: This call scales with the number of configured inboxes (O(n)).
+        /// Use on dashboards and monitoring scripts; avoid in tight polling loops.
+        /// Without this flag the inbox summary is omitted to keep default output fast.
+        #[arg(long = "inbox-summary", default_value = "false")]
+        inbox_summary: bool,
+
         /// PostgreSQL URL.  Overrides --postgres-url.
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
