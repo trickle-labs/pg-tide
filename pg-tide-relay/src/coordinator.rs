@@ -499,6 +499,37 @@ async fn worker_inner(
         }
     });
 
+    // v0.28.0: Per-tenant DB role — issue SET ROLE when configured.
+    // This enforces tenant isolation at the PostgreSQL connection level.
+    if let Some(db_role) = pipeline.opt_str(&["db_role"]) {
+        if !db_role.is_empty() {
+            // Validate the role name before interpolating into SQL.
+            crate::config::validate_relay_identifier(db_role).map_err(|e| {
+                RelayError::InvalidConfig {
+                    name: pipeline.name.clone(),
+                    reason: format!("db_role validation failed: {e}"),
+                }
+            })?;
+            db.execute(&format!("SET ROLE {}", db_role), &[])
+                .await
+                .map_err(|e| RelayError::InvalidConfig {
+                    name: pipeline.name.clone(),
+                    reason: format!("SET ROLE '{}' failed: {e}", db_role),
+                })?;
+            tracing::info!(
+                pipeline = %pipeline.name,
+                db_role,
+                "worker session role set"
+            );
+        }
+    }
+
+    // v0.28.0: Extract outbox name for delivery receipt writes.
+    let receipt_outbox_name: String = pipeline
+        .opt_str(&["source", "outbox"])
+        .unwrap_or(&pipeline.name)
+        .to_string();
+
     let batch_size = pipeline
         .opt_i64(&["batch_size"])
         .unwrap_or(default_batch_size);
@@ -819,6 +850,18 @@ async fn worker_inner(
                     .messages_published
                     .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                     .inc_by(batch.len() as u64);
+
+                // v0.28.0: Write delivery receipts after confirmed sink publish.
+                write_delivery_receipts(
+                    &db,
+                    &pipeline.name,
+                    &receipt_outbox_name,
+                    sink.name(),
+                    &tenant_label,
+                    &batch,
+                    &metrics,
+                )
+                .await;
             }
 
             WorkerDirective::BackoffMs(sleep_ms) => {
@@ -1015,6 +1058,77 @@ async fn route_to_dlq(
                 "permanent DLQ insert error — pausing pipeline"
             );
             DlqOutcome::PermanentError(e)
+        }
+    }
+}
+
+// ── v0.28.0: Delivery receipt helper ────────────────────────────────────────
+
+/// Write delivery receipt rows for a successfully published batch.
+///
+/// Inserts one row per message into `tide.relay_delivery_receipts` using a
+/// single `UNNEST` statement, within the same connection as the worker.
+/// Errors are logged at WARN and do not fail the pipeline — a missing receipt
+/// is less harmful than a stuck pipeline.
+async fn write_delivery_receipts(
+    db: &Arc<Client>,
+    pipeline_name: &str,
+    outbox_name: &str,
+    sink_type: &str,
+    tenant_label: &str,
+    batch: &[crate::envelope::RelayMessage],
+    metrics: &Arc<RelayMetrics>,
+) {
+    if batch.is_empty() {
+        return;
+    }
+
+    let mut message_ids: Vec<i64> = Vec::with_capacity(batch.len());
+    let mut dedup_keys: Vec<String> = Vec::with_capacity(batch.len());
+
+    for msg in batch {
+        // outbox_id is the canonical message identifier in the outbox table.
+        message_ids.push(msg.outbox_id.unwrap_or(0));
+        dedup_keys.push(msg.dedup_key.clone());
+    }
+
+    let result = db
+        .execute(
+            "INSERT INTO tide.relay_delivery_receipts \
+             (pipeline_name, outbox_name, message_id, dedup_key, sink_type, tenant_name) \
+             SELECT $1, $2, unnest($3::bigint[]), unnest($4::text[]), $5, $6",
+            &[
+                &pipeline_name,
+                &outbox_name,
+                &message_ids,
+                &dedup_keys,
+                &sink_type,
+                &tenant_label,
+            ],
+        )
+        .await;
+
+    match result {
+        Ok(rows) => {
+            metrics
+                .receipts_written
+                .with_label_values(&[pipeline_name, sink_type, tenant_label])
+                .inc_by(rows);
+            tracing::debug!(
+                pipeline = %pipeline_name,
+                count = rows,
+                "delivery receipts written"
+            );
+        }
+        Err(e) => {
+            // Delivery receipt writes are best-effort; a missing receipt
+            // is less harmful than a stuck pipeline (OWASP A05 Misconfiguration
+            // — do not panic on optional audit writes).
+            tracing::warn!(
+                pipeline = %pipeline_name,
+                error = %e,
+                "failed to write delivery receipts (non-fatal)"
+            );
         }
     }
 }

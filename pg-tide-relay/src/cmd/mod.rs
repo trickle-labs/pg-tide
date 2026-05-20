@@ -5,6 +5,7 @@
 pub mod asyncapi;
 pub mod doctor;
 pub mod ducklake;
+pub mod migrate_config;
 pub mod replay;
 pub mod self_test;
 pub mod status;

@@ -274,6 +274,58 @@ pub async fn run_doctor_with_threshold(
         );
     }
 
+    // v0.28.0: Check INSERT privilege on tide.relay_delivery_receipts.
+    let receipt_table_exists: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'tide' AND table_name = 'relay_delivery_receipts')",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(false);
+    if receipt_table_exists {
+        let receipt_writable: bool = client
+            .query_one(
+                "SELECT has_table_privilege('tide.relay_delivery_receipts', 'INSERT')",
+                &[],
+            )
+            .await
+            .map(|r| r.get(0))
+            .unwrap_or(false);
+        if receipt_writable {
+            println!("  [OK] Current role has INSERT on tide.relay_delivery_receipts");
+        } else {
+            println!(
+                "  [WARN] Current role lacks INSERT on tide.relay_delivery_receipts \
+                 — delivery receipt writes will be skipped"
+            );
+        }
+    } else {
+        println!(
+            "  [INFO] tide.relay_delivery_receipts not found — upgrade to v0.28.0 \
+             to enable delivery receipt tracking"
+        );
+    }
+
+    // v0.28.0: Check lo_get/lo_unlink EXECUTE privilege (for claim-check pathway).
+    let lo_get_ok: bool = client
+        .query_one(
+            "SELECT has_function_privilege('lo_get(oid)', 'EXECUTE')",
+            &[],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(false);
+    if lo_get_ok {
+        println!("  [OK] Current role has EXECUTE on lo_get (claim-check pathway available)");
+    } else {
+        println!(
+            "  [WARN] Current role lacks EXECUTE on lo_get — \
+             native claim-check pathway via outbox_publish_large() will fail"
+        );
+    }
+
     if all_ok {
         println!("\npg-tide doctor: all checks passed.");
         Ok(())
