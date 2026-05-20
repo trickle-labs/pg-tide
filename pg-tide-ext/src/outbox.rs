@@ -227,18 +227,15 @@ fn outbox_publish_impl(
     )
     .unwrap_or(None);
 
-    match acl_verdict.as_deref() {
-        Some("denied") => {
-            let current_role = Spi::get_one::<String>("SELECT current_user")
-                .unwrap_or(None)
-                .unwrap_or_default();
-            return Err(PgTideError::InvalidArgument(format!(
-                "role '{}' is not authorized to publish to outbox '{}'",
-                current_role, name
-            )));
-        }
-        // no_acl, superuser, allowed — publish proceeds
-        _ => {}
+    if let Some("denied") = acl_verdict.as_deref() {
+        let current_role = Spi::get_one::<String>("SELECT current_user")
+            .unwrap_or(None)
+            .unwrap_or_default();
+        return Err(PgTideError::InvalidArgument(format!(
+            "role '{}' is not authorized to publish to outbox '{}'",
+            current_role, name
+        )));
+        // else: no_acl, superuser, allowed — publish proceeds
     }
 
     let payload_str = serde_json::to_string(&payload.0)
