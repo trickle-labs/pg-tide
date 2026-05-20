@@ -40,37 +40,51 @@ async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
     }
 }
 
-/// Base SQL to install for the DAG test (through v0.30.0).
+/// Full migration chain from v0.1.0 through v0.30.0.
 const SCHEMA_SQL: &str = include_str!("../../sql/pg_tide--0.1.0.sql");
-const V0_1_0_TO_0_2_0: &str = include_str!("../../sql/pg_tide--0.1.0--0.2.0.sql");
-const V0_25_0_TO_0_26_0: &str = include_str!("../../sql/pg_tide--0.25.0--0.26.0.sql");
-const V0_26_0_TO_0_27_0: &str = include_str!("../../sql/pg_tide--0.26.0--0.27.0.sql");
-const V0_27_0_TO_0_28_0: &str = include_str!("../../sql/pg_tide--0.27.0--0.28.0.sql");
-const V0_28_0_TO_0_29_0: &str = include_str!("../../sql/pg_tide--0.28.0--0.29.0.sql");
-const V0_29_0_TO_0_30_0: &str = include_str!("../../sql/pg_tide--0.29.0--0.30.0.sql");
 
-/// Install the full schema through v0.30.0.
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0.1.0 -> 0.2.0",   include_str!("../../sql/pg_tide--0.1.0--0.2.0.sql")),
+    ("0.2.0 -> 0.3.0",   include_str!("../../sql/pg_tide--0.2.0--0.3.0.sql")),
+    ("0.3.0 -> 0.4.0",   include_str!("../../sql/pg_tide--0.3.0--0.4.0.sql")),
+    ("0.4.0 -> 0.5.0",   include_str!("../../sql/pg_tide--0.4.0--0.5.0.sql")),
+    ("0.5.0 -> 0.6.0",   include_str!("../../sql/pg_tide--0.5.0--0.6.0.sql")),
+    ("0.6.0 -> 0.7.0",   include_str!("../../sql/pg_tide--0.6.0--0.7.0.sql")),
+    ("0.7.0 -> 0.8.0",   include_str!("../../sql/pg_tide--0.7.0--0.8.0.sql")),
+    ("0.8.0 -> 0.9.0",   include_str!("../../sql/pg_tide--0.8.0--0.9.0.sql")),
+    ("0.9.0 -> 0.10.0",  include_str!("../../sql/pg_tide--0.9.0--0.10.0.sql")),
+    ("0.10.0 -> 0.11.0", include_str!("../../sql/pg_tide--0.10.0--0.11.0.sql")),
+    ("0.11.0 -> 0.12.0", include_str!("../../sql/pg_tide--0.11.0--0.12.0.sql")),
+    ("0.12.0 -> 0.13.0", include_str!("../../sql/pg_tide--0.12.0--0.13.0.sql")),
+    ("0.13.0 -> 0.14.0", include_str!("../../sql/pg_tide--0.13.0--0.14.0.sql")),
+    ("0.14.0 -> 0.15.0", include_str!("../../sql/pg_tide--0.14.0--0.15.0.sql")),
+    ("0.15.0 -> 0.16.0", include_str!("../../sql/pg_tide--0.15.0--0.16.0.sql")),
+    ("0.16.0 -> 0.17.0", include_str!("../../sql/pg_tide--0.16.0--0.17.0.sql")),
+    ("0.17.0 -> 0.18.0", include_str!("../../sql/pg_tide--0.17.0--0.18.0.sql")),
+    ("0.18.0 -> 0.19.0", include_str!("../../sql/pg_tide--0.18.0--0.19.0.sql")),
+    ("0.19.0 -> 0.20.0", include_str!("../../sql/pg_tide--0.19.0--0.20.0.sql")),
+    ("0.20.0 -> 0.21.0", include_str!("../../sql/pg_tide--0.20.0--0.21.0.sql")),
+    ("0.21.0 -> 0.22.0", include_str!("../../sql/pg_tide--0.21.0--0.22.0.sql")),
+    ("0.22.0 -> 0.23.0", include_str!("../../sql/pg_tide--0.22.0--0.23.0.sql")),
+    ("0.23.0 -> 0.24.0", include_str!("../../sql/pg_tide--0.23.0--0.24.0.sql")),
+    ("0.24.0 -> 0.25.0", include_str!("../../sql/pg_tide--0.24.0--0.25.0.sql")),
+    ("0.25.0 -> 0.26.0", include_str!("../../sql/pg_tide--0.25.0--0.26.0.sql")),
+    ("0.26.0 -> 0.27.0", include_str!("../../sql/pg_tide--0.26.0--0.27.0.sql")),
+    ("0.27.0 -> 0.28.0", include_str!("../../sql/pg_tide--0.27.0--0.28.0.sql")),
+    ("0.28.0 -> 0.29.0", include_str!("../../sql/pg_tide--0.28.0--0.29.0.sql")),
+    ("0.29.0 -> 0.30.0", include_str!("../../sql/pg_tide--0.29.0--0.30.0.sql")),
+];
+
+/// Install the full schema through v0.30.0 applying every migration in order.
 async fn install_full_schema(client: &tokio_postgres::Client) {
     client
         .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
         .await
         .expect("create schema");
 
-    client.batch_execute(SCHEMA_SQL).await.expect("v0.1.0");
+    client.batch_execute(SCHEMA_SQL).await.expect("v0.1.0 base");
 
-    let migrations: &[(&str, &str)] = &[
-        ("0.1.0 → 0.2.0", V0_1_0_TO_0_2_0),
-        // Apply all remaining migrations via a helper that skips to v0.25.0.
-        // For brevity in this test, we include only the migrations needed for
-        // the DAG feature (v0.25.0 through v0.30.0).
-        ("0.25.0 → 0.26.0", V0_25_0_TO_0_26_0),
-        ("0.26.0 → 0.27.0", V0_26_0_TO_0_27_0),
-        ("0.27.0 → 0.28.0", V0_27_0_TO_0_28_0),
-        ("0.28.0 → 0.29.0", V0_28_0_TO_0_29_0),
-        ("0.29.0 → 0.30.0", V0_29_0_TO_0_30_0),
-    ];
-
-    for (label, sql) in migrations {
+    for (label, sql) in MIGRATIONS {
         let processed = common::strip_extension_comments(sql);
         client
             .batch_execute(&processed)
