@@ -15,6 +15,76 @@ lint:
     cargo clippy --package pg-tide-relay --all-targets --all-features -- -D warnings
     cargo fmt --all -- --check
 
+# v0.26.0: Guard against bare expect() in production (non-test) relay code.
+# SAFETY-annotated expect() calls (preceded by // SAFETY: within 5 lines) are permitted.
+# Test modules (#[cfg(test)] and #[cfg(all(test,...))]) are excluded.
+lint-expect:
+    #!/usr/bin/env python3
+    import os, sys, re
+
+    violations = []
+    src_dir = "pg-tide-relay/src"
+
+    for root, dirs, files in os.walk(src_dir):
+        for fname in files:
+            if not fname.endswith(".rs"):
+                continue
+            path = os.path.join(root, fname)
+            with open(path) as f:
+                lines = f.readlines()
+
+            # Track whether we're inside a cfg(test) block using brace counting.
+            in_test_depth = 0   # brace depth relative to start of cfg(test) block
+            pending_test = False  # saw a #[cfg(...test...)] attribute, waiting for {
+
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+
+                # Detect #[cfg(...test...)] attributes
+                if re.search(r'#\[cfg\(.*\btest\b', stripped):
+                    pending_test = True
+
+                # Detect block opens and closes
+                opens = stripped.count("{")
+                closes = stripped.count("}")
+
+                if pending_test and opens > 0:
+                    in_test_depth = opens - closes
+                    pending_test = False
+                elif in_test_depth > 0:
+                    in_test_depth += opens - closes
+                    if in_test_depth <= 0:
+                        in_test_depth = 0
+
+                # Skip lines in test blocks or that are comments
+                if in_test_depth > 0:
+                    continue
+                if stripped.startswith("//"):
+                    continue
+
+                # Check for .expect( on this line
+                if ".expect(" not in stripped:
+                    continue
+
+                # Check if any of the 5 preceding lines has // SAFETY:
+                window_start = max(0, i - 5)
+                window = lines[window_start:i]
+                has_safety = any("// SAFETY:" in l for l in window)
+
+                if not has_safety:
+                    violations.append(f"{path}:{i+1}: {line.rstrip()}")
+
+    if violations:
+        print("ERROR: bare .expect() calls found in production relay code:")
+        for v in violations:
+            print(" ", v)
+        print()
+        print("Replace with .ok_or_else(|| RelayError::...) ? propagation, or")
+        print("add a '// SAFETY: <reason>' comment within 5 lines before the expect() call.")
+        sys.exit(1)
+    else:
+        print("OK: No bare expect() calls in production relay code.")
+
 # Run unit tests (no DB required)
 test-unit:
     cargo test --package {{PG_TIDE_EXT}} --lib -- --test-threads=4

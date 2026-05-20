@@ -101,7 +101,8 @@ fn hmac_sha256_hex(key: &str, body: &[u8]) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
 
-    // SAFETY: Hmac::new_from_slice accepts keys of any length per the HMAC spec.
+    // SAFETY: Hmac::new_from_slice accepts keys of any non-zero length per HMAC-SHA256 spec
+    // (RFC 2104 §3); key.as_bytes() is always non-empty for a non-empty config value.
     let mut mac =
         <Hmac<Sha256>>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key size");
     mac.update(body);
