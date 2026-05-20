@@ -61,6 +61,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(max) = cli.max_connections {
         cfg.max_connections = max;
     }
+    // v0.25.0: Tenant ID for multi-tenant relay groups.
+    if let Some(ref tid) = cli.tenant_id {
+        cfg.tenant_id = Some(tid.clone());
+    }
     let drain_timeout = Duration::from_secs(cli.drain_timeout);
 
     // Expand ${ENV:VAR_NAME} placeholders in connection strings.
@@ -127,6 +131,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return cmd::status::run_status(&url).await;
         }
         None => {}
+    }
+
+    // v0.25.0: Handle --self-test flag: verify connectivity, schema, and
+    // advisory lock, then exit 0 on success or 1 on failure.
+    if cli.self_test {
+        if cfg.postgres_url.is_empty() {
+            eprintln!("error: --postgres-url is required for --self-test");
+            std::process::exit(1);
+        }
+        return cmd::self_test::run_self_test(&cfg.postgres_url).await;
     }
 
     if cfg.postgres_url.is_empty() {
@@ -208,6 +222,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     // v0.15.0: Apply max_owned_pipelines from config.
     coordinator.set_max_owned_pipelines(cfg.max_owned_pipelines);
+    // v0.25.0: Apply tenant_id for multi-tenant relay groups.
+    if let Some(ref tid) = cfg.tenant_id {
+        coordinator.set_tenant_id(tid.clone());
+    }
 
     // Shutdown watch channel: signal handler sends true when SIGTERM/Ctrl-C arrives.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

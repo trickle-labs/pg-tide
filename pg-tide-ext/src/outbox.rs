@@ -41,30 +41,48 @@ pub fn outbox_create(
     p_name: &str,
     p_retention_hours: default!(i32, 24),
     p_inline_threshold: default!(i32, 10000),
+    p_partition_strategy: default!(&str, "'none'"),
 ) {
-    outbox_create_impl(p_name, p_retention_hours, p_inline_threshold)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    outbox_create_impl(
+        p_name,
+        p_retention_hours,
+        p_inline_threshold,
+        p_partition_strategy,
+    )
+    .unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn outbox_create_impl(
     name: &str,
     retention_hours: i32,
     inline_threshold: i32,
+    partition_strategy: &str,
 ) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(name)?;
+    let strategy = partition_strategy.trim_matches('\'');
+    if !matches!(strategy, "none" | "daily" | "weekly" | "monthly") {
+        return Err(PgTideError::InvalidArgument(format!(
+            "partition_strategy must be 'none', 'daily', 'weekly', or 'monthly'; got '{strategy}'"
+        )));
+    }
     if outbox_exists(name)? {
         return Err(PgTideError::OutboxAlreadyExists(name.to_string()));
     }
 
     Spi::run_with_args(
         "INSERT INTO tide.tide_outbox_config \
-         (outbox_name, retention_hours, inline_threshold) \
-         VALUES ($1, $2, $3)",
-        &[name.into(), retention_hours.into(), inline_threshold.into()],
+         (outbox_name, retention_hours, inline_threshold, partition_strategy) \
+         VALUES ($1, $2, $3, $4)",
+        &[
+            name.into(),
+            retention_hours.into(),
+            inline_threshold.into(),
+            strategy.into(),
+        ],
     )
     .map_err(|e| PgTideError::SpiError(format!("INSERT tide_outbox_config: {e}")))?;
 
-    pgrx::log!("[pg_tide] outbox_create: created outbox '{name}'");
+    pgrx::log!("[pg_tide] outbox_create: created outbox '{name}' (partition_strategy={strategy})");
     Ok(())
 }
 
@@ -80,30 +98,48 @@ pub fn outbox_create_if_not_exists(
     p_name: &str,
     p_retention_hours: default!(i32, 24),
     p_inline_threshold: default!(i32, 10000),
+    p_partition_strategy: default!(&str, "'none'"),
 ) -> bool {
-    outbox_create_if_not_exists_impl(p_name, p_retention_hours, p_inline_threshold)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
+    outbox_create_if_not_exists_impl(
+        p_name,
+        p_retention_hours,
+        p_inline_threshold,
+        p_partition_strategy,
+    )
+    .unwrap_or_else(|e| pgrx::error!("{}", e))
 }
 
 fn outbox_create_if_not_exists_impl(
     name: &str,
     retention_hours: i32,
     inline_threshold: i32,
+    partition_strategy: &str,
 ) -> Result<bool, PgTideError> {
     crate::validation::validate_identifier(name)?;
+    let strategy = partition_strategy.trim_matches('\'');
+    if !matches!(strategy, "none" | "daily" | "weekly" | "monthly") {
+        return Err(PgTideError::InvalidArgument(format!(
+            "partition_strategy must be 'none', 'daily', 'weekly', or 'monthly'; got '{strategy}'"
+        )));
+    }
     if outbox_exists(name)? {
         return Ok(false);
     }
 
     Spi::run_with_args(
         "INSERT INTO tide.tide_outbox_config \
-         (outbox_name, retention_hours, inline_threshold) \
-         VALUES ($1, $2, $3)",
-        &[name.into(), retention_hours.into(), inline_threshold.into()],
+         (outbox_name, retention_hours, inline_threshold, partition_strategy) \
+         VALUES ($1, $2, $3, $4)",
+        &[
+            name.into(),
+            retention_hours.into(),
+            inline_threshold.into(),
+            strategy.into(),
+        ],
     )
     .map_err(|e| PgTideError::SpiError(format!("INSERT tide_outbox_config: {e}")))?;
 
-    pgrx::log!("[pg_tide] outbox_create_if_not_exists: created outbox '{name}'");
+    pgrx::log!("[pg_tide] outbox_create_if_not_exists: created outbox '{name}' (partition_strategy={strategy})");
     Ok(true)
 }
 
@@ -583,13 +619,13 @@ mod tests {
 
     #[pg_test]
     fn test_outbox_create_and_exists() {
-        crate::outbox::outbox_create("smoke-create", 24, 10_000);
+        crate::outbox::outbox_create("smoke-create", 24, 10_000, "none");
         assert!(crate::outbox::outbox_exists("smoke-create").unwrap());
     }
 
     #[pg_test]
     fn test_outbox_create_duplicate_errors() {
-        crate::outbox::outbox_create("dup-outbox", 24, 10_000);
+        crate::outbox::outbox_create("dup-outbox", 24, 10_000, "none");
         // Creating the same outbox a second time must raise a pgrx error —
         // we verify it by checking the table row count stays at 1.
         let count: i64 = Spi::get_one(
@@ -602,7 +638,7 @@ mod tests {
 
     #[pg_test]
     fn test_outbox_publish_inserts_message() {
-        crate::outbox::outbox_create("pub-outbox", 24, 10_000);
+        crate::outbox::outbox_create("pub-outbox", 24, 10_000, "none");
         crate::outbox::outbox_publish(
             "pub-outbox",
             pgrx::JsonB(serde_json::json!({"event": "order.created"})),
@@ -631,7 +667,7 @@ mod tests {
 
     #[pg_test]
     fn test_outbox_status_returns_json() {
-        crate::outbox::outbox_create("status-outbox", 24, 10_000);
+        crate::outbox::outbox_create("status-outbox", 24, 10_000, "none");
         let status = crate::outbox::outbox_status("status-outbox");
         let v = &status.0;
         assert_eq!(v["outbox_name"], "status-outbox");
@@ -640,7 +676,7 @@ mod tests {
 
     #[pg_test]
     fn test_outbox_drop_removes_config() {
-        crate::outbox::outbox_create("drop-me", 24, 10_000);
+        crate::outbox::outbox_create("drop-me", 24, 10_000, "none");
         assert!(crate::outbox::outbox_exists("drop-me").unwrap());
         crate::outbox::outbox_drop("drop-me", false);
         assert!(!crate::outbox::outbox_exists("drop-me").unwrap());
@@ -654,7 +690,7 @@ mod tests {
 
     #[pg_test]
     fn test_outbox_disable_enable_roundtrip() {
-        crate::outbox::outbox_create("toggle-outbox", 24, 10_000);
+        crate::outbox::outbox_create("toggle-outbox", 24, 10_000, "none");
         crate::outbox::outbox_disable("toggle-outbox");
         let enabled: bool = Spi::get_one(
             "SELECT enabled FROM tide.tide_outbox_config WHERE outbox_name = 'toggle-outbox'",
@@ -676,7 +712,7 @@ mod tests {
 
     #[pg_test]
     fn test_consumer_group_create_and_commit_offset() {
-        crate::outbox::outbox_create("cg-outbox", 24, 10_000);
+        crate::outbox::outbox_create("cg-outbox", 24, 10_000, "none");
         crate::outbox::create_consumer_group("cg-group", "cg-outbox", "earliest", false);
 
         crate::outbox::commit_offset("cg-group", "worker-1", 42);
@@ -692,7 +728,7 @@ mod tests {
 
     #[pg_test]
     fn test_drop_consumer_group_cascades_offsets() {
-        crate::outbox::outbox_create("cas-outbox", 24, 10_000);
+        crate::outbox::outbox_create("cas-outbox", 24, 10_000, "none");
         crate::outbox::create_consumer_group("cas-group", "cas-outbox", "earliest", false);
         crate::outbox::commit_offset("cas-group", "w1", 5);
 
@@ -710,7 +746,7 @@ mod tests {
 
     #[pg_test]
     fn test_outbox_grant_publish_adds_acl() {
-        crate::outbox::outbox_create("acl-outbox", 24, 10_000);
+        crate::outbox::outbox_create("acl-outbox", 24, 10_000, "none");
         crate::outbox::outbox_grant_publish("acl-outbox", "app_role");
 
         let count: i64 = Spi::get_one(
@@ -724,7 +760,7 @@ mod tests {
 
     #[pg_test]
     fn test_outbox_grant_publish_idempotent() {
-        crate::outbox::outbox_create("acl-idem", 24, 10_000);
+        crate::outbox::outbox_create("acl-idem", 24, 10_000, "none");
         crate::outbox::outbox_grant_publish("acl-idem", "some_role");
         crate::outbox::outbox_grant_publish("acl-idem", "some_role"); // duplicate
 
@@ -739,7 +775,7 @@ mod tests {
 
     #[pg_test]
     fn test_outbox_revoke_publish_removes_acl() {
-        crate::outbox::outbox_create("acl-revoke", 24, 10_000);
+        crate::outbox::outbox_create("acl-revoke", 24, 10_000, "none");
         crate::outbox::outbox_grant_publish("acl-revoke", "to_revoke");
         crate::outbox::outbox_revoke_publish("acl-revoke", "to_revoke");
 

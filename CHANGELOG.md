@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.25.0 — Outbox Table Partitioning, Multi-Tenant Relay Completion & Pre-GA Hardening](#0250--2026-05-20--outbox-table-partitioning-multi-tenant-relay-completion--pre-ga-hardening)
 - [0.24.0 — Code Quality, Performance & Helm Production Maturity](#0240--2026-05-19--code-quality-performance--helm-production-maturity)
 - [0.23.0 — Correctness, Real TLS & Full Migration Coverage](#0230--2026-05-19--correctness-real-tls--full-migration-coverage)
 - [0.22.0 — DuckLake Bidirectional Flow & Ecosystem Surface](#0220--2026-05-19--ducklake-bidirectional-flow--ecosystem-surface)
@@ -32,6 +33,103 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.25.0] — 2026-05-20 — Outbox Table Partitioning, Multi-Tenant Relay Completion & Pre-GA Hardening
+
+v0.25.0 implements ADR-006 declarative outbox table partitioning, completes
+the multi-tenant relay groups runtime that has been catalog-ready since v0.14.0
+but lacked coordinator-side enforcement, hardens the `pg-tide doctor` checks,
+expands the Criterion.rs benchmark suite with three production-representative
+hot-path benchmarks, ships the `--self-test` startup flag for Kubernetes
+readiness probes, and publishes the pre-GA readiness checklist that serves as
+the formal acceptance gate for the v1.0.0 Production GA release.
+
+### Breaking changes
+None.
+
+### What's new
+
+**Outbox table partitioning (ADR-006)**
+- **`outbox_create()` gains `partition_strategy` parameter** — accepts
+  `'none'` (default, existing behaviour), `'daily'`, `'weekly'`, or
+  `'monthly'`.  When set, the outbox configuration records the chosen strategy
+  for use by the relay sweep command and partition health checks.
+- **`outbox_create_if_not_exists()` gains `partition_strategy`** — same
+  parameter as `outbox_create()` for idempotent deployment scripts.
+- **`tide.outbox_convert_to_partitioned(name, strategy)`** — live migration
+  SQL function that converts an existing unpartitioned outbox to declarative
+  range partitioning using an advisory-lock swap with minimal relay downtime.
+  The original data is preserved in a backup table until manually dropped after
+  verification.
+- **`tide.tide_partition_events` table** — durable log of partition lifecycle
+  events (created, dropped, converted) for `pg-tide doctor` health checks and
+  operator auditing.
+- **`partition_strategy` and `retention_partitions` columns** in
+  `tide.tide_outbox_config` — record the chosen strategy and rolling retention
+  window (default: 7 partitions) for each outbox.
+
+**Multi-tenant relay groups: runtime completion**
+- **Per-tenant pipeline ownership filtering** — `Coordinator` gains a
+  `set_tenant_id()` method; when set, `load_pipelines()` filters
+  `tide.relay_outbox_config` and `tide.relay_inbox_config` to only pipelines
+  matching `tenant_name = $tenant_id`.  No cross-tenant contamination.
+- **Per-tenant advisory lock namespacing** — `try_acquire_lock()` and
+  `release_lock()` incorporate the tenant ID into the lock key pair, preventing
+  two tenants with identical pipeline names from colliding on the same
+  PostgreSQL database.
+- **`--tenant-id` CLI flag** — `PG_TIDE_TENANT_ID` env var; configures the
+  coordinator's tenant ID at startup.
+- **Per-tenant index** — `idx_relay_outbox_config_tenant` and
+  `idx_relay_inbox_config_tenant` partial indexes on `tenant_name WHERE
+  enabled = true` for efficient per-tenant pipeline discovery queries.
+- **Two-tenant isolation integration test** — asserts coordinator-a only
+  discovers tenant-a's pipelines, coordinator-b only discovers tenant-b's
+  pipelines, and both can acquire their respective advisory locks concurrently.
+
+**Extended `pg-tide doctor` checks**
+- **TLS version check** — queries `pg_ssl` for the negotiated TLS version;
+  warns on TLS 1.1/1.0, flags when `sslmode=require` resolves to a plaintext
+  connection.
+- **DuckLake catalog health check** — verifies `ducklake_snapshot`,
+  `ducklake_data_file`, and `ducklake_column` are accessible when DuckLake
+  pipelines are configured; reports INFO when absent (not a failure for
+  non-DuckLake deployments).
+- **DLQ depth warning** — counts `tide.relay_dlq` entries written in the last
+  hour and warns when the rate exceeds `--dlq-warn-threshold` (default: 100).
+- **Partition capacity check** — warns when a partitioned outbox has recent
+  writes, reminding operators to provision the next partition via
+  `pg-tide sweep`.
+
+**Relay benchmark suite (Criterion.rs)**
+- **`bench_outbox_poll_decode`** — decodes a 1 000-row batch at 1 KB, 10 KB,
+  and 100 KB payload sizes, isolating the decode overhead from PostgreSQL I/O.
+- **`bench_inbox_unnest_params`** — builds the four UNNEST parameter Vecs for
+  `InboxSink::publish()` at 1, 10, 100, and 1 000 row batch sizes.
+- **`bench_worker_inner_orchestration`** — measures end-to-end routing +
+  envelope wrapping overhead for the coordinator's `worker_inner()` hot path
+  at 10, 100, and 1 000 message batches, independently of I/O.
+
+**Pre-GA operational readiness**
+- **`--self-test` flag** — connects to PostgreSQL, checks TLS state, acquires
+  and releases an advisory lock, verifies the `partition_strategy` column is
+  present (v0.25.0+ schema), and exits 0 on success or 1 with a descriptive
+  error.  Designed for Kubernetes `initContainers` and CI/CD pre-deployment gates.
+- **`docs/src/operations/pre-ga-checklist.md`** — formal acceptance gate
+  covering TLS configuration, outbox partitioning strategy, consumer group
+  setup, DLQ monitoring thresholds, `pg-tide doctor` output interpretation,
+  Helm security context review, benchmark baseline validation, and rollback
+  procedure.
+- **`just release-notes` recipe** — reads `CHANGELOG.md` for the current
+  workspace version and formats a GitHub Release body with upgrade notes,
+  Docker pull command, and tag instruction.
+
+**SQL migration**
+- `sql/pg_tide--0.24.0--0.25.0.sql` — adds `partition_strategy` and
+  `retention_partitions` to `tide.tide_outbox_config`, creates
+  `tide.tide_partition_events`, adds per-tenant indexes on relay config
+  tables, and defines `tide.outbox_convert_to_partitioned()`.
 
 ---
 

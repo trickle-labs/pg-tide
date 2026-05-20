@@ -92,3 +92,22 @@ bump-version VERSION:
     sed -i.bak "s/^version: ${OLD}/version: {{VERSION}}/" helm/pg-tide/Chart.yaml && rm helm/pg-tide/Chart.yaml.bak
     sed -i.bak "s/^appVersion: \"${OLD}\"/appVersion: \"{{VERSION}}\"/" helm/pg-tide/Chart.yaml && rm helm/pg-tide/Chart.yaml.bak
     echo "Done. Don't forget to create sql/pg_tide--${OLD}--{{VERSION}}.sql and update CHANGELOG.md"
+
+# Generate GitHub Release body from CHANGELOG.md for the current workspace version.
+# Usage: just release-notes
+release-notes:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+    echo "# Release v${VERSION}"
+    echo ""
+    # Extract the section for the current version from CHANGELOG.md
+    awk "/^## \[${VERSION}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md
+    echo ""
+    echo "---"
+    echo ""
+    echo "**Migration:** \`ALTER EXTENSION pg_tide UPDATE TO '${VERSION}';\`"
+    echo ""
+    echo "**Docker:** \`docker pull ghcr.io/trickle-labs/pg-tide:v${VERSION}\`"
+    echo ""
+    echo "**Tag:** \`git tag -s v${VERSION} -m 'Release v${VERSION}' && git push origin v${VERSION}\`"

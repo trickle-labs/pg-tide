@@ -243,7 +243,7 @@ mod tests {
         .unwrap()
         .unwrap_or(false);
         if !exists {
-            crate::outbox::outbox_create(name, 24, 10_000);
+            crate::outbox::outbox_create(name, 24, 10_000, "none");
         }
     }
 

@@ -36,6 +36,9 @@ pub struct Coordinator {
     owned: HashMap<String, (watch::Sender<bool>, JoinHandle<()>)>,
     /// v0.13.0 / v0.15.0: Maximum owned pipelines (connection limit).
     max_owned_pipelines: usize,
+    /// v0.25.0: Optional tenant ID for multi-tenant relay groups.
+    /// When set, only pipelines with matching tenant_name are owned.
+    tenant_id: Option<String>,
 }
 
 impl Coordinator {
@@ -52,12 +55,19 @@ impl Coordinator {
             health,
             owned: HashMap::new(),
             max_owned_pipelines: 50, // default: matches tide.relay_limits
+            tenant_id: None,
         }
     }
 
     /// Set the maximum number of pipelines this coordinator will own.
     pub fn set_max_owned_pipelines(&mut self, max: usize) {
         self.max_owned_pipelines = max;
+    }
+
+    /// v0.25.0: Set the tenant ID for multi-tenant relay groups.
+    /// When set, only pipelines matching this tenant_name are discovered.
+    pub fn set_tenant_id(&mut self, tenant_id: impl Into<String>) {
+        self.tenant_id = Some(tenant_id.into());
     }
 
     /// Get the current max_owned_pipelines limit.
@@ -101,26 +111,46 @@ impl Coordinator {
     }
 
     /// Load all enabled pipelines from the catalog.
+    /// v0.25.0: When tenant_id is set, filter to only this tenant's pipelines.
     pub async fn load_pipelines(&self) -> Result<Vec<PipelineConfig>, RelayError> {
         let client = self
             .pool
             .get()
             .await
             .map_err(|e| RelayError::other(format!("coordinator pool error: {e}")))?;
-        let rows = client
-            .query(
-                "SELECT name, 'forward' AS direction, enabled, config,
-                        COALESCE(tenant_name, 'default') AS tenant_name
-                   FROM tide.relay_outbox_config
-                  WHERE enabled = true
-                 UNION ALL
-                 SELECT name, 'reverse' AS direction, enabled, config,
-                        COALESCE(tenant_name, 'default') AS tenant_name
-                   FROM tide.relay_inbox_config
-                  WHERE enabled = true",
-                &[],
-            )
-            .await?;
+
+        let rows = if let Some(ref tid) = self.tenant_id {
+            // Per-tenant filtering: only own pipelines belonging to this tenant.
+            client
+                .query(
+                    "SELECT name, 'forward' AS direction, enabled, config,
+                            COALESCE(tenant_name, 'default') AS tenant_name
+                       FROM tide.relay_outbox_config
+                      WHERE enabled = true AND tenant_name = $1
+                     UNION ALL
+                     SELECT name, 'reverse' AS direction, enabled, config,
+                            COALESCE(tenant_name, 'default') AS tenant_name
+                       FROM tide.relay_inbox_config
+                      WHERE enabled = true AND tenant_name = $1",
+                    &[tid],
+                )
+                .await?
+        } else {
+            client
+                .query(
+                    "SELECT name, 'forward' AS direction, enabled, config,
+                            COALESCE(tenant_name, 'default') AS tenant_name
+                       FROM tide.relay_outbox_config
+                      WHERE enabled = true
+                     UNION ALL
+                     SELECT name, 'reverse' AS direction, enabled, config,
+                            COALESCE(tenant_name, 'default') AS tenant_name
+                       FROM tide.relay_inbox_config
+                      WHERE enabled = true",
+                    &[],
+                )
+                .await?
+        };
 
         let mut pipelines = Vec::new();
         for row in rows {
@@ -147,16 +177,25 @@ impl Coordinator {
 
     /// Try to acquire the advisory lock for a pipeline.
     /// Returns true if the lock was acquired (this pod owns the pipeline).
+    /// v0.25.0: When tenant_id is set, incorporate it into the lock key pair
+    /// so two tenants with identical pipeline names do not collide.
     pub async fn try_acquire_lock(&self, pipeline_id: &str) -> Result<bool, RelayError> {
         let client = self
             .pool
             .get()
             .await
             .map_err(|e| RelayError::other(format!("coordinator pool error: {e}")))?;
+        // Build the lock key: {relay_group}:{tenant_id}:{pipeline_id}
+        // When no tenant is configured, the key reduces to {relay_group}:{pipeline_id}
+        // (same as pre-v0.25.0 behaviour).
+        let lock_key = match &self.tenant_id {
+            Some(tid) => format!("{}:{}:{}", self.relay_group_id, tid, pipeline_id),
+            None => format!("{}:{}", self.relay_group_id, pipeline_id),
+        };
         let row = client
             .query_one(
                 "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2))",
-                &[&self.relay_group_id, &pipeline_id],
+                &[&self.relay_group_id, &lock_key],
             )
             .await?;
         Ok(row.get::<_, bool>(0))
@@ -169,10 +208,14 @@ impl Coordinator {
             .get()
             .await
             .map_err(|e| RelayError::other(format!("coordinator pool error: {e}")))?;
+        let lock_key = match &self.tenant_id {
+            Some(tid) => format!("{}:{}:{}", self.relay_group_id, tid, pipeline_id),
+            None => format!("{}:{}", self.relay_group_id, pipeline_id),
+        };
         client
             .execute(
                 "SELECT pg_advisory_unlock(hashtext($1), hashtext($2))",
-                &[&self.relay_group_id, &pipeline_id],
+                &[&self.relay_group_id, &lock_key],
             )
             .await?;
         Ok(())
