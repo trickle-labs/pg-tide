@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.30.0 — Pipeline Dependency DAG, AsyncAPI Completeness & Pre-GA Final Hardening](#0300--pipeline-dependency-dag-asyncapi-completeness--pre-ga-final-hardening)
 - [0.29.0 — Pipeline Templates, Multi-Outbox Fan-In, Lifecycle Management & Backfill Completion](#0290--pipeline-templates-multi-outbox-fan-in-lifecycle-management--backfill-completion)
 - [0.28.0 — Delivery Receipts, Canonical Config & Native Claim-Check](#0280--delivery-receipts-canonical-config--native-claim-check)
 - [0.27.0 — Observability Expansion, CLI Ergonomics & Pre-GA Documentation Polish](#0270--2026-05-20--observability-expansion-cli-ergonomics--pre-ga-documentation-polish)
@@ -40,7 +41,60 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 
 ---
 
+## [0.30.0] — Pipeline Dependency DAG, AsyncAPI Completeness & Pre-GA Final Hardening
+
+Complex event-driven systems rarely consist of a single pipeline working in isolation — one pipeline loads raw data, another enriches it, a third aggregates it, and a fourth forwards it to a reporting dashboard. Until now, operators had to coordinate the startup and pacing of these pipelines by hand, accepting that a downstream consumer might start running before the upstream data it depends on was actually ready. This release introduces a declarative dependency graph for pipelines: operators state which pipelines must be idle, fully caught up, or ahead of a specific message count before a downstream pipeline is allowed to start. A `pg-tide dag show` command renders the entire graph as a Mermaid diagram so the ordering is visible at a glance, and `pg-tide dag check` detects circular dependencies and exits with an error before they can cause a silent data-ordering problem in production.
+
+This is the last feature release before pg_tide reaches its v1.0.0 general availability milestone, and it closes every remaining item on the production readiness checklist. Wire format decoders have been fuzz-tested with thousands of randomly mutated inputs to surface edge cases that no manually written test would ever reach. A sustained load test confirms the relay handles fifty thousand messages across ten outboxes without throughput degradation. High-availability failover is validated end-to-end by an integration test that crashes the active relay and asserts that a standby takes over without message loss. A complete migration guide and formal scope document give teams a clear picture of what is changing and what is not when they upgrade to v1.0.0, including advance warning that the older positional pipeline registration functions are now deprecated and will be removed in the GA release.
+
+v0.30.0 is the last feature release before v1.0.0 GA. It closes all remaining
+pre-GA items: pipeline dependency ordering, a complete AsyncAPI 3.0 catalog
+export, fuzz-tested wire format decoders, HA failover validation, and the v1.0.0
+scope finalization documents.
+
+**Pipeline Dependency DAG** — operators can now declare ordered relationships
+between pipelines using `tide.relay_pipeline_dep_add()`. A DAG-aware coordinator
+checks upstream consumer lag and trigger policies (`always`, `on_idle`,
+`on_offset_gte(N)`) before acquiring each pipeline, ensuring downstream consumers
+only start when upstreams are ready. The `pg-tide dag show/check/status`
+subcommands visualise and validate the graph.
+
+**AsyncAPI 3.0 Completeness** — `pg-tide asyncapi export` now emits delivery
+receipt channels for every pipeline, fan-in message schemas with `oneOf` for
+contributing outboxes, and template-sourced channel descriptions.
+
+**Pre-GA Hardening** — fuzz corpus covering all seven wire format decoders, a
+sustained-throughput load test (50 000 messages / 10 outboxes), an HA failover
+integration test, DAG integrity in `--self-test`, and the v1.0.0 migration guide
+and scope document.
+
+**Deprecation warnings active** — `tide.relay_set_outbox()` and
+`tide.relay_set_inbox()` positional forms now emit a PostgreSQL `WARNING` on
+every call. Migrate to `relay_set_outbox_v2()` / `relay_set_inbox_v2()` before
+v1.0.0 which removes the positional forms entirely.
+
+### SQL changes
+- New table: `tide.relay_pipeline_deps(upstream, downstream, trigger_policy, created_at)`
+- New function: `tide.relay_pipeline_dep_add(upstream, downstream, trigger_policy)`
+- New function: `tide.relay_pipeline_dep_drop(upstream, downstream)`
+- New function: `tide.relay_dag_check() → TABLE(cycle_path TEXT[])`
+
+### New CLI subcommands
+- `pg-tide dag show` — Mermaid diagram of the pipeline dependency graph
+- `pg-tide dag check` — cycle detection (exit 1 on cycle)
+- `pg-tide dag status` — per-edge upstream lag and gate state
+
+### Documentation
+- `docs/src/operations/v1-migration-guide.md` — v1.0.0 breaking changes and upgrade steps
+- `docs/src/v1-scope.md` — formal v1.0.0 feature freeze announcement
+
+---
+
 ## [0.29.0] — Pipeline Templates, Multi-Outbox Fan-In, Lifecycle Management & Backfill Completion
+
+This release is about making pg_tide feel like a polished product for teams running it in production every day. Rather than assembling pipelines from scratch each time, operators can now pick from a library of ready-made pipeline templates — pre-built recipes for common integration patterns like mirroring data to Kafka, sinking events into a data lake, or broadcasting to multiple services at once. A few commands and a handful of overrides are all it takes to go from zero to a running pipeline, dramatically cutting the time it takes to connect a new service or data destination. Five templates ship out of the box, and teams can add their own to the library for reuse across projects.
+
+For teams that need to aggregate events from many sources into a single destination, this release introduces fan-in pipelines that merge messages from multiple outboxes into one coordinated stream with configurable merge strategies. Operators also gain a complete audit trail of every configuration change ever made to a pipeline, plus the ability to set pipelines to automatically resume after a pause — so a brief connectivity blip no longer requires a manual intervention in the middle of the night. Large backfill jobs round out the release: operators can now pause, resume, or cancel them and watch progress tick toward completion with a linear estimated-completion time displayed in real time.
 
 v0.29.0 delivers four major capability areas for production operators: a built-in pipeline template library for fast pipeline instantiation, multi-outbox fan-in coordination, full pipeline lifecycle history and auto-resume, and a complete relay-side backfill worker with progress tracking and CLI controls. All changes are backward-compatible.
 
@@ -85,6 +139,10 @@ v0.29.0 delivers four major capability areas for production operators: a built-i
 ---
 
 ## [0.28.0] — Delivery Receipts, Canonical Config & Native Claim-Check
+
+Knowing that a message was published is useful; knowing that it actually arrived at its destination is transformational. Version 0.28.0 introduces delivery receipts — a permanent, queryable record written every time the relay successfully delivers a message to a sink. Whether you are auditing a financial transaction stream, debugging a missed notification, or satisfying a compliance requirement, you can now look up exactly when and where each message was delivered. A new Prometheus metric makes it equally easy to alert on receipt lag before it becomes a problem, and the `pg-tide doctor` command now verifies that the relay has the privileges it needs to write receipts before you deploy.
+
+This release also makes configuration management dramatically simpler for teams running pg_tide at scale. The relay can now run entirely off the SQL catalog — no TOML files to distribute, no configuration drift between pods, just a single source of truth in the database. A migration helper turns an existing TOML file into the SQL commands needed to populate the catalog, and the upgrade takes minutes. Finally, applications that occasionally need to publish very large payloads no longer need a separate infrastructure layer: pg_tide transparently stores oversized messages in PostgreSQL's built-in large-object storage and fetches them at delivery time, then reclaims the storage automatically after the message is acknowledged.
 
 v0.28.0 completes end-to-end delivery accountability for every outbox message,
 introduces catalog-first configuration as a first-class deployment mode, and
@@ -144,6 +202,10 @@ tables and functions are additive.
 ---
 
 ## [0.27.0] — 2026-05-20 — Observability Expansion, CLI Ergonomics & Pre-GA Documentation Polish
+
+As pg_tide approaches its first production-ready release, this version focuses on giving operators a clear, real-time picture of what is happening inside the relay. The Grafana dashboard grows substantially: there are now dedicated views for pipeline health at a glance, the slowest sinks ranked by latency, connection pool utilisation, and per-tenant breakdowns — all filterable from a single dropdown. Five alerting rules come pre-written so that teams can start monitoring for common problems immediately after deploying, without needing to author PromQL from scratch. Alerts cover paused pipelines, high consumer lag, dead-letter queue depth, write failures, and connection pool saturation.
+
+The command line gets safer too: the relay now validates URLs and tenant identifiers before accepting them, surfacing clear error messages at startup instead of confusing failures deep inside a running pipeline. The API for describing outbox and inbox pipelines gains an optional human-readable description field, which feeds directly into the auto-generated AsyncAPI specification — making it straightforward to document what each event stream carries without maintaining a separate schema registry. A new mdBook variable keeps version numbers consistent across all documentation pages, and a new runbook walks operators through every step of managing partitioned outbox tables in production.
 
 v0.27.0 completes the observability surface promised by v0.24.0, delivers the
 `worker_inner()` decomposition with full unit-test coverage, hardens the CLI
@@ -228,6 +290,10 @@ None.
 
 ## [0.26.0] — 2026-05-20 — Partition Safety, Defence-in-Depth & Test Coverage Completion
 
+With partitioned outbox tables arriving in v0.25.0, this release shores up the safety rails around that feature. Two critical edge cases that could have silently broken a production database during a partition conversion are now caught and rejected before any data is touched: one guards against outbox names that would exceed PostgreSQL's 63-byte identifier length limit, and another ensures that converting a shared outbox table does not accidentally disrupt every other outbox running on the same database. Both protections raise a clear, descriptive error so operators understand exactly what needs to change before retrying — and an explicit opt-in parameter is available for operators who have audited the impact and want to proceed deliberately.
+
+Beyond correctness, this release sweeps up a collection of code-quality issues identified through internal audits: the last few places in the codebase where a programming error could cause a silent crash rather than a clean error have been replaced with proper error propagation. New integration tests verify that the PostgreSQL inbox sink correctly round-trips messages and that the dead-letter queue behaves correctly when writes fail under fault-injection conditions. A new CI job compares fresh database installs against sequentially upgraded ones and fails if the schemas diverge — permanently closing the door on silent schema drift between upgrade paths.
+
 v0.26.0 resolves all findings from overall-assessment-5 that were scheduled for
 this release: two P1 correctness/security gaps in partition table naming and the
 global partition swap, four P2 code-quality items (`expect()` elimination and
@@ -303,6 +369,10 @@ None.
 ---
 
 ## [0.25.0] — 2026-05-20 — Outbox Table Partitioning, Multi-Tenant Relay Completion & Pre-GA Hardening
+
+As outbox tables grow over time, query performance can suffer without a strategy for keeping old data under control. This release introduces declarative table partitioning: when creating an outbox you can choose whether it should be split into daily, weekly, or monthly partitions automatically. Old partitions can be dropped on a schedule rather than running slow bulk deletes, and the relay's sweep command is aware of the partition strategy so it cleans up the right tables. Teams running busy event streams will see significantly faster query times and lower storage growth over time, and a live migration function lets existing deployments convert their outboxes to partitioned tables with minimal relay downtime and no data loss.
+
+Multi-tenant deployments become first-class in this release. The relay coordinator now enforces tenant ownership at runtime, so a relay instance configured for one tenant will never accidentally pick up or interfere with another tenant's pipelines — even when both share the same PostgreSQL database. Advisory locks are namespaced per tenant so two tenants with identically named pipelines can coexist without conflict. A new `--self-test` flag is designed for Kubernetes readiness probes: the relay connects to PostgreSQL, checks TLS, acquires an advisory lock, verifies the schema is up to date, and exits with a clear success or failure code so the cluster knows it is safe to route traffic before the relay has processed a single message.
 
 v0.25.0 implements ADR-006 declarative outbox table partitioning, completes
 the multi-tenant relay groups runtime that has been catalog-ready since v0.14.0
@@ -401,6 +471,10 @@ None.
 
 ## [0.24.0] — 2026-05-19 — Code Quality, Performance & Helm Production Maturity
 
+This release is the kind that keeps a production system healthy long-term. Several performance improvements reduce the number of database round-trips that happen for routine operations like checking outbox status or publishing a message, with the most heavily called code paths now requiring half as many queries as before. Log volume at busy deployments drops dramatically by reserving informational messages for meaningful state changes rather than printing a line for every message processed — at fifty active pipelines polling once per second, that is over four million log lines per day reclaimed. The coordinator is also decomposed into smaller, independently testable units, making the codebase substantially easier to reason about and maintain.
+
+On the Kubernetes side, three production-readiness templates are added to the Helm chart: a PodDisruptionBudget that prevents Kubernetes from evicting all relay replicas simultaneously during a rolling upgrade, a ServiceMonitor that auto-wires the Prometheus metrics endpoint to the kube-prometheus-stack without any manual scrape configuration, and a HorizontalPodAutoscaler that scales the relay out under load while the advisory lock system ensures each pipeline is owned by exactly one replica at a time. The release also publishes the formal architecture decision record for outbox table partitioning, giving teams a clear reference document before the feature lands in the next version.
+
 v0.24.0 lands every P2/P3 audit finding accumulated over four assessment
 cycles, ships three new Helm production-maturity templates, and publishes
 ADR-006 — the design contract for outbox table partitioning that will be
@@ -492,6 +566,10 @@ None.
 
 ## [0.23.0] — 2026-05-19 — Correctness, Real TLS & Full Migration Coverage
 
+Every release aims for correctness, but this one delivers it with unusual urgency. A critical bug introduced in v0.13.0 was silently preventing all cross-database inbox delivery — messages were being written to columns that do not exist on any real inbox table, meaning any pipeline routing events between two different PostgreSQL instances had been failing at runtime since May. This release fixes the column mapping, switches to efficient batch inserts, and adds a regression test that would have caught the issue immediately. Existing cross-database pipelines should be reviewed and any accumulated failures replayed using the dead-letter queue tooling provided in earlier releases.
+
+Real TLS support arrives in this release: when `sslmode=require` or stronger is configured, the relay now establishes a genuine encrypted connection using the platform's OpenSSL stack. Migration coverage is extended through v0.22.0 so the CI suite verifies every upgrade path in the project's history. An important safeguard is added to consumer offset tracking: a database constraint now prevents any consumer — including a buggy one — from rolling back an already-committed offset, protecting delivery guarantees. When an intentional rewind is needed for incident recovery, a new admin function provides that capability in a controlled, auditable way that requires explicit confirmation.
+
 v0.23.0 addresses every P0/P1/P2 finding from overall-assessment-4, completing
 the audit remediation cycle before v1.0.0 GA.  The headline changes are: a
 critical fix to `PgInboxSink` that restores cross-database inbox delivery (broken
@@ -560,6 +638,10 @@ None.
 ---
 
 ## [0.22.0] — 2026-05-19 — DuckLake Bidirectional Flow & Ecosystem Surface
+
+Data lakes have traditionally been write-only destinations: events flow in from operational systems and analysts query the accumulated history. This release breaks that pattern by opening a reverse channel — a DuckLake data lake can now be a source of events that flow back into pg_tide inboxes, triggering application logic whenever new data arrives. Any DuckDB-compatible engine can write to the lake and have those writes automatically propagated to application services, creating a genuinely bidirectional data pipeline with PostgreSQL as the coordination layer and with the full delivery guarantees and deduplication that pg_tide provides on every other pipeline.
+
+The DuckLake integration also receives a full ecosystem surface in this release. A new `pg-tide ducklake` CLI family makes it easy to inspect lake state, check snapshot progress, and debug offset mapping without writing SQL. A single `docker compose up` command spins up a complete demonstration environment including PostgreSQL, object storage, the relay, a DuckDB shell, and a live Grafana dashboard — ready to explore in minutes. Five written tutorials and four conference-ready demo scripts provide everything a team needs to evaluate, adopt, or present the DuckLake integration from first principles to production deployment.
 
 v0.22.0 completes the pg-tide × DuckLake integration by opening the reverse
 direction (DuckLake → pg-tide inbox), adding cross-lake replication helpers,
@@ -651,6 +733,10 @@ application services via the familiar pg-tide inbox API.
 
 ## [0.21.0] — 2026-05-19 — DuckLake Streaming, Inlining & Schema Evolution
 
+Writing events to a data lake works beautifully for high-volume batch workloads, but streaming use cases have a well-known weakness: every small write creates a new Parquet file, and thousands of tiny files degrade query performance rapidly. This release solves the small-files problem by writing small batches directly into PostgreSQL as inlined data rather than flushing them to object storage. The data is still fully queryable by DuckDB with complete time-travel support; it simply lives in a PostgreSQL table until a flush operation merges it into larger, efficient Parquet files. Streaming throughput increases and object storage costs fall without any change to how applications publish events, and a DLQ archive option keeps the operational dead-letter queue table small while preserving unlimited auditable history in the lake.
+
+Schemas are rarely static, and this release makes the relay's DuckLake sink intelligent about the difference between a safe change — adding a new field to a JSON payload — and a potentially disruptive one — removing or renaming a field. New fields are automatically registered in the DuckLake catalog so DuckDB can see them immediately. Breaking changes trigger a configurable policy: pause the pipeline for operator review, route affected messages to the dead-letter queue, or log a warning and continue. A new snapshot-to-offset mapping table enables precise time-travel replay from pg_tide consumer offsets, so teams can ask what the lake looked like when the system processed a specific offset and get an exact answer they can use in a DuckDB query.
+
 v0.21.0 tackles the two hardest problems for streaming workloads on data lakes:
 the small-files problem and schema drift.  DuckLake's data inlining feature
 stores small writes directly in PostgreSQL — zero Parquet files created,
@@ -740,6 +826,10 @@ preserving unlimited auditable history.
 
 ## [0.20.0] — 2026-05-19 — DuckLake Native Catalog Integration
 
+Since v0.10.0, pg_tide has been able to write event data as Parquet files to object storage and track snapshots in a proprietary catalog table. This release replaces that proprietary catalog with the real DuckLake v1.0 protocol — the same catalog schema that DuckDB's native `ATTACH` command understands. The moment this release is deployed, any DuckDB instance anywhere on the network can attach to the same PostgreSQL database and query the complete event history as a first-class data lake, with time-travel, filter pushdown, and full schema evolution support — no extra software, no data migration, no glue code required. Column statistics are written alongside each data file so DuckDB can prune irrelevant Parquet files during query planning without reading them, which is critical for large event archives with selective queries.
+
+The relay's catalog writes are fully atomic: for each batch of events, a single PostgreSQL transaction creates the snapshot entry, registers the Parquet data file, writes column statistics, and updates aggregate table statistics — everything commits together or nothing does. For teams where the relay and the pg_tide extension share the same PostgreSQL instance, enabling `atomic_lake_writes` extends that atomicity all the way from outbox publish to data lake commit, delivering exactly-once semantics from OLTP transaction to analytical query. A `pg_notify` call after each commit allows downstream services to subscribe for near-real-time lake change notifications without polling, and a helper SQL function generates the correct DuckDB `ATTACH` statement pre-filled with the right connection details.
+
 v0.20.0 upgrades the DuckLake relay sink to speak the real DuckLake v1.0
 catalog protocol, making all data written by the pg-tide relay immediately
 queryable by DuckDB — with no glue code, no extra tooling, and no migration.
@@ -808,6 +898,10 @@ evolution support.
   UPDATE` now produce identical catalog schemas.
 
 ## [0.19.0] — 2026-05-14 — Supply Chain, Observability & Operational Docs
+
+Deploying software responsibly means being able to answer the question of what is running in your environment and whether it is safe. This release adds SBOM generation to every release, attaching a machine-readable inventory of all software components in the CycloneDX format — a requirement for many enterprise security programmes and a prerequisite for SOC 2 and FedRAMP compliance processes. Every Docker image is now scanned by Trivy before release, and any image containing an unfixed critical vulnerability blocks the release rather than silently shipping. Images and release binaries are signed with keyless Sigstore signatures, so operators can verify the provenance of anything they deploy without managing their own signing keys.
+
+The relay gains a `/healthz` endpoint matching the standard Kubernetes liveness probe convention, making it trivial to integrate into any cluster health check configuration. The Grafana dashboard grows a Coordinator row showing how many pipelines are currently owned, how long each reconciliation cycle takes, and how errors are distributed across pipelines — the three numbers that answer whether a relay instance is healthy at a glance. A fully commented example TOML configuration file is baked into Docker images so operators always have a starting point within reach without consulting external documentation. Four new operations runbooks cover the scenarios that cause the most support requests: crash recovery, dead-letter queue draining, schema migration without downtime, and rolling relay upgrades.
 
 v0.19.0 completes the supply-chain story with SBOM generation and Trivy
 vulnerability scanning, adds the `/healthz` Kubernetes-standard liveness
@@ -882,6 +976,10 @@ Four new runbooks added under `docs/src/operations/`:
 
 ## [0.18.0] — 2026-05-13 — Security Completeness, LISTEN Hot-Reload & API Polish
 
+Server-side request forgery is a class of vulnerability where an application can be tricked into making network requests to internal infrastructure on an attacker's behalf. This release extends the SSRF protection that was introduced for webhook sinks in v0.13.0 to cover every HTTP-based sink in the relay: ClickHouse, Elasticsearch, and Arrow Flight now refuse to connect to loopback addresses, link-local ranges, private networks, and cloud metadata endpoints by default. Credentials in connection strings are no longer exposed in the process list: a new `--postgres-url-file` option reads the database URL from a file on disk, keeping sensitive strings out of system logs, monitoring tools, and container orchestrator dashboards.
+
+The SQL API receives two quality-of-life improvements: the outbox pipeline registration function now accepts a single JSON object — mirroring the inbox equivalent — making it much easier to script pipeline setup from migrations or infrastructure-as-code. The `relay_enable()` and `relay_disable()` functions now return a boolean indicating whether they found and changed a pipeline, enabling scripts to detect typos in pipeline names without a separate existence check. Under the hood, the relay binary is reorganised into focused command modules so that each subcommand lives in its own file, making the codebase substantially easier to navigate and reducing the risk that a change to one subcommand accidentally affects another.
+
 v0.18.0 completes the SSRF guard for all HTTP-based sinks, adds a
 `--postgres-url-file` flag for secure credential injection, polishes the
 SQL API with `relay_set_outbox_v2()` and boolean returns for
@@ -939,6 +1037,10 @@ SQL API with `relay_set_outbox_v2()` and boolean returns for
 ---
 
 ## [0.17.0] — 2026-05-12 — Catalog Integrity, DLQ Reliability & Contract Correctness
+
+A dead-letter queue is only useful if you can trust that failed messages actually end up there. This release changes the relay's behaviour when a DLQ write fails: instead of silently discarding the failure and carrying on, the affected pipeline is now paused immediately. A new Prometheus metric counts permanent DLQ write failures so the silence becomes audible — operators can alert on it and investigate before messages are lost. The `pg-tide doctor` pre-flight check also gains three new validations: whether the relay role can write to the DLQ table, whether an advisory lock is available, and whether LISTEN permission has been granted. Together these make it possible to catch misconfigured deployments before they silently swallow events.
+
+Two correctness issues lurking in the SQL functions are fixed in this release. The `grant_publish` and `revoke_publish` security functions were susceptible to search-path injection — an attacker who could control their own PostgreSQL search path could potentially redirect these privileged functions to call their own code instead of the intended implementation. The fix pins both functions to the `tide` schema explicitly. Separately, several shadow copies of SQL functions that existed in upgrade scripts but were never cleaned up are removed, eliminating a class of subtle upgrade-path bugs where the wrong version of a function could be called depending on how the extension was installed or upgraded.
 
 v0.17.0 closes a set of correctness and reliability gaps identified in the
 v0.16.0 review cycle. There are no breaking SQL API changes — all changes are
@@ -1011,6 +1113,10 @@ backward-compatible at the SQL level.
 ---
 
 ## [0.16.0] — 2026-05-11 — Developer Experience & Observability
+
+Writing deployment scripts for database extensions typically involves error-prone boilerplate to handle the case where an object already exists. This release introduces `outbox_create_if_not_exists()`, which returns a simple true or false indicating whether the outbox was freshly created or was already there — no exception handling, no conditional logic, no repeated code. A matching variant for inbox pipelines makes scripted deployments equally clean. A new `pg-tide status` command prints a formatted table of all configured pipelines with their current consumer lag at a glance, so operators can get a health snapshot without connecting a monitoring tool or writing a SQL query.
+
+Three new metrics expose the coordination internals that were previously a black box: how many pipelines each relay instance currently owns, how long each reconciliation cycle takes, and how errors are distributed between transient network problems and permanent configuration failures. Matching OpenTelemetry spans are emitted for every major processing step — filtering, routing, dead-letter queue writes, schema evolution checks, and backoff sleeps — so distributed traces show exactly where time is being spent in the message pipeline. Five architecture decision records are published that formalise the key design choices behind pg_tide, giving teams confidence that the system's behaviours are intentional and documented rather than accidental.
 
 v0.16.0 focuses on developer ergonomics, deeper observability, idempotent SQL
 helpers, property-based testing, and hardened CI. There are no breaking API
@@ -1137,6 +1243,10 @@ in `docs/adr/`:
 
 ## [0.15.0] — 2026-05-10 — TLS Enforcement, Resilience & Outbox Sweep
 
+Accidental plaintext database connections are one of the most common security misconfigurations in production systems — they are invisible until someone is already looking at the traffic. This release changes the relay to fail closed: if `sslmode=require` is configured and the connection cannot be established securely, the relay exits with an error rather than quietly downgrading to plaintext. Secret values in pipeline configurations — API keys, passwords, tokens — are now redacted in log output before the configuration is emitted, so they cannot leak through centralised logging systems into dashboards or incident tickets.
+
+The relay becomes significantly more resilient in this release. Workers that crash or panic are automatically detected and restarted by the coordinator. Database errors back off exponentially with jitter rather than hammering a struggling database at full speed. A connection pool separates coordinator metadata operations from pipeline workers so a single slow query cannot stall the entire relay. A new `pg-tide sweep` command can be called from a cron job or Kubernetes CronJob to delete consumed, expired outbox messages — keeping the outbox table from growing unbounded over time without requiring application-level cleanup logic or database administrator intervention.
+
 v0.15.0 hardens the relay binary with fail-closed TLS enforcement, secret
 redaction in logs, transient vs. permanent error classification, worker crash
 detection, exponential backoff, deadpool connection pooling, and a new
@@ -1206,6 +1316,10 @@ and raw outbox payload mode complete the feature set.
 ---
 
 ## [0.14.0] — 2026-05-09 — Replay Workbench, CloudEvents, Tenant Scale & Managed Backfill
+
+When something goes wrong in an event-driven system — a consumer bug, a deployment error, an infrastructure hiccup — the ability to replay events is what separates a recoverable incident from a data loss event. This release delivers a complete replay workbench: operators can preview which messages would be replayed before committing, roll back a consumer's read position to a known-good point, and resolve or requeue individual failed messages from the dead-letter queue — all without taking the system offline. The CloudEvents 1.0 wire format makes pg_tide messages interoperable with any platform that speaks the standard event envelope, and a CLI command generates an AsyncAPI 3.0 document from catalog metadata for documentation and tooling integration.
+
+Teams running pg_tide to serve multiple customers from a single database instance get first-class multi-tenancy in this release. Row-level security policies ensure that each tenant can only see and modify their own pipelines, and per-tenant labels on every Prometheus metric make it straightforward to build per-customer observability dashboards. For long-running data migrations, cataloged backfill jobs provide pause, resume, and fleet-wide status tracking — so a backfill that will take hours can be safely paused for a maintenance window and resumed without losing its place, and operators have a single view of all running jobs and their estimated completion times.
 
 v0.14.0 adds four major capability areas: a SQL + CLI replay workbench for
 incident recovery, CloudEvents v1.0 wire format with AsyncAPI export, a
@@ -1297,6 +1411,10 @@ New objects added by the migration:
 
 ## [0.13.0] — 2026-05-08 — Security Hardening, Reliability & Performance
 
+Production deployments need clear answers to two questions: who is allowed to publish events to this outbox, and what happens when the downstream system stops accepting them? This release answers both. Per-outbox publisher ACLs let database administrators grant and revoke the right to publish to specific outboxes at the role level — the same model PostgreSQL uses for table privileges. SSRF protection on webhook sinks prevents the relay from being used as a proxy to reach internal network resources. TLS and mutual TLS connection support rounds out the security surface, and a supply-chain audit via cargo-deny checks every dependency for known vulnerabilities and license compliance on every build.
+
+Schema evolution — the reality that the shape of events changes as applications develop — is handled gracefully for the first time in this release. The relay computes a fingerprint of each pipeline's message payload schema and detects when new fields appear or existing ones disappear. A configurable policy determines what happens: log a warning and continue, pause the pipeline for operator review, or route affected messages to the dead-letter queue. Batch inserts for the PostgreSQL inbox sink reduce the number of database round-trips per relay cycle by an order of magnitude at typical batch sizes, and OpenTelemetry spans begin covering the full processing pipeline so distributed traces are available from the moment you enable the feature.
+
 v0.13.0 is a focused security, reliability, and performance release. It
 introduces publisher ACLs for per-outbox publish authorization, SSRF guards for
 webhook sinks, TLS/mTLS connection support, schema evolution guardrails, batch
@@ -1383,6 +1501,10 @@ New objects added by the migration:
 
 ## [0.12.0] — 2026-05-05 — Contract Correctness & Operational Tooling
 
+A relay that cannot deliver messages because the SQL schema and the relay binary disagree on column names is not much use. This release aligns every layer of the system so that configuring a pipeline through the SQL API actually produces a running, delivering relay worker. The inbox sink columns now match the tables that `inbox_create()` actually creates. Consumer offset tracking uses typed columns that both sides agree on. Publishing to a disabled outbox raises a clear error instead of silently succeeding. These fixes make the overall system work end-to-end for the first time, turning pg_tide from a collection of well-designed components into a complete, working product.
+
+With the core functionality working, this release adds the tooling operators need to trust it in production. `pg-tide doctor` runs a comprehensive pre-flight check and reports whether the database is correctly configured, the required schema exists, and pipelines are properly registered — with a clear exit code for use in CI and deployment pipelines. `pg-tide validate-config` loads a named pipeline and attempts to instantiate its source and sink without processing any messages, making it the quickest way to verify a configuration change before it reaches a production relay. A SQL migration test verifies the entire upgrade path from v0.1.0 onwards on every CI run, ensuring no future upgrade introduces unexpected regressions.
+
 v0.12.0 fixes the critical seam breaks identified in the overall assessment
 between the SQL extension API, the relay catalog format, and runtime
 configuration. It also adds operational CLI tools, tightens identifier
@@ -1466,6 +1588,10 @@ validation, and aligns documentation with actual behavior.
 ---
 
 ## [0.11.0] — 2026-05-05 — Pluggable Wire Formats: Debezium, Maxwell, Canal, Custom CDC JSON
+
+Change data capture systems speak many different dialects. Debezium, the most widely deployed CDC tool in the JVM ecosystem, uses a specific message envelope format. MySQL's Maxwell and Alibaba's Canal use their own. Applications built on Kafka Connect have come to depend on these formats. This release makes pg_tide fluent in all of them: a new wire format abstraction decouples the message envelope from the transport layer, so a Kafka topic that was previously only readable by Debezium consumers can now deliver into a pg_tide inbox — and a pg_tide outbox can publish events in Debezium format so existing consumers do not need to change their deserialization code.
+
+The wire format system is designed for extensibility and symmetry. Each format implements an encode-decode pair, so the same configuration works in both the forward direction — outbox to Kafka to a Debezium consumer — and the reverse direction — Debezium producer to Kafka to pg_tide inbox. Tombstone emission for log-compacted Kafka topics is built in. A custom CDC JSON format handles systems that do not use any of the named formats by accepting configurable field-path mappings so teams can express their own schema. Schema evolution detection runs on the decode side, surfacing alerts when inbound message shapes change in ways that could break downstream consumers before they have a chance to fail silently.
 
 v0.11.0 introduces a symmetric `WireFormat` trait that decouples the relay's
 transport layer (Kafka, NATS, Redis, etc.) from the envelope format, enabling
@@ -1582,6 +1708,10 @@ transport code.
 
 ## [0.10.0] — 2026-05-07 — Analytics Sinks: ClickHouse, MongoDB, Snowflake, BigQuery, Iceberg, Delta Lake, DuckLake
 
+Transactional databases and analytical platforms have traditionally lived in separate worlds connected by fragile ETL pipelines that require dedicated infrastructure, careful maintenance, and deep expertise to operate. This release eliminates that gap by giving the relay direct delivery capabilities to every major analytical platform: ClickHouse for real-time analytics, MongoDB for document workloads, Snowflake and BigQuery for cloud data warehouses, Apache Iceberg and Delta Lake for open table formats on object storage, and DuckLake for the new DuckDB-native lake format. Events published to a pg_tide outbox can now flow directly into any of these systems without an intermediate queue, custom connector, or transformation layer.
+
+All seven analytics sinks are designed for operational reliability, not just functional correctness. Messages are delivered in batches to minimise API call overhead. Where the platform supports it, the relay uses idempotency keys to safely retry failed deliveries without creating duplicates. Column statistics are written alongside data files for Iceberg and DuckLake, enabling query engines to prune irrelevant Parquet files and dramatically speed up analytical queries over large event archives. Each sink is a separate optional feature that can be included or excluded from the binary, keeping image sizes and attack surfaces small for deployments that do not need the full suite.
+
 v0.10.0 delivers seven analytics sink backends for the relay, enabling
 pg_tide to act as the bridge between your PostgreSQL transactional tables
 and every major analytical data platform.
@@ -1665,6 +1795,10 @@ required. The `pg_tide--0.9.0--0.10.0.sql` migration file is a no-op.
 
 ## [0.9.0] — 2026-05-06 — Connector Ecosystem Foundation (Singer, Airbyte, Fivetran)
 
+The Singer, Airbyte, and Fivetran ecosystems collectively offer hundreds of pre-built connectors to databases, SaaS APIs, and data warehouses. This release lets pg_tide speak all three protocols, immediately unlocking that entire connector library as both sources and sinks. A Singer tap can ingest data from Salesforce and have it arrive in a pg_tide inbox with automatic state tracking and schema drift detection. An Airbyte source connector can stream data from any of its supported platforms into a pg_tide pipeline without custom code. Fivetran HVR webhook payloads are verified with proper signature validation and ingested idempotently.
+
+State management — knowing where each connector left off so it can resume incremental replication after a restart — is handled automatically. Singer STATE messages and Airbyte STATE objects are persisted in the pg_tide catalog and reloaded on relay restart, so connectors do not start over from the beginning every time the relay restarts or a pod is rescheduled on a new node. Schema drift detection surfaces when a connector's output schema changes in a way that could break downstream consumers, with the event logged or raised as an error according to the configured policy. This release also ships the first Grafana dashboard, giving operators a visual overview of relay health from the moment they deploy.
+
 v0.9.0 brings first-class support for the three dominant open connector
 ecosystems — Singer, Airbyte, and Fivetran — plus a Grafana/Perses relay
 health dashboard.
@@ -1722,6 +1856,10 @@ health dashboard.
 ---
 
 ## [0.8.0] — 2026-05-05 — Notification Sinks & Apache Arrow Flight
+
+Not every message needs to end up in a database or a data lake — some need to wake a person up. This release adds native support for Slack, Discord, and PagerDuty as relay sinks. Database events can now trigger formatted Slack messages, Discord embeds with colour-coded operations, or PagerDuty incidents with proper deduplication using the relay message's dedup key. The formatting is opinionated and useful out of the box: inserts show up in green, deletes in red, and every notification carries enough context — subject, operation type, dedup key, and payload — to understand what happened without opening a separate tool or digging through logs.
+
+For teams building high-throughput analytical pipelines, Apache Arrow Flight support enables columnar data transfer at speeds that HTTP-based sinks cannot match. Messages are encoded as Arrow RecordBatches and pushed via the standard `DoPut` gRPC RPC, compatible with Apache Arrow Flight servers, DataFusion, and a growing ecosystem of analytical query engines. The connection is established lazily and reused across batches, so the overhead of connection setup does not accumulate over a long-running relay. Bearer token authentication on the gRPC metadata is all that is needed to connect to secured Arrow Flight services, keeping the configuration simple while maintaining security.
 
 v0.8.0 adds four new sinks to the relay: three notification backends
 (Slack, Discord, PagerDuty) and the high-performance Apache Arrow Flight /
@@ -1821,6 +1959,10 @@ descriptor_path = "pg-tide"       # optional, default "pg-tide"
 
 ## [0.7.0] — 2026-05-06 — Production-Grade Relay Operations
 
+A relay that stops and waits indefinitely when a downstream system is unavailable is not ready for production. This release adds the full suite of reliability features that production deployments require: a dead-letter queue so failed messages are never silently lost, a circuit breaker that pauses retries when a sink is repeatedly failing, exponential backoff between retry attempts to avoid overwhelming a recovering system, and per-pipeline rate limiting via a token bucket. Together these mechanisms transform the relay from a basic delivery loop into an operationally sound service that behaves predictably under stress and gives operators clear signals about the state of every pipeline.
+
+Message routing and transformation capabilities arrive in this release. JMESPath expressions let operators filter out messages that do not match a condition before they reach the sink, and reshape message payloads to match a destination's expected format — all with configuration rather than code changes. The Confluent Schema Registry integration with Avro serialisation makes pg_tide a first-class participant in schema-governed Kafka ecosystems. SIGHUP config reload means that updating a pipeline's configuration takes effect without restarting the process, and a dry-run mode lets operators verify transform logic against live data before it modifies anything downstream.
+
 v0.7.0 delivers the full suite of production-readiness features for the relay:
 dead-letter queue, JMESPath transforms, content-based routing, rate limiting,
 circuit breaker, Confluent Schema Registry integration, OpenTelemetry tracing,
@@ -1890,6 +2032,10 @@ webhook signature verification, SIGHUP config reload, and dry-run/replay modes.
 
 ## [0.6.0] — 2026-05-05 — MQTT v5, Azure Event Hubs & Object Storage (JSONL + Parquet)
 
+The IoT and industrial automation worlds speak MQTT, and this release adds full bidirectional MQTT v5 support to pg_tide. The relay can publish outbox events to broker topics with configurable quality-of-service levels, or subscribe to topic filters and write incoming messages to a pg_tide inbox with automatic deduplication. Azure Event Hubs integration brings the same bidirectional capability to the Azure ecosystem: outbox events can be streamed to Event Hubs namespaces, and Event Hubs consumer groups can feed data back into pg_tide inboxes with per-partition offset tracking and idempotent delivery.
+
+Object storage support rounds out this release and unlocks use cases where the destination is a data lake rather than a messaging system. The relay can buffer outbox messages and flush them to Amazon S3, Google Cloud Storage, or Azure Blob Storage as either JSONL files for universal compatibility or Apache Parquet files for analytical workloads. Date-based partitioning places files under year, month, and day prefixes that are natively understood by AWS Glue, BigQuery external tables, Hive Metastore, and most data lake cataloguing tools — making it trivial to build incrementally-loaded data warehouse tables on top of a pg_tide outbox without any additional transformation infrastructure.
+
 v0.6.0 adds three major backend families, completing the relay's IoT, Azure,
 and data-lake integration story. Every new backend ships with both forward-sink
 and reverse-source support where applicable, plus full integration tests.
@@ -1944,6 +2090,10 @@ v0.6.0 adds no DDL changes. All new backends are configured via the existing
 ---
 
 ## [0.5.0] — 2026-05-04 — Cloud Provider Parity: Pub/Sub, Kinesis, Azure Service Bus & Elasticsearch
+
+Every major cloud provider now has a first-class integration in pg_tide. Google Cloud Pub/Sub, Amazon Kinesis Data Streams, and Azure Service Bus are all supported as both forward sinks and reverse sources — messages flow out from PostgreSQL to the cloud, and messages flowing into the cloud can be routed back into pg_tide inboxes with deduplication guaranteed. This symmetry means pg_tide can sit at the centre of a hybrid architecture, acting as the coordination layer between on-premises databases and cloud-native event streams without any custom adapter code or additional middleware.
+
+Elasticsearch and OpenSearch support completes the analytics side of this release. Outbox messages are bulk-indexed with the relay message's dedup key as the document ID, making redeliveries safe and idempotent even if the relay restarts mid-batch. The index name supports template variables so events from different streams land in appropriately named indices without configuration changes for each new stream. With this release, pg_tide has first-class integrations with the five most commonly deployed cloud messaging and search platforms, making it a viable choice for any team that has standardised on one of the major cloud providers.
 
 v0.5.0 delivers cloud provider parity for the relay binary. Every major cloud
 messaging platform is now supported as both a forward sink and (where
@@ -2001,6 +2151,10 @@ v0.5.0 adds no DDL changes. All new backends are configured via the existing
 ---
 
 ## [0.4.0] — 2026-05-04 — Relay Completion: Tier 2 Sinks, Full Reverse Mode & Integration Tests
+
+This release marks the completion of the relay binary. Every forward sink and every reverse source described in the project roadmap is now implemented, tested against a real service running in a container, and enabled by default. Redis Streams, Amazon SQS, a direct PostgreSQL inbox sink, and RabbitMQ join the existing forward sinks, completing coverage of the most commonly deployed messaging systems. All eight reverse sources — from NATS JetStream and Kafka through to a simple stdin reader for testing and one-shot imports — are now fully wired. The relay can move events in both directions between PostgreSQL and any supported messaging system with no skipped or stubbed tests.
+
+The integration test suite is particularly noteworthy in this release: instead of relying on mocks or stubs, every backend is tested against a real instance of its target service running in a Docker container that is spun up and torn down automatically as part of CI. RabbitMQ 4, Redis 7, and NATS are all tested against their actual wire protocols. The switch from the heavyweight LocalStack AWS emulator to a lightweight SQS-compatible server cuts SQS test startup time from around thirty seconds to under two, a meaningful improvement when the test suite runs on every pull request. Dedup key stability across relay restarts is verified for every source backend.
 
 v0.4.0 completes the relay binary. Every forward sink and every reverse source
 described in the roadmap is now implemented, tested, and enabled. The relay can
@@ -2095,6 +2249,10 @@ against a real service running in a Docker container managed by testcontainers:
 ---
 
 ## [0.3.0] — 2026-05-04 — Relay Run Loop, Secret Interpolation & pg-tide Branding
+
+The relay binary has had the ability to read pipeline configurations from PostgreSQL since v0.1.0, but until this release it would load the configuration and then do nothing with it. This release implements the complete coordinator run loop: pipeline workers are spawned for every enabled pipeline the relay wins an advisory lock on, and the relay automatically picks up new pipelines or restarts stopped workers without any intervention. Multiple relay instances can run simultaneously and will divide the pipeline workload between themselves, so a relay pod going down does not drop message delivery — another instance takes over its pipelines automatically, typically within a single reconciliation interval.
+
+Credentials should never appear in log files or monitoring dashboards, but they frequently need to appear in pipeline configurations. This release solves the problem with secret interpolation: configuration values can contain tokens that are replaced at runtime with environment variable values, or tokens that read their value from a file — the standard pattern for Kubernetes secret mounts and Docker secrets. Resolved values are never written to logs or metrics. The relay binary is also renamed from its pg-trickle heritage to `pg-tide` in this release, with all environment variables, help text, and documentation updated to the new branding that will carry forward through production release.
 
 The relay binary is now fully operational. Previously it would start, load
 pipeline configuration from PostgreSQL, and then do nothing. This release
@@ -2206,7 +2364,19 @@ artefact only:
 
 ---
 
+## [0.2.0] — Post-0.1.0 Hardening & Observability
+
+The first release of any complex system invariably surfaces edge cases and rough edges that only appear under real-world conditions. Version 0.2.0 is the hardening release that addresses the most important issues discovered after the initial launch: pgrx compatibility fixes ensure the extension builds and installs correctly across different PostgreSQL configurations, identifier quoting edge cases are resolved so outbox and inbox names containing hyphens or other special characters work reliably, and several low-level SQL generation issues are corrected. None of these changes require a database migration — they correct the compiled extension artifact only, so existing deployments upgrade safely by reinstalling the extension.
+
+The relay binary gains its first dedicated observability metrics in this release: consumer lag — the number of messages published but not yet consumed by each consumer group — and delivery latency as a histogram, measuring the end-to-end time from when a message appears in the outbox to when it is acknowledged by the relay. Both metrics are visible at the Prometheus `/metrics` endpoint and provide the baseline signal needed to understand whether a relay deployment is keeping up with the workload. Docker image tagging is aligned with the convention used by major container registries, with full version, minor prefix, and `latest` tags published on every release.
+
+---
+
 ## [0.1.0] — 2025-05-03 — Initial Release
+
+pg_tide begins life as a focused extraction of the transactional outbox and idempotent inbox system from the pg_trickle project. Rather than a raw database table and a cron job, pg_tide provides a complete, opinionated solution: a SQL API for creating named outboxes and inboxes, publishing messages inside transactions, tracking consumer progress, and managing relay pipelines — all living in the `tide` schema within an ordinary PostgreSQL 18 database. The design goal is that application code should be able to publish an event and know it will be delivered, even if the destination system is temporarily unavailable, with no additional infrastructure beyond the database the application already uses.
+
+The relay binary that ships with this first release already supports seven messaging backends: NATS JetStream, Apache Kafka, Redis Streams, RabbitMQ, Amazon SQS, HTTP webhooks, and stdout for testing. High availability is provided through PostgreSQL advisory locks — when multiple relay instances are running, they automatically negotiate ownership of each pipeline and take over from a crashed instance without operator intervention. A Prometheus metrics endpoint and structured JSON logging are available from day one, reflecting the project's commitment to observable, production-ready software from the first release rather than as an afterthought.
 
 v0.1.0 is the founding release of `pg_tide`. The full transactional outbox,
 idempotent inbox, consumer group, and relay subsystem (~6,150 Rust LOC +

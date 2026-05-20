@@ -1,0 +1,19 @@
+[package]
+name = "pg-tide-relay-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+pg-tide-relay = { path = "..", features = ["debezium", "maxwell", "canal", "cdc-json"] }
+
+[[bin]]
+name = "fuzz_wire_format"
+path = "fuzz_targets/fuzz_wire_format.rs"
+test = false
+doc = false

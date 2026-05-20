@@ -39,6 +39,11 @@ pub fn relay_set_outbox(
     p_batch_size: default!(i32, 100),
     p_enabled: default!(bool, true),
 ) {
+    pgrx::warning!(
+        "relay_set_outbox() positional form is deprecated; \
+         use relay_set_outbox_v2(config JSONB) instead. \
+         The positional form will be removed in v1.0.0."
+    );
     relay_set_outbox_impl(p_name, p_outbox, p_sink, p_config, p_batch_size, p_enabled)
         .unwrap_or_else(|e| pgrx::error!("{}", e))
 }
@@ -181,6 +186,11 @@ pub fn relay_set_inbox(
     p_max_retries: default!(i32, 3),
     p_idempotent: default!(bool, true),
 ) {
+    pgrx::warning!(
+        "relay_set_inbox() positional form is deprecated; \
+         use relay_set_inbox_v2(config JSONB) instead. \
+         The positional form will be removed in v1.0.0."
+    );
     relay_set_inbox_impl(
         p_name,
         p_inbox,

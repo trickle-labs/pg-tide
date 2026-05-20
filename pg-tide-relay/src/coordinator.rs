@@ -248,6 +248,109 @@ impl Coordinator {
 
     // ── Private ──────────────────────────────────────────────────────────
 
+    /// v0.30.0: Check whether a pipeline's upstream DAG dependencies allow it
+    /// to be acquired.  Returns `true` when all upstream policies are satisfied
+    /// (pipeline is eligible), `false` when any policy gates acquisition.
+    ///
+    /// Policy semantics:
+    ///   - `always`: downstream acquires unconditionally (always returns true).
+    ///   - `on_idle`: downstream only acquires when upstream consumer lag is 0.
+    ///   - `on_offset_gte(N)`: downstream only acquires when upstream committed ≥ N.
+    ///
+    /// When the `relay_pipeline_deps` table does not exist (pre-v0.30.0 schema),
+    /// this function returns `true` so the coordinator degrades gracefully.
+    async fn dag_check_acquisition(&self, pipeline_id: &str) -> bool {
+        let conn = match self.pool.get().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    pipeline = %pipeline_id,
+                    error = %e,
+                    "dag-check: failed to get pool connection — allowing acquisition"
+                );
+                return true;
+            }
+        };
+
+        // Check if the table exists (schema may be pre-v0.30.0).
+        let table_exists: bool = conn
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+                 WHERE table_schema = 'tide' AND table_name = 'relay_pipeline_deps')",
+                &[],
+            )
+            .await
+            .map(|r| r.get(0))
+            .unwrap_or(false);
+
+        if !table_exists {
+            return true;
+        }
+
+        // Fetch all upstream edges for this pipeline.
+        let rows = match conn
+            .query(
+                "SELECT d.upstream_pipeline, d.trigger_policy, \
+                        COALESCE(o.last_change_id, 0) AS committed, \
+                        COALESCE((SELECT MAX(id) FROM tide.tide_outbox_messages \
+                                  WHERE stream_table = d.upstream_pipeline), 0) AS max_id \
+                 FROM tide.relay_pipeline_deps d \
+                 LEFT JOIN tide.relay_consumer_offsets o \
+                   ON o.pipeline_id = d.upstream_pipeline \
+                  AND o.relay_group_id = $2 \
+                 WHERE d.downstream_pipeline = $1",
+                &[&pipeline_id, &self.relay_group_id],
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    pipeline = %pipeline_id,
+                    error = %e,
+                    "dag-check: query failed — allowing acquisition"
+                );
+                return true;
+            }
+        };
+
+        for row in &rows {
+            let upstream: String = row.get(0);
+            let policy: String = row.get(1);
+            let committed: i64 = row.get(2);
+            let max_id: i64 = row.get(3);
+            let lag = max_id.saturating_sub(committed);
+
+            let satisfied = match policy.as_str() {
+                "always" => true,
+                "on_idle" => lag == 0,
+                p if p.starts_with("on_offset_gte(") => {
+                    let threshold: i64 = p
+                        .trim_start_matches("on_offset_gte(")
+                        .trim_end_matches(')')
+                        .parse()
+                        .unwrap_or(0);
+                    committed >= threshold
+                }
+                _ => true,
+            };
+
+            if !satisfied {
+                tracing::debug!(
+                    pipeline = %pipeline_id,
+                    upstream = %upstream,
+                    policy = %policy,
+                    committed,
+                    lag,
+                    "dag-check: upstream policy unsatisfied — skipping acquisition"
+                );
+                return false;
+            }
+        }
+
+        true
+    }
+
     /// v0.29.0: Check for pipelines with auto_resume_after set that have been
     /// paused longer than the configured interval, and re-enable them.
     async fn check_auto_resume(&self) {
@@ -393,6 +496,13 @@ impl Coordinator {
                     "max_owned_pipelines limit reached — not acquiring additional pipelines"
                 );
                 break;
+            }
+
+            // v0.30.0: DAG-aware acquisition — check upstream policy before
+            // attempting the advisory lock.  If any upstream is not satisfied,
+            // skip this pipeline; it will be retried on the next reconcile cycle.
+            if !self.dag_check_acquisition(&pipeline.name).await {
+                continue;
             }
 
             let acquired = match self.try_acquire_lock(&pipeline.name).await {

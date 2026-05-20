@@ -155,6 +155,54 @@ jobs:
           cargo test --package pg-tide-relay --test sql_to_sink_e2e -- --test-threads=1
           cargo test --package pg-tide-relay --test wire_format_test -- --test-threads=1
           cargo test --package pg-tide-relay --test wire_format_proptest -- --test-threads=1
+          cargo test --package pg-tide-relay --test dag_test -- --test-threads=1
+
+  # v0.30.0: DAG and HA failover integration tests.
+  test-integration-dag:
+    name: Integration Tests — DAG & HA Failover (v0.30.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-dag-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run DAG and HA failover tests
+        run: |
+          cargo test --package pg-tide-relay --test dag_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test ha_failover_test -- --test-threads=1
+
+  # v0.30.0: Sustained-throughput load test.
+  test-load:
+    name: Sustained-Throughput Load Test (v0.30.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-load-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run load test (50k messages, ≥ 10k msg/s)
+        run: |
+          cargo test --package pg-tide-relay --test load_test -- --test-threads=1
 
   test-integration-relay:
     name: Integration Tests — Relay (coordinator, circuit breaker, DLQ)
@@ -486,7 +534,11 @@ jobs:
             sql/pg_tide--0.22.0--0.23.0.sql \
             sql/pg_tide--0.23.0--0.24.0.sql \
             sql/pg_tide--0.24.0--0.25.0.sql \
-            sql/pg_tide--0.25.0--0.26.0.sql; do
+            sql/pg_tide--0.25.0--0.26.0.sql \
+            sql/pg_tide--0.26.0--0.27.0.sql \
+            sql/pg_tide--0.27.0--0.28.0.sql \
+            sql/pg_tide--0.28.0--0.29.0.sql \
+            sql/pg_tide--0.29.0--0.30.0.sql; do
             psql -h 127.0.0.1 -U postgres -d fresh_schema -f "$f"
           done
 
@@ -534,7 +586,11 @@ jobs:
             sql/pg_tide--0.22.0--0.23.0.sql \
             sql/pg_tide--0.23.0--0.24.0.sql \
             sql/pg_tide--0.24.0--0.25.0.sql \
-            sql/pg_tide--0.25.0--0.26.0.sql; do
+            sql/pg_tide--0.25.0--0.26.0.sql \
+            sql/pg_tide--0.26.0--0.27.0.sql \
+            sql/pg_tide--0.27.0--0.28.0.sql \
+            sql/pg_tide--0.28.0--0.29.0.sql \
+            sql/pg_tide--0.29.0--0.30.0.sql; do
             psql -h 127.0.0.1 -U postgres -d upgrade_schema -f "$f"
           done
 
@@ -565,3 +621,63 @@ jobs:
             echo "This means the SQL migration files are inconsistent with the base install SQL."
             exit 1
           fi
+
+  # v0.30.0: Wire format fuzz targets — run for 60 seconds on every PR.
+  fuzz-wire-formats:
+    name: Wire Format Fuzz (60 s corpus run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Run wire format fuzz target (60 seconds)
+        run: |
+          cd pg-tide-relay
+          cargo fuzz run fuzz_wire_format -- -max_total_time=60 -jobs=1
+
+  # v0.30.0: Helm chart version-alignment CI check.
+  helm-version-check:
+    name: Helm Chart Version Alignment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install yq
+        run: sudo snap install yq
+
+      - name: Check Helm chart version matches workspace version
+        run: |
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          HELM_VERSION=$(yq .version helm/pg-tide/Chart.yaml)
+          HELM_APP_VERSION=$(yq .appVersion helm/pg-tide/Chart.yaml | tr -d '"')
+          echo "Cargo version: ${CARGO_VERSION}"
+          echo "Helm chart version: ${HELM_VERSION}"
+          echo "Helm appVersion: ${HELM_APP_VERSION}"
+          MISMATCH=0
+          if [ "${CARGO_VERSION}" != "${HELM_VERSION}" ]; then
+            echo "ERROR: Cargo.toml version (${CARGO_VERSION}) != Helm chart version (${HELM_VERSION})"
+            MISMATCH=1
+          fi
+          if [ "${CARGO_VERSION}" != "${HELM_APP_VERSION}" ]; then
+            echo "ERROR: Cargo.toml version (${CARGO_VERSION}) != Helm appVersion (${HELM_APP_VERSION})"
+            MISMATCH=1
+          fi
+          if [ "${MISMATCH}" = "1" ]; then
+            echo "Run 'just bump-version <version>' to synchronise all version files."
+            exit 1
+          fi
+          echo "OK: All version files are in sync at ${CARGO_VERSION}"

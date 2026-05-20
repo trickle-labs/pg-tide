@@ -39,6 +39,8 @@ const V0_24_0_TO_0_25_0: &str = include_str!("../../sql/pg_tide--0.24.0--0.25.0.
 const V0_25_0_TO_0_26_0: &str = include_str!("../../sql/pg_tide--0.25.0--0.26.0.sql");
 const V0_26_0_TO_0_27_0: &str = include_str!("../../sql/pg_tide--0.26.0--0.27.0.sql");
 const V0_27_0_TO_0_28_0: &str = include_str!("../../sql/pg_tide--0.27.0--0.28.0.sql");
+const V0_28_0_TO_0_29_0: &str = include_str!("../../sql/pg_tide--0.28.0--0.29.0.sql");
+const V0_29_0_TO_0_30_0: &str = include_str!("../../sql/pg_tide--0.29.0--0.30.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -69,6 +71,8 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.25.0 → 0.26.0", V0_25_0_TO_0_26_0),
     ("0.26.0 → 0.27.0", V0_26_0_TO_0_27_0),
     ("0.27.0 → 0.28.0", V0_27_0_TO_0_28_0),
+    ("0.28.0 → 0.29.0", V0_28_0_TO_0_29_0),
+    ("0.29.0 → 0.30.0", V0_29_0_TO_0_30_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
@@ -381,4 +385,70 @@ async fn test_sequential_migration_upgrade() {
         .expect("select partition_strategy")
         .get(0);
     assert_eq!(strategy, "daily", "partition_strategy should be 'daily'");
+
+    // After v0.30.0 upgrade: relay_pipeline_deps table should exist.
+    let has_pipeline_deps: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'tide' AND table_name = 'relay_pipeline_deps')",
+            &[],
+        )
+        .await
+        .expect("table check")
+        .get(0);
+    assert!(
+        has_pipeline_deps,
+        "after v0.30.0 upgrade, tide.relay_pipeline_deps must exist"
+    );
+
+    // relay_dag_check() function should exist.
+    let has_dag_check: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.routines \
+             WHERE routine_schema = 'tide' AND routine_name = 'relay_dag_check')",
+            &[],
+        )
+        .await
+        .expect("function check")
+        .get(0);
+    assert!(
+        has_dag_check,
+        "after v0.30.0 upgrade, tide.relay_dag_check() must exist"
+    );
+
+    // relay_dag_check() must return no rows (empty graph = acyclic).
+    let dag_rows = client
+        .query("SELECT cycle_path FROM tide.relay_dag_check()", &[])
+        .await
+        .expect("relay_dag_check()");
+    assert!(
+        dag_rows.is_empty(),
+        "relay_dag_check() must return no rows for an empty DAG"
+    );
+
+    // relay_pipeline_dep_add() must succeed for a valid edge.
+    client
+        .execute(
+            "SELECT tide.relay_pipeline_dep_add('pipeline-a', 'pipeline-b', 'always')",
+            &[],
+        )
+        .await
+        .expect("relay_pipeline_dep_add()");
+
+    // relay_pipeline_dep_drop() must remove the edge.
+    client
+        .execute(
+            "SELECT tide.relay_pipeline_dep_drop('pipeline-a', 'pipeline-b')",
+            &[],
+        )
+        .await
+        .expect("relay_pipeline_dep_drop()");
+
+    // Verify edge is gone.
+    let dep_count: i64 = client
+        .query_one("SELECT COUNT(*) FROM tide.relay_pipeline_deps", &[])
+        .await
+        .expect("count deps")
+        .get(0);
+    assert_eq!(dep_count, 0, "relay_pipeline_deps must be empty after drop");
 }

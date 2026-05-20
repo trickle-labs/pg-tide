@@ -4,6 +4,7 @@
 /// under 150 lines.
 pub mod asyncapi;
 pub mod backfill_cmd;
+pub mod dag;
 pub mod doctor;
 pub mod ducklake;
 pub mod history;
