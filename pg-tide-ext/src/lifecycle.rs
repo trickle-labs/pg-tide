@@ -87,7 +87,7 @@ fn relay_auto_resume_candidates_impl() -> Result<pgrx::JsonB, PgTideError> {
     let result = Spi::get_one::<pgrx::JsonB>(
         "SELECT COALESCE( \
             (SELECT jsonb_agg(jsonb_build_object( \
-                'name',              c.name, \
+                'name',              rc.name, \
                 'type',              'outbox', \
                 'pause_started_at',  s.pause_started_at, \
                 'auto_resume_after', c.auto_resume_after \

@@ -48,14 +48,16 @@ pub fn relay_template_get(p_name: &str) -> Option<pgrx::JsonB> {
 
 fn relay_template_get_impl(name: &str) -> Result<Option<pgrx::JsonB>, PgTideError> {
     let result = Spi::get_one_with_args::<pgrx::JsonB>(
-        "SELECT jsonb_build_object( \
-            'name',          name, \
-            'description',   description, \
-            'required_keys', required_keys, \
-            'config',        config, \
-            'created_at',    created_at, \
-            'updated_at',    updated_at \
-         ) FROM tide.relay_pipeline_templates WHERE name = $1",
+        "SELECT ( \
+            SELECT jsonb_build_object( \
+                'name',          name, \
+                'description',   description, \
+                'required_keys', required_keys, \
+                'config',        config, \
+                'created_at',    created_at, \
+                'updated_at',    updated_at \
+            ) FROM tide.relay_pipeline_templates WHERE name = $1 \
+         )",
         &[name.into()],
     )
     .map_err(|e| PgTideError::SpiError(format!("relay_template_get SPI error: {e}")))?;
