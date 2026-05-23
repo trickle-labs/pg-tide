@@ -37,18 +37,23 @@ def build_minimal_parquet(rows: list[dict]) -> bytes:
     with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
         path = f.name
 
-    # Build an in-memory table and export to Parquet
-    values = ", ".join(f"('{r['_dedup_key']}', '{r['_subject']}', '{r['_op']}', {r.get('_outbox_id', 'NULL')}, '{r['data']}')" for r in rows)
-    con.execute(f"""
-        COPY (
-            SELECT column0 AS _dedup_key,
-                   column1 AS _subject,
-                   column2 AS _op,
-                   TRY_CAST(column3 AS BIGINT) AS _outbox_id,
-                   column4 AS data
-            FROM (VALUES {values})
-        ) TO '{path}' (FORMAT PARQUET)
+    # Build an in-memory table using typed parameters and export to Parquet
+    con.execute("""
+        CREATE TABLE _tmp (
+            _dedup_key TEXT,
+            _subject TEXT,
+            _op TEXT,
+            _outbox_id BIGINT,
+            data TEXT
+        )
     """)
+    for r in rows:
+        con.execute(
+            "INSERT INTO _tmp VALUES (?, ?, ?, ?, ?)",
+            [r["_dedup_key"], r["_subject"], r["_op"], r.get("_outbox_id"), r["data"]],
+        )
+    con.execute(f"COPY _tmp TO '{path}' (FORMAT PARQUET)")
+    con.execute("DROP TABLE _tmp")
     con.close()
 
     with open(path, "rb") as f:
