@@ -233,7 +233,7 @@ jobs:
     needs: docker-merge
     permissions:
       contents: read
-      packages: read
+      packages: write
       id-token: write
     steps:
       - name: Install cosign
