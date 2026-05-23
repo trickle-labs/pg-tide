@@ -783,3 +783,43 @@ jobs:
             exit 1
           fi
           echo "OK: migration_test.rs covers the current workspace version ${CARGO_VERSION}"
+
+  ducklake-compat:
+    name: DuckLake Compatibility (DuckDB Python)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install duckdb psycopg2-binary
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -U testuser && break
+            sleep 1
+          done
+
+      - name: Run DuckLake compatibility smoke test
+        env:
+          PG_URL: "postgres://testuser:testpass@localhost/testdb"
+        run: python scripts/ducklake_compat_smoke.py
