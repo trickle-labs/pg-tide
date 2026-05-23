@@ -559,11 +559,12 @@ async fn bootstrap_namespace(&mut self, namespace: &str) -> Result<i64, RelayErr
         Some(r) => r.get(0),
         None => {
             let id = self.alloc_catalog_id();
+            let uuid = uuid::Uuid::new_v4().to_string();
             self.db.execute(
                 "INSERT INTO ducklake_schema \
                  (schema_id, schema_name, schema_uuid) \
-                 VALUES ($1, $2, gen_random_uuid())",
-                &[&id, &namespace],
+                 VALUES ($1, $2, $3)",
+                &[&id, &namespace, &uuid],
             ).await?;
             id
         }
@@ -962,19 +963,77 @@ SlateDuck project serves their Phase 0 requirement for "every distinct SQL state
 ducklake extension emits" — and ensures the relay's queries are explicitly validated against
 SlateDuck's bounded set before Phase 4 dispatch code is written.
 
+### 8.1 Wire Corpus Contribution Format
+
+The wire corpus JSONL file contributed to SlateDuck must contain one entry per distinct SQL
+statement shape. Each entry:
+
+```jsonl
+{"id":"sink.refresh_id_state","sql":"SELECT snapshot_id, next_catalog_id, next_file_id, schema_version FROM ducklake_snapshot ORDER BY snapshot_id DESC LIMIT 1","params":[],"result_columns":["snapshot_id:int8","next_catalog_id:int8","next_file_id:int8","schema_version:int4"],"direction":"write_session","notes":"Called once on startup and after each commit"}
+{"id":"sink.insert_snapshot","sql":"INSERT INTO ducklake_snapshot (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id) VALUES ($1, now(), $2, $3, $4)","params":["int8","int4","int8","int8"],"result_columns":[],"direction":"write_session","notes":"One per publish batch"}
+{"id":"source.poll_new_snapshot","sql":"SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $1","params":["int8"],"result_columns":["max:int8"],"direction":"read_session","notes":"Called every poll interval"}
+```
+
+Fields:
+- `id`: Unique identifier within the pg-tide corpus (dot-separated component.operation)
+- `sql`: Exact SQL shape with `$N` parameter placeholders
+- `params`: Array of PostgreSQL type names for each parameter
+- `result_columns`: Array of `name:type` for expected result set columns
+- `direction`: `write_session` (connects to writer) or `read_session` (can use reader)
+- `notes`: Human-readable context for the SlateDuck team
+
+The corpus will be generated automatically by the Phase 6 wire-capture tooling and committed to
+both repos.
+
+---
+
+## 8.2 Multi-Client Considerations
+
+The `SlateDuckSink` and `SlateDuckSource` are designed so that:
+
+1. **DuckDB can read everything the relay writes.** The relay writes spec-compliant DuckLake
+   catalog rows. Any DuckDB process connecting to the same SlateDuck sidecar can query the
+   relay-written data via standard `ATTACH 'ducklake:postgres:...'` with no awareness of pg-tide.
+
+2. **Other DuckLake writers can coexist** (subject to single-writer constraint). The relay reads
+   `next_catalog_id` / `next_file_id` from the latest snapshot — it does not assume it is the
+   only writer. If another client (DuckDB, DataFusion) commits a snapshot between relay polls,
+   the relay will see the updated counters on its next `refresh_id_state()` call.
+
+3. **Application metadata is namespaced.** All relay state in `ducklake_metadata` uses the
+   `pg_tide.` prefix (per SlateDuck §5.19a). Other applications use their own prefixes.
+   No collision is possible.
+
+4. **No pg-tide-specific catalog tables.** The relay does NOT create any `tide.*` tables in
+   SlateDuck. All state lives in standard DuckLake v1.0 tables + namespaced metadata keys.
+
+5. **Schema evolution is additive and spec-compliant.** New columns are added via
+   `INSERT INTO ducklake_column` with incremented `schema_version` in the next snapshot —
+   exactly as DuckDB's own DDL path does. A DuckDB user issuing `ALTER TABLE ADD COLUMN`
+   on a relay-written table will see correct, merged results.
+
+6. **Parquet file layout follows DuckLake conventions.** File paths use the standard
+   `{schema_path}/{table_path}/{file_name}.parquet` hierarchy so DuckDB's file pruning and
+   stats-based filtering work optimally.
+
+**Future client implications:** If a future integration (e.g., DataFusion-DuckLake →
+SlateDuck) also needs offset tracking, it would use `datafusion_pipeline.{name}.offset` in
+`ducklake_metadata` — same mechanism, different namespace. The relay does not need to be
+aware of other pipelines writing to the same catalog.
+
 ---
 
 ## 9. Open Questions
 
-| # | Question | Impact | How to resolve |
-|---|---|---|---|
-| Q1 | Does SlateDuck support `LIMIT $N` with parameterised LIMIT in its bounded set? | Source poll batch size | Validate in Phase 0 wire corpus against SlateDuck; fall back to client-side slicing |
-| Q2 | Does SlateDuck require `ducklake_inlined_data_tables` to have an explicit INSERT before the first inlined INSERT, or does it create the entry implicitly? | Phase 3 inlining protocol | Read SlateDuck Phase 4 source when available |
-| Q3 | Does SlateDuck's `ducklake_metadata` use `(scope TEXT, scope_id BIGINT, metadata_key TEXT, value TEXT)` or a different schema? | Offset tracking key format | Read DuckLake v1.0 spec source table; confirm with SlateDuck |
-| Q4 | What isolation level does SlateDuck's `BEGIN` use by default? Does it accept `BEGIN ISOLATION LEVEL SERIALIZABLE`? | Phase 2 transaction model | Phase 0 wire capture |
-| Q5 | Can the relay retrieve `0xFF | "writer-endpoint"` via a SQL query or only via the raw KV API? | Phase 7 writer routing | SlateDuck Phase 4 design |
-| Q6 | Does SlateDuck surface SlateDB's `GcError` as a distinct SQLSTATE, or only as `XX000`? | Phase 7 error handling | SlateDuck Phase 4 implementation |
-| Q7 | Is `gen_random_uuid()` available in SlateDuck's PG-wire shim? | Bootstrap table INSERT | Check SlateDuck handshake corpus; fall back to Rust-side UUID generation |
+| # | Question | Impact | How to resolve | Current Status |
+|---|---|---|---|---|
+| Q1 | Does SlateDuck support `LIMIT $N` with parameterised LIMIT in its bounded set? | Source poll batch size | Validate in Phase 0 wire corpus against SlateDuck; fall back to client-side slicing | **Proposed** — filed as an open question in SlateDuck §12. The dispatcher addition is trivial; pg-tide's wire corpus contribution will formalize the request. Interim: use `ORDER BY ... DESC LIMIT 1` (literal) for latest-snapshot reads; implement client-side slicing for data-file batch reads. |
+| Q2 | Does SlateDuck require `ducklake_inlined_data_tables` to have an explicit INSERT before the first inlined INSERT, or does it create the entry implicitly? | Phase 3 inlining protocol | Read SlateDuck Phase 4 source when available | **Likely implicit** — SlateDuck's `0xFD` key prefix handler creates the in-memory layout on first INSERT (§5.2 of SlateDuck design doc). However, the relay should INSERT into `ducklake_inlined_data_tables` anyway for DuckDB compatibility (DuckDB reads this registry when listing inlined tables). |
+| Q3 | Does SlateDuck's `ducklake_metadata` use `(scope TEXT, scope_id BIGINT, metadata_key TEXT, value TEXT)` or a different schema? | Offset tracking key format | Read DuckLake v1.0 spec source table; confirm with SlateDuck | **Confirmed** — SlateDuck §5.19a defines scoped key/value with `(scope, scope_id, metadata_key, value)`. Application keys use `pg_tide.{pipeline_name}.{key}` convention with `scope = 'global'`, `scope_id = 0`. |
+| Q4 | What isolation level does SlateDuck's `BEGIN` use by default? Does it accept `BEGIN ISOLATION LEVEL SERIALIZABLE`? | Phase 2 transaction model | Phase 0 wire capture | **Snapshot isolation** — SlateDB provides `SerializableSnapshot` as its strongest level. SlateDuck's `BEGIN` defaults to this. Whether `BEGIN ISOLATION LEVEL SERIALIZABLE` is accepted as a no-op is filed as an open question in SlateDuck §12. Use plain `BEGIN` in the relay implementation. |
+| Q5 | Can the relay retrieve `0xFF | "writer-endpoint"` via a SQL query or only via the raw KV API? | Phase 7 writer routing | SlateDuck Phase 4 design | **Unresolved** — depends on whether SlateDuck exposes internal KV keys through its PG-wire interface. Likely not: use static endpoint config for v1 and revisit if SlateDuck adds a metadata introspection endpoint. |
+| Q6 | Does SlateDuck surface SlateDB's `GcError` as a distinct SQLSTATE, or only as `XX000`? | Phase 7 error handling | SlateDuck Phase 4 implementation | **Unresolved** — SlateDuck's error mapping will be defined in Phase 4. The relay should handle both distinct SQLSTATEs and `XX000` with descriptive error messages. |
+| Q7 | Is `gen_random_uuid()` available in SlateDuck's PG-wire shim? | Bootstrap table INSERT | Check SlateDuck handshake corpus; fall back to Rust-side UUID generation | **Decision: use Rust-side UUIDs** — SlateDuck §4.3 client onboarding section confirms the preferred approach is for clients to generate UUIDs and supply them as literal string parameters. This avoids requiring SlateDuck to implement PG functions. The relay will use `uuid::Uuid::new_v4()` and pass as `$1`. |
 
 ---
 
