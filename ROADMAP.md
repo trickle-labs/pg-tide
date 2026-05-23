@@ -670,7 +670,7 @@ With the zero-defect baseline confirmed in overall-assessment-6, this final pre-
 | v0.31.0 | Assessment-6 P1/P2 bug fixes, systematic identifier-quoting hardening, migration-test completeness & CI release-process automation: `PgInboxSink` table quoting, `poll_simple()` quoting, `fetch_claim_check_rows` quoting, full identifier-quoting audit, hyphenated-name test suite, v0.30.0→0.31.0 migration test entry, CI Chart-version-alignment check, `just bump-version` Helm fix, `lint-quoting` CI recipe | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
 | v0.32.0 | Performance engineering & code-internals quality: publisher-ACL SPI consolidation, `inbox_status()` fleet N+1 elimination, webhook HMAC `expect()` replacement, coordinator and inbox `unwrap_or_default` hardening, extended Criterion benchmarks with memory profiling, WAL-based logical-replication source groundwork | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
 | v0.33.0 | Pre-GA supply-chain hardening, KMS foundation & v1.0 readiness: final `cargo deny`/`cargo audit` advisory re-evaluation, `audit.toml` refresh, `v0.x → v1.0` migration guide, stability-guarantee documentation, envelope-encryption design ADR, KMS provider interface design, `inbox_status()` fleet-summary scalability, v1.0.0 scope finalization and deprecation-warning activation | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
-| v0.34.0 | DuckLake as reverse pipeline sink — any external source (Kafka, NATS, Redis, SQS, webhook, stdin) can write directly to DuckLake without routing through a pg-tide inbox; SlateDuck integration phases 0–5 completion; `ducklake-as-sink` built-in pipeline template; coordinator factory update; integration test suite | 🔜 Planned | Medium | [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md) · [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
+| v0.34.0 | Universal reverse pipeline sinks — register all 8 implemented-but-unregistered sinks in `build_sink()` (DuckLake, ClickHouse, MongoDB, BigQuery, Snowflake, Delta Lake, Apache Iceberg, remote pg-tide inbox) so any external source can route to any sink without an intermediate inbox; SlateDuck integration phases 0–5 | 🔜 Planned | Medium | [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md) · [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
 
 #### v0.31.0 — Assessment-6 P1/P2 Bug Fixes, Identifier Hardening & Release-Process Automation (detail)
 
@@ -777,9 +777,9 @@ This is the final release before v1.0.0 Production GA. It delivers the KMS encry
 - **Pre-GA readiness checklist update** — update `docs/src/operations/pre-ga-checklist.md` with a new section "v1.0.0 GA Acceptance Criteria" listing every item from the assessment-6 "Path to v1.0 — Must-do" and "Should-do" lists alongside their status (resolved in which version). The checklist serves as the formal acceptance gate for declaring v1.0.0 Production GA.
 - **`just release-notes` v1.0 mode** — extend the release-notes recipe with a `--ga` flag that generates a full "Production GA Announcement" release body, including: the stability guarantee summary, the migration guide URL, the full list of resolved findings across all six assessment cycles, the benchmark comparison table (v0.1.0 → v1.0.0 throughput improvement), and the headline feature summary (encryption, DuckLake, multi-tenant, 30 sinks, 16 sources). This serves as the GitHub Release body and the basis for the blog post.
 
-#### v0.34.0 — DuckLake as Reverse Pipeline Sink & SlateDuck Integration Phases 0–5 (detail)
+#### v0.34.0 — Universal Reverse Pipeline Sinks & SlateDuck Integration Phases 0–5 (detail)
 
-This release closes the last asymmetry in the DuckLake integration: the relay can write messages from any source backend (Kafka, NATS, Redis Streams, SQS, RabbitMQ, webhook, stdin) directly into a DuckLake table, without the two-hop detour through a pg-tide inbox. It also delivers SlateDuck integration Phases 0–5 from [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md): a spec-compliant `SlateDuckSink` / `SlateDuckSource` pair that speaks SlateDuck's bounded SQL subset, enabling the zero-infrastructure path from a PostgreSQL transaction to a queryable data lake in S3 with no separate database server.
+This release closes the registration gap: eight sink implementations (`ducklake`, `clickhouse`, `mongodb`, `bigquery`, `snowflake`, `delta`, `iceberg`, `pg_outbox`) have been present in `pg-tide-relay/src/sink/` since v0.10.0 but were never wired into `build_sink()`. Adding them here makes every sink available for reverse pipelines (external source → analytics/document/data-lake destination) without any intermediate pg-tide inbox. It also delivers SlateDuck integration Phases 0–5 from [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md): a spec-compliant `SlateDuckSink` / `SlateDuckSource` pair that speaks SlateDuck's bounded SQL subset, enabling the zero-infrastructure path from a PostgreSQL transaction to a queryable data lake in S3 with no separate database server.
 
 **DuckLake as a reverse pipeline sink**
 - **Register `ducklake` as a valid reverse-pipeline sink type** — extend the relay coordinator's `build_sink()` factory to match `"sink_type": "ducklake"` for reverse (inbox-config) pipelines, not only for forward (outbox-config) pipelines. The `DuckLakeSink` struct is unchanged; it is now constructed for both directions.
@@ -821,6 +821,25 @@ This release closes the last asymmetry in the DuckLake integration: the relay ca
 **Relationship between DuckLake-as-reverse-sink and SlateDuck**
 - The DuckLake-as-reverse-sink feature uses the existing `DuckLakeSink` (PostgreSQL-backed DuckLake catalog). SlateDuck support uses the new `SlateDuckSink` (SlateDuck PG-wire sidecar). They share the Parquet-building and schema-evolution logic via the new `ducklake_common` module, but differ in how they issue catalog SQL.
 - Both reverse-sink paths (`ducklake` and `slateduck`) support all source types: Kafka, NATS, Redis, SQS, RabbitMQ, webhook, stdin — covering the full matrix of external-source → data-lake routing without any PostgreSQL inbox intermediate.
+
+**Register unregistered analytics & document sinks in `build_sink()`**
+
+The following sinks have full implementations in `pg-tide-relay/src/sink/` (introduced in v0.10.0) but have never been wired into `build_sink()`. Registering them makes them available for both forward and reverse pipelines with no new implementation work:
+
+| Sink | Feature flag | Pattern enabled | Idempotency |
+|------|-------------|-----------------|-------------|
+| `ducklake` | `ducklake` | Any source → DuckLake catalog | `_dedup_key` prevents duplicate inlined rows; deterministic Parquet filenames |
+| `clickhouse` | `clickhouse` | Kafka/NATS → ClickHouse real-time analytics | `ReplacingMergeTree` for eventual dedup; relay provides `_dedup_key` column |
+| `mongodb` | `mongodb` | Kafka/NATS → MongoDB document store | `replaceOne` upsert with `dedup_key` as `_id` — fully idempotent |
+| `bigquery` | `bigquery` | Kafka → BigQuery cloud data warehouse | `insertId` on streaming inserts provides best-effort dedup |
+| `snowflake` | `snowflake` | Kafka → Snowflake Snowpipe Streaming | At-least-once; duplicate rows possible on retry |
+| `delta` | `delta` | Any source → Delta Lake | Deterministic Parquet path makes S3 writes idempotent; Delta Log prevents partial commits |
+| `iceberg` | `iceberg` | Any source → Apache Iceberg | REST-catalog commit is atomic; deterministic manifest paths |
+| `pg_outbox` | *(none)* | Any source → remote pg-tide inbox | `ON CONFLICT (event_id) DO NOTHING` at remote inbox — exactly-once |
+
+- **`build_sink()` registration** — add a `match` arm for each sink type in `coordinator.rs`, following the same config-plumbing pattern as existing sinks. Each arm is gated on the appropriate `#[cfg(feature = "...")]` flag.
+- **`pg-tide doctor` checks** — extend doctor to verify connectivity and write permissions for each new sink type when configured.
+- **Integration tests** — one round-trip test per new sink using `stdin` source: feed 50 messages, assert correct rows and deduplication behaviour.
 
 ---
 
