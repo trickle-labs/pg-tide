@@ -670,7 +670,7 @@ With the zero-defect baseline confirmed in overall-assessment-6, this final pre-
 | v0.31.0 | Assessment-6 P1/P2 bug fixes, systematic identifier-quoting hardening, migration-test completeness & CI release-process automation: `PgInboxSink` table quoting, `poll_simple()` quoting, `fetch_claim_check_rows` quoting, full identifier-quoting audit, hyphenated-name test suite, v0.30.0→0.31.0 migration test entry, CI Chart-version-alignment check, `just bump-version` Helm fix, `lint-quoting` CI recipe | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
 | v0.32.0 | Performance engineering & code-internals quality: publisher-ACL SPI consolidation, `inbox_status()` fleet N+1 elimination, webhook HMAC `expect()` replacement, coordinator and inbox `unwrap_or_default` hardening, extended Criterion benchmarks with memory profiling, WAL-based logical-replication source groundwork | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
 | v0.33.0 | Pre-GA supply-chain hardening, KMS foundation & v1.0 readiness: final `cargo deny`/`cargo audit` advisory re-evaluation, `audit.toml` refresh, `v0.x → v1.0` migration guide, stability-guarantee documentation, envelope-encryption design ADR, KMS provider interface design, `inbox_status()` fleet-summary scalability, v1.0.0 scope finalization and deprecation-warning activation | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
-| v0.34.0 | Universal reverse pipeline sinks — register all 8 implemented-but-unregistered sinks in `build_sink()` (DuckLake, ClickHouse, MongoDB, BigQuery, Snowflake, Delta Lake, Apache Iceberg, remote pg-tide inbox) so any external source can route to any sink without an intermediate inbox; SlateDuck integration phases 0–5; DuckLake ecosystem completeness: multi-engine compatibility (DataFusion, Spark, Trino, Pandas), DuckLake community engagement | 🔜 Planned | Large | [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md) · [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
+| v0.34.0 | Universal reverse pipeline sinks — register all 8 implemented-but-unregistered sinks in `build_sink()` (DuckLake, ClickHouse, MongoDB, BigQuery, Snowflake, Delta Lake, Apache Iceberg, remote pg-tide inbox) so any external source can route to any sink without an intermediate inbox; DuckLake ecosystem completeness: multi-engine compatibility (DataFusion, Spark, Trino, Pandas), DuckLake community engagement | 🔜 Planned | Large | [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
 
 #### v0.31.0 — Assessment-6 P1/P2 Bug Fixes, Identifier Hardening & Release-Process Automation (detail)
 
@@ -777,9 +777,9 @@ This is the final release before v1.0.0 Production GA. It delivers the KMS encry
 - **Pre-GA readiness checklist update** — update `docs/src/operations/pre-ga-checklist.md` with a new section "v1.0.0 GA Acceptance Criteria" listing every item from the assessment-6 "Path to v1.0 — Must-do" and "Should-do" lists alongside their status (resolved in which version). The checklist serves as the formal acceptance gate for declaring v1.0.0 Production GA.
 - **`just release-notes` v1.0 mode** — extend the release-notes recipe with a `--ga` flag that generates a full "Production GA Announcement" release body, including: the stability guarantee summary, the migration guide URL, the full list of resolved findings across all six assessment cycles, the benchmark comparison table (v0.1.0 → v1.0.0 throughput improvement), and the headline feature summary (encryption, DuckLake, multi-tenant, 30 sinks, 16 sources). This serves as the GitHub Release body and the basis for the blog post.
 
-#### v0.34.0 — Universal Reverse Pipeline Sinks & SlateDuck Integration Phases 0–5 (detail)
+#### v0.34.0 — Universal Reverse Pipeline Sinks (detail)
 
-This release closes the registration gap: eight sink implementations (`ducklake`, `clickhouse`, `mongodb`, `bigquery`, `snowflake`, `delta`, `iceberg`, `pg_outbox`) have been present in `pg-tide-relay/src/sink/` since v0.10.0 but were never wired into `build_sink()`. Adding them here makes every sink available for reverse pipelines (external source → analytics/document/data-lake destination) without any intermediate pg-tide inbox. It also delivers SlateDuck integration Phases 0–5 from [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md): a spec-compliant `SlateDuckSink` / `SlateDuckSource` pair that speaks SlateDuck's bounded SQL subset, enabling the zero-infrastructure path from a PostgreSQL transaction to a queryable data lake in S3 with no separate database server.
+This release closes the registration gap: eight sink implementations (`ducklake`, `clickhouse`, `mongodb`, `bigquery`, `snowflake`, `delta`, `iceberg`, `pg_outbox`) have been present in `pg-tide-relay/src/sink/` since v0.10.0 but were never wired into `build_sink()`. Adding them here makes every sink available for reverse pipelines (external source → analytics/document/data-lake destination) without any intermediate pg-tide inbox.
 
 **DuckLake as a reverse pipeline sink**
 - **Register `ducklake` as a valid reverse-pipeline sink type** — extend the relay coordinator's `build_sink()` factory to match `"sink_type": "ducklake"` for reverse (inbox-config) pipelines, not only for forward (outbox-config) pipelines. The `DuckLakeSink` struct is unchanged; it is now constructed for both directions.
@@ -807,20 +807,6 @@ This release closes the registration gap: eight sink implementations (`ducklake`
 - **`ducklake-source-to-lake` built-in pipeline template** — add to `tide.relay_pipeline_templates` a pre-seeded template for Kafka-to-DuckLake and NATS-to-DuckLake patterns, consistent with the template library introduced in v0.29.0.
 - **`pg-tide doctor` DuckLake reverse check** — extend the doctor command to verify object-storage write privileges and DuckLake catalog accessibility when a reverse DuckLake pipeline is configured.
 - **Integration test** — reverse-pipeline round-trip test: configure a `stdin` source → `ducklake` sink pipeline, feed 100 messages, and assert all rows appear in the DuckLake catalog as inlined data or Parquet files with correct column statistics.
-
-**SlateDuck integration — Phases 0–5**
-- **Phase 0: Wire corpus capture** — capture every SQL statement shape emitted by the current `DuckLakeSink` and `DuckLakeSource`, formatted as a JSONL wire corpus file (`tests/fixtures/wire-corpus/pgtide-slateduck-0.34.0.jsonl`). Contribute the corpus to the SlateDuck project as a validation artifact for Phase 0 of the SlateDuck roadmap.
-- **Phase 1: `SlateDuckSink` skeleton** — introduce `pg-tide-relay/src/sink/slateduck.rs` (feature-gated `--features slateduck`) implementing the `Sink` trait. Replaces `ensure_catalog()` with `verify_catalog_ready()` (a single `SELECT value FROM ducklake_metadata WHERE key = 'version'` call). Removes all `CREATE TABLE`, `CREATE SEQUENCE`, `nextval()`, `ON CONFLICT`, and `RETURNING` SQL — every incompatibility catalogued in [plans/ecosystem/slateduck.md §3](plans/ecosystem/slateduck.md).
-- **Phase 2: Parquet write path** — implement `SlateDuckSink::publish()` for the Parquet path: read `next_catalog_id` / `next_file_id` from the latest snapshot, pre-allocate IDs, write Parquet to object storage, commit the `ducklake_snapshot` + `ducklake_data_file` + `ducklake_file_column_stats` rows within a plain `BEGIN`/`COMMIT` block. No `nextval()`, no `RETURNING`, no `ON CONFLICT`.
-- **Phase 3: Inlined data path** — implement the inlined-data write path for batches at or below `inline_row_limit`, using direct `INSERT INTO ducklake_inlined_data_{table_id}_{schema_version}` without `ON CONFLICT`.
-- **Phase 4: Schema evolution** — adapt the existing `DuckLakeSink` schema evolution bridge for SlateDuck's bounded SQL subset (no `ON CONFLICT`, no `RETURNING`, explicit SELECT → conditional INSERT).
-- **Phase 5: Auto-partition via `ducklake_metadata`** — replace `tide.ducklake_partition_config` INSERTs with namespaced `ducklake_metadata` key/value entries using the `pg_tide.` prefix, compatible with SlateDuck's KV layout.
-- **`SlateDuckSource`** — implement `pg-tide-relay/src/source/slateduck.rs`: polls `SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $1` (single non-JOIN query); reads incremental data-file rows; delivers as `RelayMessage` objects. No multi-table JOINs.
-- **Coordinator factory wiring** — register `"slateduck"` as a valid `sink_type` and `source_type` in `build_sink()` / `build_source()` in `coordinator.rs`, gated on `#[cfg(feature = "slateduck")]`.
-
-**Relationship between DuckLake-as-reverse-sink and SlateDuck**
-- The DuckLake-as-reverse-sink feature uses the existing `DuckLakeSink` (PostgreSQL-backed DuckLake catalog). SlateDuck support uses the new `SlateDuckSink` (SlateDuck PG-wire sidecar). They share the Parquet-building and schema-evolution logic via the new `ducklake_common` module, but differ in how they issue catalog SQL.
-- Both reverse-sink paths (`ducklake` and `slateduck`) support all source types: Kafka, NATS, Redis, SQS, RabbitMQ, webhook, stdin — covering the full matrix of external-source → data-lake routing without any PostgreSQL inbox intermediate.
 
 **Register unregistered analytics & document sinks in `build_sink()`**
 
@@ -856,6 +842,34 @@ The v0.20.0–v0.22.0 DuckLake integration covers the seven Feature Opportunity 
 - **DuckDB community blog post** — publish "pg-tide: from PostgreSQL transaction to queryable data lake in 5 minutes" to the DuckDB community blog or newsletter, referencing the Docker Compose getting-started example and the five tutorials shipped in v0.22.0.
 - **DuckLake NOTIFY discussion** — open a GitHub Discussion in the DuckLake repository proposing a NOTIFY-based change notification mechanism as a first-class DuckLake protocol feature, citing pg-tide's `pg_notify('tide_ducklake_changes', ...)` implementation as a reference. This positions pg-tide as a DuckLake ecosystem contributor rather than just a consumer.
 - **DuckDB meetup presentation** — present the "Zero to Data Lake" and "Impossible Guarantee" demos from `examples/ducklake/demos/` at a DuckDB community meetup, using the speaker scripts and recovery notes shipped in v0.22.0.
+
+---
+
+### SlateDuck Ecosystem Integration (v0.37.x)
+
+SlateDuck must be released before this work can begin. v0.35.0 and v0.36.0 are reserved for work that emerges between v0.34.0 and this release.
+
+| Version | Theme | Status | Scope | Full details |
+|---------|-------|--------|-------|--------------|
+| v0.37.0 | SlateDuck integration phases 0–5: spec-compliant `SlateDuckSink` / `SlateDuckSource` pair speaking SlateDuck's bounded SQL subset, enabling zero-infrastructure path from a PostgreSQL transaction to a queryable data lake in S3 with no separate database server | 🔜 Planned | Medium | [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md) |
+
+#### v0.37.0 — SlateDuck Integration Phases 0–5 (detail)
+
+[SlateDuck](https://github.com/trickle-labs/slateduck) is a DuckLake catalog sidecar that exposes the PostgreSQL wire protocol backed by SlateDB — a cloud-native embedded LSM storage engine. Where the v0.20.0–v0.22.0 DuckLake integration targets a real PostgreSQL-backed DuckLake catalog, this release adds a spec-compliant `SlateDuckSink` / `SlateDuckSource` pair that speaks SlateDuck's bounded SQL subset. This enables the zero-infrastructure path from a PostgreSQL transaction to a queryable data lake in S3 with no separate database server.
+
+**SlateDuck integration — Phases 0–5**
+- **Phase 0: Wire corpus capture** — capture every SQL statement shape emitted by the current `DuckLakeSink` and `DuckLakeSource`, formatted as a JSONL wire corpus file (`tests/fixtures/wire-corpus/pgtide-slateduck-0.37.0.jsonl`). Contribute the corpus to the SlateDuck project as a validation artifact for Phase 0 of the SlateDuck roadmap.
+- **Phase 1: `SlateDuckSink` skeleton** — introduce `pg-tide-relay/src/sink/slateduck.rs` (feature-gated `--features slateduck`) implementing the `Sink` trait. Replaces `ensure_catalog()` with `verify_catalog_ready()` (a single `SELECT value FROM ducklake_metadata WHERE key = 'version'` call). Removes all `CREATE TABLE`, `CREATE SEQUENCE`, `nextval()`, `ON CONFLICT`, and `RETURNING` SQL — every incompatibility catalogued in [plans/ecosystem/slateduck.md §3](plans/ecosystem/slateduck.md).
+- **Phase 2: Parquet write path** — implement `SlateDuckSink::publish()` for the Parquet path: read `next_catalog_id` / `next_file_id` from the latest snapshot, pre-allocate IDs, write Parquet to object storage, commit the `ducklake_snapshot` + `ducklake_data_file` + `ducklake_file_column_stats` rows within a plain `BEGIN`/`COMMIT` block. No `nextval()`, no `RETURNING`, no `ON CONFLICT`.
+- **Phase 3: Inlined data path** — implement the inlined-data write path for batches at or below `inline_row_limit`, using direct `INSERT INTO ducklake_inlined_data_{table_id}_{schema_version}` without `ON CONFLICT`.
+- **Phase 4: Schema evolution** — adapt the existing `DuckLakeSink` schema evolution bridge for SlateDuck's bounded SQL subset (no `ON CONFLICT`, no `RETURNING`, explicit SELECT → conditional INSERT).
+- **Phase 5: Auto-partition via `ducklake_metadata`** — replace `tide.ducklake_partition_config` INSERTs with namespaced `ducklake_metadata` key/value entries using the `pg_tide.` prefix, compatible with SlateDuck's KV layout.
+- **`SlateDuckSource`** — implement `pg-tide-relay/src/source/slateduck.rs`: polls `SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $1` (single non-JOIN query); reads incremental data-file rows; delivers as `RelayMessage` objects. No multi-table JOINs.
+- **Coordinator factory wiring** — register `"slateduck"` as a valid `sink_type` and `source_type` in `build_sink()` / `build_source()` in `coordinator.rs`, gated on `#[cfg(feature = "slateduck")]`.
+
+**Relationship between DuckLake (v0.34.0) and SlateDuck (v0.37.0)**
+- The DuckLake-as-reverse-sink feature (v0.34.0) uses the existing `DuckLakeSink` (PostgreSQL-backed DuckLake catalog). SlateDuck support uses the new `SlateDuckSink` (SlateDuck PG-wire sidecar). They share the Parquet-building and schema-evolution logic via the new `ducklake_common` module, but differ in how they issue catalog SQL.
+- Both reverse-sink paths (`ducklake` and `slateduck`) support all source types: Kafka, NATS, Redis, SQS, RabbitMQ, webhook, stdin — covering the full matrix of external-source → data-lake routing without any PostgreSQL inbox intermediate.
 
 ---
 
