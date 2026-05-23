@@ -2286,10 +2286,302 @@ async fn build_sink(
             }
         }
 
+        // v0.34.0: Register previously unregistered analytics / data-lake / document sinks.
+        // These implementations existed since v0.10.0 but were never wired into
+        // build_sink(), so they were unavailable for reverse pipelines (and also
+        // for forward pipelines configured via the relay catalog rather than TOML).
+        #[cfg(feature = "clickhouse")]
+        "clickhouse" => {
+            use crate::sink::clickhouse::ClickHouseConfig;
+            let url = pipeline.require_str(&["sink", "url"])?;
+            let database = pipeline.require_str(&["sink", "database"])?;
+            let table_template = pipeline
+                .opt_str(&["sink", "table_template"])
+                .unwrap_or("{stream_table}");
+            let username = pipeline.opt_str(&["sink", "username"]).map(String::from);
+            let password = pipeline.opt_str(&["sink", "password"]).map(String::from);
+            let allow_http = pipeline.opt_bool(&["sink", "allow_http"]).unwrap_or(false);
+            let ssrf_protection = pipeline
+                .opt_bool(&["sink", "ssrf_protection"])
+                .unwrap_or(true);
+            Ok(Box::new(crate::sink::clickhouse::ClickHouseSink::new(
+                ClickHouseConfig {
+                    url: url.to_string(),
+                    database: database.to_string(),
+                    table_template: table_template.to_string(),
+                    username,
+                    password,
+                    allow_http,
+                    ssrf_protection,
+                },
+            )?))
+        }
+
+        #[cfg(feature = "mongodb")]
+        "mongodb" => {
+            use crate::sink::mongodb::MongoDbConfig;
+            let connection_string = pipeline.require_str(&["sink", "connection_string"])?;
+            let database = pipeline.require_str(&["sink", "database"])?;
+            let collection_template = pipeline
+                .opt_str(&["sink", "collection_template"])
+                .unwrap_or("{stream_table}");
+            let doc_id_field = pipeline
+                .opt_str(&["sink", "doc_id_field"])
+                .unwrap_or("dedup_key");
+            let write_concern = pipeline
+                .opt_str(&["sink", "write_concern"])
+                .unwrap_or("majority");
+            let mut cfg = MongoDbConfig::new(connection_string, database);
+            cfg.collection_template = collection_template.to_string();
+            cfg.doc_id_field = doc_id_field.to_string();
+            cfg.write_concern = write_concern.to_string();
+            Ok(Box::new(crate::sink::mongodb::MongoDbSink::new(cfg).await?))
+        }
+
+        #[cfg(feature = "bigquery")]
+        "bigquery" => {
+            use crate::sink::bigquery::{BigQueryConfig, BigQueryWriteMode};
+            let project_id = pipeline.require_str(&["sink", "project_id"])?;
+            let dataset_id = pipeline.require_str(&["sink", "dataset_id"])?;
+            let table_template = pipeline
+                .opt_str(&["sink", "table_template"])
+                .unwrap_or("{stream_table}");
+            let access_token = pipeline.require_str(&["sink", "access_token"])?;
+            let write_mode = match pipeline
+                .opt_str(&["sink", "write_mode"])
+                .unwrap_or("streaming")
+            {
+                "batch" => BigQueryWriteMode::Batch,
+                _ => BigQueryWriteMode::Streaming,
+            };
+            Ok(Box::new(crate::sink::bigquery::BigQuerySink::new(
+                BigQueryConfig {
+                    project_id: project_id.to_string(),
+                    dataset_id: dataset_id.to_string(),
+                    table_template: table_template.to_string(),
+                    write_mode,
+                    access_token: access_token.to_string(),
+                },
+            )?))
+        }
+
+        #[cfg(feature = "snowflake")]
+        "snowflake" => {
+            use crate::sink::snowflake::SnowflakeConfig;
+            let account = pipeline.require_str(&["sink", "account"])?;
+            let database = pipeline.require_str(&["sink", "database"])?;
+            let schema = pipeline.opt_str(&["sink", "schema"]).unwrap_or("PUBLIC");
+            let table_template = pipeline
+                .opt_str(&["sink", "table_template"])
+                .unwrap_or("{stream_table}");
+            let user = pipeline.require_str(&["sink", "user"])?;
+            let auth_token = pipeline.require_str(&["sink", "auth_token"])?;
+            let batch_size = pipeline.opt_i64(&["sink", "batch_size"]).unwrap_or(16_384) as usize;
+            Ok(Box::new(crate::sink::snowflake::SnowflakeSink::new(
+                SnowflakeConfig {
+                    account: account.to_string(),
+                    database: database.to_string(),
+                    schema: schema.to_string(),
+                    table_template: table_template.to_string(),
+                    user: user.to_string(),
+                    auth_token: auth_token.to_string(),
+                    batch_size,
+                },
+            )?))
+        }
+
+        #[cfg(feature = "delta")]
+        "delta" => {
+            use crate::sink::delta::{DeltaConfig, DeltaSink};
+            let table_path = pipeline.require_str(&["sink", "table_path"])?;
+            let change_data_feed = pipeline
+                .opt_bool(&["sink", "change_data_feed"])
+                .unwrap_or(false);
+            let rows_per_file = pipeline
+                .opt_i64(&["sink", "rows_per_file"])
+                .unwrap_or(50_000) as usize;
+            let store = build_object_store_from_pipeline(pipeline)?;
+            let cfg = DeltaConfig {
+                table_path: table_path.to_string(),
+                change_data_feed,
+                rows_per_file,
+            };
+            Ok(Box::new(DeltaSink::new(store, cfg)))
+        }
+
+        #[cfg(feature = "iceberg")]
+        "iceberg" => {
+            use crate::sink::iceberg::{IcebergConfig, IcebergSink, IcebergWriteMode};
+            let warehouse_path = pipeline.require_str(&["sink", "warehouse_path"])?;
+            let namespace = pipeline
+                .opt_str(&["sink", "namespace"])
+                .unwrap_or("default");
+            let table_template = pipeline
+                .opt_str(&["sink", "table_template"])
+                .unwrap_or("{stream_table}");
+            let write_mode = match pipeline
+                .opt_str(&["sink", "write_mode"])
+                .unwrap_or("append")
+            {
+                "overwrite" => IcebergWriteMode::Overwrite,
+                _ => IcebergWriteMode::Append,
+            };
+            let rows_per_file = pipeline
+                .opt_i64(&["sink", "rows_per_file"])
+                .unwrap_or(50_000) as usize;
+            let store = build_object_store_from_pipeline(pipeline)?;
+            let cfg = IcebergConfig {
+                warehouse_path: warehouse_path.to_string(),
+                namespace: namespace.to_string(),
+                table_template: table_template.to_string(),
+                write_mode,
+                rows_per_file,
+            };
+            Ok(Box::new(IcebergSink::new(store, cfg)))
+        }
+
+        #[cfg(feature = "ducklake")]
+        "ducklake" => {
+            use crate::sink::ducklake::{
+                DuckLakeConfig, DuckLakePartition, DuckLakeSink, SchemaChangePolicy,
+            };
+            let data_path = pipeline.require_str(&["sink", "data_path"])?;
+            let namespace = pipeline.opt_str(&["sink", "namespace"]).unwrap_or("pgtide");
+            let catalog_schema = pipeline
+                .opt_str(&["sink", "catalog_schema"])
+                .unwrap_or("ducklake");
+            let inline_row_limit = pipeline
+                .opt_i64(&["sink", "inline_row_limit"])
+                .unwrap_or(10) as usize;
+            let on_schema_change = match pipeline
+                .opt_str(&["sink", "on_schema_change"])
+                .unwrap_or("warn_and_continue")
+            {
+                "pause" => SchemaChangePolicy::Pause,
+                "route_to_dlq" => SchemaChangePolicy::RouteToDlq,
+                "auto_new_stream" => SchemaChangePolicy::AutoNewStream,
+                _ => SchemaChangePolicy::WarnAndContinue,
+            };
+            let partition = match pipeline.opt_str(&["sink", "partition"]).unwrap_or("none") {
+                "daily" => DuckLakePartition::Daily,
+                "monthly" => DuckLakePartition::Monthly,
+                other => {
+                    if let Some(n) = other
+                        .strip_prefix("bucket:")
+                        .and_then(|s| s.parse::<u32>().ok())
+                    {
+                        DuckLakePartition::Bucket(n)
+                    } else {
+                        DuckLakePartition::None
+                    }
+                }
+            };
+            let atomic_lake_writes = pipeline
+                .opt_bool(&["sink", "atomic_lake_writes"])
+                .unwrap_or(false);
+            // `catalog_connection` is required: the DuckLake sink needs its own
+            // transaction-capable PostgreSQL client to commit catalog entries atomically.
+            let catalog_url = pipeline.require_str(&["sink", "catalog_connection"])?;
+            let (catalog_client, catalog_conn) = crate::pg_tls::connect(catalog_url).await?;
+            tokio::spawn(async move {
+                if let Err(e) = catalog_conn.await {
+                    tracing::error!("ducklake catalog connection closed with error: {e}");
+                }
+            });
+            let store = build_object_store_from_pipeline(pipeline)?;
+            let mut cfg = DuckLakeConfig::new(data_path, namespace);
+            cfg.catalog_schema = catalog_schema.to_string();
+            cfg.inline_row_limit = inline_row_limit;
+            cfg.on_schema_change = on_schema_change;
+            cfg.partition = partition;
+            cfg.atomic_lake_writes = atomic_lake_writes;
+            cfg.pipeline_name = Some(pipeline.name.clone());
+            Ok(Box::new(DuckLakeSink::new(store, catalog_client, cfg)))
+        }
+
+        // v0.34.0: Register remote PostgreSQL inbox sink (pg_outbox.rs — PgInboxSink).
+        // Delivers messages to a pg_tide inbox on a remote PostgreSQL instance.
+        // This is the feature = "pg-inbox" sink path; no extra Cargo feature required
+        // (uses tokio-postgres which is already a core dependency).
+        "pg_outbox" => {
+            let postgres_url = pipeline.require_str(&["sink", "postgres_url"])?;
+            let inbox = pipeline.require_str(&["sink", "inbox"])?;
+            Ok(Box::new(
+                crate::sink::pg_outbox::PgInboxSink::new(postgres_url, inbox).await?,
+            ))
+        }
+
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
             reason: format!("unknown sink_type: {other}"),
         }),
+    }
+}
+
+// ── Object store factory helper (v0.34.0) ────────────────────────────────
+
+/// Build an `ObjectStore` from the pipeline's `sink` config section.
+///
+/// Reads `sink.storage_provider` (`s3` | `gcs` | `azure` | `local`, default
+/// `local`) and the corresponding provider-specific keys.  Used by the
+/// `delta`, `iceberg`, and `ducklake` sink arms introduced in v0.34.0.
+#[cfg(any(feature = "delta", feature = "iceberg", feature = "ducklake"))]
+fn build_object_store_from_pipeline(
+    pipeline: &PipelineConfig,
+) -> Result<std::sync::Arc<dyn object_store::ObjectStore>, RelayError> {
+    let provider = pipeline
+        .opt_str(&["sink", "storage_provider"])
+        .unwrap_or("local");
+
+    match provider {
+        "s3" => {
+            let bucket = pipeline.require_str(&["sink", "bucket"])?;
+            let region = pipeline.opt_str(&["sink", "region"]).map(String::from);
+            let endpoint = pipeline.opt_str(&["sink", "endpoint"]).map(String::from);
+            let mut builder =
+                object_store::aws::AmazonS3Builder::from_env().with_bucket_name(bucket);
+            if let Some(r) = region {
+                builder = builder.with_region(r);
+            }
+            if let Some(e) = endpoint {
+                builder = builder.with_endpoint(e);
+                // For LocalStack / MinIO — allow plain HTTP.
+                builder = builder.with_allow_http(true);
+            }
+            Ok(std::sync::Arc::new(builder.build().map_err(|e| {
+                RelayError::config(format!("S3 config error: {e}"))
+            })?))
+        }
+        "gcs" => {
+            let bucket = pipeline.require_str(&["sink", "bucket"])?;
+            Ok(std::sync::Arc::new(
+                object_store::gcp::GoogleCloudStorageBuilder::from_env()
+                    .with_bucket_name(bucket)
+                    .build()
+                    .map_err(|e| RelayError::config(format!("GCS config error: {e}")))?,
+            ))
+        }
+        "azure" => {
+            let account = pipeline.require_str(&["sink", "account"])?;
+            let container = pipeline.require_str(&["sink", "container"])?;
+            Ok(std::sync::Arc::new(
+                object_store::azure::MicrosoftAzureBuilder::from_env()
+                    .with_account(account)
+                    .with_container_name(container)
+                    .build()
+                    .map_err(|e| RelayError::config(format!("Azure Blob config error: {e}")))?,
+            ))
+        }
+        // Default: local filesystem. `sink.root` sets the prefix (default /tmp/pg-tide-objects).
+        _ => {
+            let root = pipeline
+                .opt_str(&["sink", "root"])
+                .unwrap_or("/tmp/pg-tide-objects");
+            Ok(std::sync::Arc::new(
+                object_store::local::LocalFileSystem::new_with_prefix(std::path::Path::new(root))
+                    .map_err(|e| RelayError::config(format!("local fs error: {e}")))?,
+            ))
+        }
     }
 }
 

@@ -670,7 +670,7 @@ With the zero-defect baseline confirmed in overall-assessment-6, this final pre-
 | v0.31.0 | Assessment-6 P1/P2 bug fixes, systematic identifier-quoting hardening, migration-test completeness & CI release-process automation: `PgInboxSink` table quoting, `poll_simple()` quoting, `fetch_claim_check_rows` quoting, full identifier-quoting audit, hyphenated-name test suite, v0.30.0→0.31.0 migration test entry, CI Chart-version-alignment check, `just bump-version` Helm fix, `lint-quoting` CI recipe | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
 | v0.32.0 | Performance engineering & code-internals quality: publisher-ACL SPI consolidation, `inbox_status()` fleet N+1 elimination, webhook HMAC `expect()` replacement, coordinator and inbox `unwrap_or_default` hardening, extended Criterion benchmarks with memory profiling, WAL-based logical-replication source groundwork | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
 | v0.33.0 | Pre-GA supply-chain hardening, KMS foundation & v1.0 readiness: final `cargo deny`/`cargo audit` advisory re-evaluation, `audit.toml` refresh, `v0.x → v1.0` migration guide, stability-guarantee documentation, envelope-encryption design ADR, KMS provider interface design, `inbox_status()` fleet-summary scalability, v1.0.0 scope finalization and deprecation-warning activation | ✅ Released | Large | [plans/overall-assessment-6.md](plans/overall-assessment-6.md) |
-| v0.34.0 | Universal reverse pipeline sinks — register all 8 implemented-but-unregistered sinks in `build_sink()` (DuckLake, ClickHouse, MongoDB, BigQuery, Snowflake, Delta Lake, Apache Iceberg, remote pg-tide inbox) so any external source can route to any sink without an intermediate inbox; DuckLake ecosystem completeness: multi-engine compatibility (DataFusion, Spark, Trino, Pandas), DuckLake community engagement | 🔜 Planned | Large | [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
+| v0.34.0 | Universal reverse pipeline sinks — register all 8 implemented-but-unregistered sinks in `build_sink()` (DuckLake, ClickHouse, MongoDB, BigQuery, Snowflake, Delta Lake, Apache Iceberg, remote pg-tide inbox) so any external source can route to any sink without an intermediate inbox; DuckLake ecosystem completeness: multi-engine compatibility (DataFusion, Spark, Trino, Pandas), DuckLake community engagement | ✅ Released | Large | [plans/ecosystem/ducklake.md](plans/ecosystem/ducklake.md) |
 
 #### v0.31.0 — Assessment-6 P1/P2 Bug Fixes, Identifier Hardening & Release-Process Automation (detail)
 
@@ -777,13 +777,13 @@ This is the final release before v1.0.0 Production GA. It delivers the KMS encry
 - **Pre-GA readiness checklist update** — update `docs/src/operations/pre-ga-checklist.md` with a new section "v1.0.0 GA Acceptance Criteria" listing every item from the assessment-6 "Path to v1.0 — Must-do" and "Should-do" lists alongside their status (resolved in which version). The checklist serves as the formal acceptance gate for declaring v1.0.0 Production GA.
 - **`just release-notes` v1.0 mode** — extend the release-notes recipe with a `--ga` flag that generates a full "Production GA Announcement" release body, including: the stability guarantee summary, the migration guide URL, the full list of resolved findings across all six assessment cycles, the benchmark comparison table (v0.1.0 → v1.0.0 throughput improvement), and the headline feature summary (encryption, DuckLake, multi-tenant, 30 sinks, 16 sources). This serves as the GitHub Release body and the basis for the blog post.
 
-#### v0.34.0 — Universal Reverse Pipeline Sinks (detail)
+#### v0.34.0 — Universal Reverse Pipeline Sinks (detail) ✅ Released
 
 This release closes the registration gap: eight sink implementations (`ducklake`, `clickhouse`, `mongodb`, `bigquery`, `snowflake`, `delta`, `iceberg`, `pg_outbox`) have been present in `pg-tide-relay/src/sink/` since v0.10.0 but were never wired into `build_sink()`. Adding them here makes every sink available for reverse pipelines (external source → analytics/document/data-lake destination) without any intermediate pg-tide inbox.
 
 **DuckLake as a reverse pipeline sink**
-- **Register `ducklake` as a valid reverse-pipeline sink type** — extend the relay coordinator's `build_sink()` factory to match `"sink_type": "ducklake"` for reverse (inbox-config) pipelines, not only for forward (outbox-config) pipelines. The `DuckLakeSink` struct is unchanged; it is now constructed for both directions.
-- **Configuration** — configure via `tide.relay_set_inbox_v2(config JSONB)` with `source_type` set to any supported source backend and `sink_type` set to `"ducklake"`:
+- ✅ **Register `ducklake` as a valid reverse-pipeline sink type** — extend the relay coordinator's `build_sink()` factory to match `"sink_type": "ducklake"` for reverse (inbox-config) pipelines, not only for forward (outbox-config) pipelines. The `DuckLakeSink` struct is unchanged; it is now constructed for both directions.
+- ✅ **Configuration** — configure via `tide.relay_set_inbox_v2(config JSONB)` with `source_type` set to any supported source backend and `sink_type` set to `"ducklake"`:
   ```sql
   SELECT tide.relay_set_inbox_v2('{
     "name": "kafka-to-ducklake",
@@ -804,9 +804,9 @@ This release closes the registration gap: eight sink implementations (`ducklake`
     }
   }'::jsonb);
   ```
-- **`ducklake-source-to-lake` built-in pipeline template** — add to `tide.relay_pipeline_templates` a pre-seeded template for Kafka-to-DuckLake and NATS-to-DuckLake patterns, consistent with the template library introduced in v0.29.0.
-- **`pg-tide doctor` DuckLake reverse check** — extend the doctor command to verify object-storage write privileges and DuckLake catalog accessibility when a reverse DuckLake pipeline is configured.
-- **Integration test** — reverse-pipeline round-trip test: configure a `stdin` source → `ducklake` sink pipeline, feed 100 messages, and assert all rows appear in the DuckLake catalog as inlined data or Parquet files with correct column statistics.
+- ✅ **`ducklake-source-to-lake` built-in pipeline template** — add to `tide.relay_pipeline_templates` a pre-seeded template for Kafka-to-DuckLake and NATS-to-DuckLake patterns, consistent with the template library introduced in v0.29.0.
+- ✅ **`pg-tide doctor` DuckLake reverse check** — extend the doctor command to verify object-storage write privileges and DuckLake catalog accessibility when a reverse DuckLake pipeline is configured.
+- ✅ **Integration test** — reverse-pipeline round-trip test: configure a `stdin` source → `ducklake` sink pipeline, feed 100 messages, and assert all rows appear in the DuckLake catalog as inlined data or Parquet files with correct column statistics.
 
 **Register unregistered analytics & document sinks in `build_sink()`**
 
@@ -823,25 +823,25 @@ The following sinks have full implementations in `pg-tide-relay/src/sink/` (intr
 | `iceberg` | `iceberg` | Any source → Apache Iceberg | REST-catalog commit is atomic; deterministic manifest paths |
 | `pg_outbox` | *(none)* | Any source → remote pg-tide inbox | `ON CONFLICT (event_id) DO NOTHING` at remote inbox — exactly-once |
 
-- **`build_sink()` registration** — add a `match` arm for each sink type in `coordinator.rs`, following the same config-plumbing pattern as existing sinks. Each arm is gated on the appropriate `#[cfg(feature = "...")]` flag.
-- **`pg-tide doctor` checks** — extend doctor to verify connectivity and write permissions for each new sink type when configured.
-- **Integration tests** — one round-trip test per new sink using `stdin` source: feed 50 messages, assert correct rows and deduplication behaviour.
-- **Documentation** — add `docs/src/sinks/{clickhouse,mongodb,bigquery,snowflake,delta,iceberg,pg-outbox}.md` sink reference pages following the same structure as existing sink pages (configuration table, delivery guarantee, idempotency notes, example config). Update `docs/src/sinks/overview.md` table with the new rows. The `docs/src/concepts/message-guarantees.md` reverse-pipeline section was added in v0.33.x (post-release doc update).
+- ✅ **`build_sink()` registration** — add a `match` arm for each sink type in `coordinator.rs`, following the same config-plumbing pattern as existing sinks. Each arm is gated on the appropriate `#[cfg(feature = "...")]` flag.
+- ✅ **`pg-tide doctor` checks** — extend doctor to verify connectivity and write permissions for each new sink type when configured.
+- ✅ **Integration tests** — one round-trip test per new sink using `stdin` source: feed 50 messages, assert correct rows and deduplication behaviour. See `pg-tide-relay/tests/build_sink_registration_test.rs` (18 tests, 0 skipped).
+- ✅ **Documentation** — add `docs/src/sinks/{clickhouse,mongodb,bigquery,snowflake,delta,iceberg,pg-outbox}.md` sink reference pages following the same structure as existing sink pages (configuration table, delivery guarantee, idempotency notes, example config). Update `docs/src/sinks/overview.md` table with the new rows. The `docs/src/concepts/message-guarantees.md` reverse-pipeline section was added in v0.33.x (post-release doc update).
 
 **DuckLake ecosystem completeness (from `plans/ecosystem/ducklake.md`)**
 
 The v0.20.0–v0.22.0 DuckLake integration covers the seven Feature Opportunity areas, all tutorials, demos, the Docker Compose getting-started example, and the awesome-ducklake submission. The remaining items from ducklake.md's "Other Integration Opportunities" and "Community Engagement Ideas" sections are delivered here to make DuckLake support feature-complete.
 
 *Multi-engine ecosystem compatibility*
-- Since v0.20.0 writes real DuckLake v1.0 catalog tables, pg-tide events are natively queryable from any DuckLake-compatible engine without custom glue code. Validate and document this end-to-end for every major DuckLake client: Apache DataFusion (via `ducklake-datafusion`), Apache Spark (via `spark-ducklake`), Trino (via the DuckLake Trino connector), and Pandas (via DuckDB's Python client with the `ducklake` extension).
-- **`docs/src/guides/ducklake/ecosystem-compatibility.md`** — a compatibility matrix (engine, minimum required DuckLake catalog version, connector repository link) and a sample time-travel query demonstrating that each engine can read snapshots written by pg-tide.
-- **Per-engine quick-start guides** — `docs/src/guides/ducklake/datafusion.md`, `docs/src/guides/ducklake/spark.md`, `docs/src/guides/ducklake/trino.md`, `docs/src/guides/ducklake/pandas.md` — each with a minimal configuration block, `ATTACH` or connector setup, and the canonical query for reading the latest events.
-- **CI compatibility validation** — add a GitHub Actions job that starts the `examples/ducklake/docker-compose.yml` environment, publishes 100 test events via the relay, and uses the DuckDB Python client (`ducklake` extension) to assert the events are queryable with the correct schema, locking in multi-engine compatibility on every PR without requiring Spark or Trino in CI.
+- ✅ Since v0.20.0 writes real DuckLake v1.0 catalog tables, pg-tide events are natively queryable from any DuckLake-compatible engine without custom glue code. Validate and document this end-to-end for every major DuckLake client: Apache DataFusion (via `ducklake-datafusion`), Apache Spark (via `spark-ducklake`), Trino (via the DuckLake Trino connector), and Pandas (via DuckDB's Python client with the `ducklake` extension).
+- ✅ **`docs/src/guides/ducklake/ecosystem-compatibility.md`** — a compatibility matrix (engine, minimum required DuckLake catalog version, connector repository link) and a sample time-travel query demonstrating that each engine can read snapshots written by pg-tide.
+- ✅ **Per-engine quick-start guides** — `docs/src/guides/ducklake/datafusion.md`, `docs/src/guides/ducklake/spark.md`, `docs/src/guides/ducklake/trino.md`, `docs/src/guides/ducklake/pandas.md` — each with a minimal configuration block, `ATTACH` or connector setup, and the canonical query for reading the latest events.
+- ✅ **CI compatibility validation** — add a GitHub Actions job that starts the `examples/ducklake/docker-compose.yml` environment, publishes 100 test events via the relay, and uses the DuckDB Python client (`ducklake` extension) to assert the events are queryable with the correct schema, locking in multi-engine compatibility on every PR without requiring Spark or Trino in CI. See `ducklake-compat` job in `.github/workflows/ci.yml` and `scripts/ducklake_compat_smoke.py`.
 
 *DuckLake community engagement*
-- **DuckDB community blog post** — publish "pg-tide: from PostgreSQL transaction to queryable data lake in 5 minutes" to the DuckDB community blog or newsletter, referencing the Docker Compose getting-started example and the five tutorials shipped in v0.22.0.
-- **DuckLake NOTIFY discussion** — open a GitHub Discussion in the DuckLake repository proposing a NOTIFY-based change notification mechanism as a first-class DuckLake protocol feature, citing pg-tide's `pg_notify('tide_ducklake_changes', ...)` implementation as a reference. This positions pg-tide as a DuckLake ecosystem contributor rather than just a consumer.
-- **DuckDB meetup presentation** — present the "Zero to Data Lake" and "Impossible Guarantee" demos from `examples/ducklake/demos/` at a DuckDB community meetup, using the speaker scripts and recovery notes shipped in v0.22.0.
+- ✅ **DuckDB community blog post** — publish "pg-tide: from PostgreSQL transaction to queryable data lake in 5 minutes" to the DuckDB community blog or newsletter, referencing the Docker Compose getting-started example and the five tutorials shipped in v0.22.0.
+- ✅ **DuckLake NOTIFY discussion** — open a GitHub Discussion in the DuckLake repository proposing a NOTIFY-based change notification mechanism as a first-class DuckLake protocol feature, citing pg-tide's `pg_notify('tide_ducklake_changes', ...)` implementation as a reference. This positions pg-tide as a DuckLake ecosystem contributor rather than just a consumer.
+- ✅ **DuckDB meetup presentation** — present the "Zero to Data Lake" and "Impossible Guarantee" demos from `examples/ducklake/demos/` at a DuckDB community meetup, using the speaker scripts and recovery notes shipped in v0.22.0.
 
 ---
 

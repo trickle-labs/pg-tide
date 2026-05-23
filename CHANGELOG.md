@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.34.0 — Universal Reverse Pipeline Sinks & DuckLake Ecosystem Completeness](#0340--universal-reverse-pipeline-sinks--ducklake-ecosystem-completeness)
 - [0.33.0 — Pre-GA Supply-Chain Hardening, KMS Foundation & v1.0 Readiness](#0330--2026-05-20--pre-ga-supply-chain-hardening-kms-foundation--v10-readiness)
 - [0.32.0 — Performance Engineering, Code Internals Quality & Benchmark Hardening](#0320--2026-05-20--performance-engineering-code-internals-quality--benchmark-hardening)
 - [0.31.0 — Assessment-6 P1/P2 Bug Fixes, Identifier Quoting Hardening & Release-Process Automation](#0310--assessment-6-p1p2-bug-fixes-identifier-quoting-hardening--release-process-automation)
@@ -41,6 +42,47 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.34.0] — Universal Reverse Pipeline Sinks & DuckLake Ecosystem Completeness
+
+This release completes the relay's universal routing capability by registering all eight analytics and reverse-pipeline sinks in `build_sink()`, and delivers the DuckLake ecosystem completeness initiative with multi-engine compatibility guides and CI validation.
+
+### Universal reverse pipeline sinks
+
+Previously, eight production-ready sink implementations existed in `pg-tide-relay/src/sink/` but were not registered in the `build_sink()` factory function — meaning they could not be selected by any pipeline configuration. This release wires all of them up:
+
+- **DuckLake** (`type = "ducklake"`) — writes Parquet files to local/S3/GCS/Azure object storage and commits snapshots to a DuckLake v1.0 PostgreSQL catalog. Requires `catalog_connection` (a PostgreSQL URL for the catalog database) and `storage_provider` (`local`, `s3`, `gcs`, or `azure`). Feature-gated: `ducklake`.
+- **ClickHouse** (`type = "clickhouse"`) — HTTP-native insert to a ClickHouse cluster. Requires `url`, `database`, `table`, and `api_key` config fields. Feature-gated: `clickhouse`.
+- **MongoDB** (`type = "mongodb"`) — inserts message documents into a MongoDB collection. Requires `uri` and `collection`. Feature-gated: `mongodb`.
+- **BigQuery** (`type = "bigquery"`) — streaming inserts to a BigQuery table via the REST insertAll API. Requires `project_id`, `dataset_id`, `table_id`, and `api_key`. Feature-gated: `bigquery`.
+- **Snowflake** (`type = "snowflake"`) — row inserts via the Snowflake REST API. Requires `account_identifier`, `database`, `schema`, `table`, `user`, and `api_key`. Feature-gated: `snowflake`.
+- **Delta Lake** (`type = "delta"`) — writes Parquet data files and Delta Log commit JSON entries to any object store. Uses the shared `build_object_store_from_pipeline()` helper to resolve the `storage_provider`. Feature-gated: `delta`.
+- **Apache Iceberg** (`type = "iceberg"`) — writes Parquet data files and Iceberg snapshot metadata JSON to any object store. Feature-gated: `iceberg`.
+- **Remote pg-tide inbox** (`type = "pg_outbox"`) — routes messages from one pg-tide deployment's outbox directly into another deployment's inbox, enabling inbox-to-inbox fan-out across PostgreSQL instances. No feature gate required.
+
+All eight sinks are covered by new integration tests in `pg-tide-relay/tests/build_sink_registration_test.rs` (18 tests total, 0 skipped). The Delta Lake and Apache Iceberg sinks are exercised with real local filesystem round-trip tests writing 50 messages and verifying the `_delta_log/` and `metadata/` directory structure. The `pg_outbox` sink is exercised with a full round-trip of 50 messages against a live PostgreSQL testcontainer, including deduplication verification.
+
+The new `build_object_store_from_pipeline()` helper (feature-gated on `delta | iceberg | ducklake`) reads the `storage_provider` key from the sink config and constructs an `Arc<dyn ObjectStore>` for local, S3, GCS, or Azure backends.
+
+### DuckLake ecosystem completeness
+
+New documentation in `docs/src/guides/ducklake/`:
+
+- **[`ecosystem-compatibility.md`](docs/src/guides/ducklake/ecosystem-compatibility.md)** — compatibility matrix covering DuckDB, DataFusion, Apache Spark, Trino, and pandas+DuckDB against all four storage backends (local, S3, GCS, Azure). Includes ready-to-run time-travel query examples for each engine.
+- **[`datafusion.md`](docs/src/guides/ducklake/datafusion.md)** — DataFusion quick-start: resolving Parquet paths from the DuckLake catalog, reading snapshots with PyArrow, and performing time-travel by snapshot ID.
+- **[`spark.md`](docs/src/guides/ducklake/spark.md)** — Spark quick-start: PySpark Parquet read from DuckLake catalog paths, time-travel via snapshot ID, and a polling-based micro-batch streaming pattern.
+- **[`trino.md`](docs/src/guides/ducklake/trino.md)** — Trino quick-start: Hive connector configuration, Python-based catalog sync script, and SQL time-travel via versioned external tables.
+- **[`pandas.md`](docs/src/guides/ducklake/pandas.md)** — Pandas quick-start: three patterns — DuckDB-native (recommended), PyArrow direct, and incremental snapshot polling with a live watch loop.
+
+### CI additions
+
+- **`ducklake-compat` CI job** — new GitHub Actions job (`ducklake-compat`) in `.github/workflows/ci.yml` spins up a PostgreSQL service container, installs DuckDB + psycopg2, and runs `scripts/ducklake_compat_smoke.py`. The smoke test writes two synthetic Parquet files (25 rows each), registers them in a minimal DuckLake catalog schema, then verifies DuckDB can read all 50 rows, confirms dedup key uniqueness, validates time-travel by snapshot, and optionally tests `postgres_scan` catalog access.
+
+### Migration
+
+- **`sql/pg_tide--0.33.0--0.34.0.sql`** — upgrades the extension comment from `v0.33.0` to `v0.34.0`. No schema changes are required; all relay changes are binary-only.
 
 ---
 
