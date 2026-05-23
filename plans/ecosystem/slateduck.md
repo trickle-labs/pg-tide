@@ -1058,7 +1058,87 @@ aware of other pipelines writing to the same catalog.
 
 ---
 
-## 11. Why This Is Worth Building
+## 11. DuckLake as a Reverse Pipeline Sink (v0.34.0)
+
+A key gap in the DuckLake integration identified during the v0.33.0 architecture review: the
+relay's `DuckLakeSink` and `SlateDuckSink` are only available as forward-pipeline sinks
+(outbox → DuckLake). Any external source (Kafka, NATS, Redis Streams, SQS, webhook) that wants
+to write to a DuckLake table must route through a pg-tide inbox first — a two-hop detour that
+adds latency and storage overhead.
+
+**v0.34.0 closes this gap** by registering `ducklake` and `slateduck` as valid `sink_type`
+values in reverse pipelines (configured via `tide.relay_set_inbox_v2()`). This enables the
+**Kafka → DuckLake** and **NATS → DuckLake** patterns that motivated this conversation,
+without any intermediate inbox table.
+
+### 11.1 New Reverse Pipeline Patterns (v0.34.0)
+
+| Pattern | Config `source_type` | Config `sink_type` | Notes |
+|---|---|---|---|
+| Kafka → DuckLake (PG catalog) | `kafka` | `ducklake` | PostgreSQL-backed DuckLake; supports `atomic_lake_writes` |
+| NATS → DuckLake (PG catalog) | `nats` | `ducklake` | Full inlining + schema evolution |
+| Kafka → SlateDuck | `kafka` | `slateduck` | S3-only, no separate DB; requires `--features slateduck` |
+| NATS → SlateDuck | `nats` | `slateduck` | Zero-infrastructure path; SlateDuck Phase 4 required |
+| Redis → DuckLake | `redis` | `ducklake` | Redis Streams as a DuckLake ingest source |
+| SQS → DuckLake | `sqs` | `ducklake` | AWS event ingestion direct to data lake |
+| Webhook → DuckLake | `webhook` | `ducklake` | HTTP-push events to DuckLake with dedup via `_dedup_key` |
+
+### 11.2 Example: Kafka → DuckLake
+
+```sql
+SELECT tide.relay_set_inbox_v2('{
+  "name": "kafka-to-ducklake",
+  "source_type": "kafka",
+  "source": {
+    "brokers": "kafka:9092",
+    "group_id": "pg-tide-relay",
+    "topic": "order-events",
+    "event_type": "order.event"
+  },
+  "sink_type": "ducklake",
+  "sink": {
+    "data_path": "s3://my-lake/orders/",
+    "namespace": "analytics",
+    "catalog_schema": "ducklake",
+    "inline_row_limit": 10,
+    "on_schema_change": "warn_and_continue",
+    "partition": "daily"
+  }
+}'::jsonb);
+```
+
+### 11.3 Delivery Guarantees Without an Inbox
+
+Without an inbox, the exactly-once guarantee comes from:
+
+1. **Kafka consumer group offsets** — Kafka tracks what has been consumed; if the relay crashes,
+   it resumes from the last committed offset.
+2. **DuckLake `_dedup_key`** — the message's Kafka key (or `partition:offset`) is stored as
+   `_dedup_key` in the DuckLake row. At-least-once delivery from Kafka combined with client-side
+   deduplication in DuckLake (via `_dedup_key` scan before inlining) provides effective
+   exactly-once semantics.
+3. **For PostgreSQL-backed DuckLake only**: `atomic_lake_writes = true` can be combined with a
+   relay-managed offset table to provide a transactional guarantee — but this requires the relay
+   to connect to the same PostgreSQL instance as the DuckLake catalog.
+
+The inbox-less path trades the strongest exactly-once guarantee for operational simplicity.
+For compliance workloads requiring strict exactly-once, use the two-hop pattern:
+`Kafka → inbox → outbox → DuckLake` with `atomic_lake_writes = true`.
+
+### 11.4 Relationship to SlateDuck Integration
+
+The `slateduck` reverse sink (v0.34.0 Phases 0–5) follows the same pattern but targets
+SlateDuck's bounded SQL subset. The SlateDuck path is ideal for:
+- **Zero-infrastructure analytics**: No PostgreSQL catalog server required; catalog lives in S3.
+- **Cost-sensitive workloads**: S3 storage only; no RDS instance cost for the catalog.
+- **Serverless deployments**: SlateDuck sidecar is stateless; pg-tide relay can be ephemeral.
+
+See §11.2–§11.4 of the original SlateDuck design doc for the compatibility constraints that
+apply to the `SlateDuckSink` path.
+
+---
+
+## 12. Why This Is Worth Building
 
 The combination of pg-tide + SlateDuck creates something neither project can offer alone:
 
