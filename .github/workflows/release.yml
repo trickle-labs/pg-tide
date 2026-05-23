@@ -172,7 +172,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
     steps:
       - uses: actions/checkout@v6
 
@@ -225,14 +224,33 @@ jobs:
         run: |
           docker buildx imagetools inspect ghcr.io/trickle-labs/pg-tide:${{ steps.meta.outputs.version }}
 
-      # v0.16.0: Keyless cosign signing for the multi-arch manifest.
+  # v0.16.0: Keyless cosign signing for the multi-arch manifest.
+  # Separated from docker-merge so id-token: write does not interfere
+  # with docker/metadata-action's GitHub REST API calls.
+  cosign-docker:
+    name: Sign Docker Image (cosign)
+    runs-on: ubuntu-latest
+    needs: docker-merge
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    steps:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Sign Docker image (keyless cosign)
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           cosign sign --yes \
-            ghcr.io/trickle-labs/pg-tide:${{ steps.meta.outputs.version }}
+            ghcr.io/trickle-labs/pg-tide:${VERSION}
         env:
           COSIGN_EXPERIMENTAL: "1"
 
@@ -427,7 +445,7 @@ jobs:
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build, docker-merge, docker-full-merge, trivy-scan]
+    needs: [build, cosign-docker, docker-full-merge, trivy-scan]
     steps:
       - uses: actions/checkout@v6
 
