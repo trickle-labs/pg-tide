@@ -15,13 +15,14 @@ When you're ready to fan out to Kafka, NATS, Redis Streams, or any analytics pla
 - **Idempotent Inbox** — deduplication via unique event IDs; exactly-once delivery semantics at the application layer
 - **Consumer Groups** — Kafka-style offset tracking with heartbeats and visibility leases
 - **Relay Binary** — standalone `pg-tide` process; config lives in PostgreSQL and hot-reloads without restart
-- **15+ Sink Backends** — streaming, cloud, analytics, notifications, connectors, and object storage
+- **30 Sink Backends** — streaming, cloud, analytics, notifications, connectors, object storage, and cross-instance pg-tide fan-out; all sinks fully registered and integration-tested
 - **Pluggable Wire Formats** — native, Debezium, CloudEvents, Maxwell, Canal, and custom CDC JSON
 - **Multi-Tenant** — row-level security, per-tenant Prometheus labels, per-outbox publisher ACLs, and per-tenant advisory-lock namespacing
 - **Outbox Table Partitioning** — declarative daily/weekly/monthly range partitioning with live migration and relay sweep integration
 - **Replay Workbench** — rewind consumer offsets, preview replays, and manage the DLQ from SQL or CLI
-- **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart; `--self-test` flag for Kubernetes readiness probes
+- **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart; `--self-test` and `--expect-extension-version` flags for Kubernetes readiness probes
 - **Observable** — OpenTelemetry spans, Prometheus metrics, Grafana dashboard, and pre-built alerting rules included
+- **Envelope Encryption Foundation** — KMS-backed AES-256-GCM envelope encryption (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file); full implementation in v1.0.0
 
 ## Quick Start
 
@@ -126,6 +127,12 @@ pg-tide --self-test --postgres-url "postgres://..."
 # Show all configured pipelines and consumer lag at a glance
 pg-tide status --postgres-url "postgres://..."
 
+# Include per-inbox fleet summary in status output
+pg-tide status --postgres-url "postgres://..." --inbox-summary
+
+# Verify the installed extension meets a minimum version (useful in initContainers)
+pg-tide --expect-extension-version 0.34.0 --self-test --postgres-url "postgres://..."
+
 # Delete consumed outbox rows older than the retention window
 pg-tide sweep --postgres-url "postgres://..."
 
@@ -150,6 +157,7 @@ pg-tide asyncapi validate --spec-url https://example.com/asyncapi.yaml
 - **SSRF protection** — webhook sinks reject loopback, link-local, private ranges, and plain HTTP by default
 - **Secret redaction** — `${env:…}` and `${file:…}` references are replaced with `[REDACTED]` in logs
 - **Supply-chain audit** — `cargo-deny` checks every dependency for RUSTSEC advisories and license compliance in CI
+- **Envelope Encryption Foundation** — `tide.outbox_encryption_config` catalog table and `EncryptionEnvelope` trait skeleton for AES-256-GCM KMS-backed payload encryption; four provider backends (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file); full implementation ships in v1.0.0
 
 ## Observability
 
@@ -271,8 +279,8 @@ Full documentation is at **[trickle-labs.github.io/pg-tide](https://trickle-labs
 Each release ships an incremental SQL migration script. To upgrade an existing installation:
 
 ```sql
-ALTER EXTENSION pg_tide UPDATE TO '0.27.0';
--- or apply directly: psql -f sql/pg_tide--0.26.0--0.27.0.sql
+ALTER EXTENSION pg_tide UPDATE TO '0.34.0';
+-- or apply directly: psql -f sql/pg_tide--0.33.0--0.34.0.sql
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for per-release migration tables and breaking changes.
