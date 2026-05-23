@@ -840,6 +840,7 @@ The following sinks have full implementations in `pg-tide-relay/src/sink/` (intr
 - **`build_sink()` registration** — add a `match` arm for each sink type in `coordinator.rs`, following the same config-plumbing pattern as existing sinks. Each arm is gated on the appropriate `#[cfg(feature = "...")]` flag.
 - **`pg-tide doctor` checks** — extend doctor to verify connectivity and write permissions for each new sink type when configured.
 - **Integration tests** — one round-trip test per new sink using `stdin` source: feed 50 messages, assert correct rows and deduplication behaviour.
+- **Documentation** — add `docs/src/sinks/{clickhouse,mongodb,bigquery,snowflake,delta,iceberg,pg-outbox}.md` sink reference pages following the same structure as existing sink pages (configuration table, delivery guarantee, idempotency notes, example config). Update `docs/src/sinks/overview.md` table with the new rows. The `docs/src/concepts/message-guarantees.md` reverse-pipeline section was added in v0.33.x (post-release doc update).
 
 ---
 

@@ -280,7 +280,79 @@ pg_tide's exactly-once guarantee is strong, but it's important to understand the
 
 ---
 
+## Reverse Pipeline Guarantees (External Source → Sink)
+
+The guarantees described above cover the forward path: PostgreSQL outbox → relay → downstream sink. pg_tide also operates in **reverse**: an external source (Kafka, NATS, Redis Streams, SQS, webhook, stdin) delivers messages to a pg_tide-managed sink.
+
+The relay's core loop is direction-agnostic: it always uses **publish-then-acknowledge**. The source offset (Kafka consumer-group position, NATS sequence, Redis XACK, SQS visibility delete) is committed only after the sink confirms receipt. This gives at-least-once delivery from any source to any sink. What determines whether that becomes effectively exactly-once is **sink-side idempotency**.
+
+### The publish-then-acknowledge guarantee
+
+```
+poll source → publish batch to sink → ack source offset
+                    ↑
+          only on success. On failure: exponential backoff → retry → DLQ
+```
+
+If the relay crashes after a successful sink publish but before acknowledging the source, messages are re-delivered on restart. The sink must handle this retry idempotently to achieve exactly-once semantics.
+
+### The `dedup_key`
+
+Every `RelayMessage` carries a `dedup_key` generated from the source record's stable identity:
+
+| Source | `dedup_key` derivation |
+|--------|----------------------|
+| Kafka | `{topic}:{partition}:{offset}` |
+| NATS JetStream | Stream sequence number |
+| Redis Streams | Stream entry ID (`{stream}-{id}`) |
+| SQS | Message ID |
+| Webhook | `X-Request-ID` header, or SHA-256 of body |
+| stdin / file | Line number within the current run |
+
+The `dedup_key` is always included in the outbound message payload as `_dedup_key`. Sinks that support idempotent writes (MongoDB, DuckLake, inbox) use it automatically. Sinks without native dedup (ClickHouse, Snowflake) receive it as a column you can use for query-time deduplication.
+
+### Per-sink idempotency for reverse pipelines
+
+| Sink | On retry | Effective guarantee |
+|------|----------|---------------------|
+| `inbox` (local pg_tide) | `ON CONFLICT (event_id) DO NOTHING` | **Exactly-once** |
+| `pg_outbox` (remote pg_tide inbox) | `ON CONFLICT (event_id) DO NOTHING` on remote | **Exactly-once** |
+| `mongodb` | `replaceOne` upsert with `dedup_key` as `_id` | **Exactly-once** |
+| `ducklake` (inlined rows) | `_dedup_key` window scan before insert | **Exactly-once** |
+| `ducklake` (Parquet files) | Deterministic filename `snap_{id}_{hash}.parquet`; S3 `put` is idempotent | **Exactly-once** |
+| `delta` | Deterministic Parquet path; Delta Log commit is atomic | **Exactly-once** |
+| `iceberg` | Deterministic manifest paths; REST catalog commit is atomic | **Exactly-once** |
+| `bigquery` | `insertId` field — BigQuery deduplicates within ~1-minute window | **Best-effort exactly-once** |
+| `clickhouse` | `ReplacingMergeTree` engine deduplicates eventually (not query-time) | **Eventually exactly-once** |
+| `kafka` sink | Idempotent producer prevents broker-side duplicates; no consumer dedup | **At-least-once** (exactly-once with idempotent producer) |
+| `nats` sink | No native dedup | **At-least-once** |
+| `snowflake` | Snowpipe Streaming has no client-side dedup | **At-least-once** |
+| `redis` | Stream append — duplicates land as separate entries | **At-least-once** |
+| `sqs` | Standard: at-least-once. FIFO with `MessageDeduplicationId`: exactly-once | **At-least-once** (FIFO: **exactly-once**) |
+| `webhook` | Server-defined; `_dedup_key` is in the payload for server use | **At-most-once** (server-dependent) |
+| `elasticsearch` | Index with `_id` = `dedup_key` — upsert is idempotent | **Exactly-once** |
+| `object-storage` | Deterministic object key per batch; S3/GCS `put` is idempotent | **Exactly-once** |
+
+### When to use inbox vs. direct sink
+
+| Use case | Recommended approach |
+|----------|---------------------|
+| Downstream app needs to process each event in a transaction | Use `inbox` — SQL `UNIQUE` constraint + `inbox_mark_processed()` give transactional exactly-once |
+| Fan-out to multiple consumers of the same event | Use `inbox` — multiple consumers read the same inbox table |
+| Analytics ingestion where query-time dedup is acceptable | Use `ducklake`, `clickhouse`, `bigquery`, etc. directly — lower latency, no PostgreSQL write on the hot path |
+| Multi-cluster relay (deliver to a remote pg_tide deployment) | Use `pg_outbox` — writes to a remote inbox via tokio-postgres |
+| Low-criticality / best-effort delivery | Any sink — the relay's at-least-once loop is still more reliable than fire-and-forget |
+
+### Limitations specific to reverse pipelines
+
+- **No source-side transaction:** Unlike the forward path (where the outbox publish is part of a PostgreSQL transaction), the reverse path has no equivalent. If the external source duplicates a message upstream of the relay, the relay sees two distinct messages with different offsets. Only the sink's idempotency mechanism (via `_dedup_key`) can catch application-level duplicates.
+- **No delivery receipts to outbox:** Reverse pipelines do not write rows to `tide.relay_receipts` by default (there is no outbox to update). Observability is via Prometheus metrics (`relay_messages_published_total`, `relay_delivery_latency_seconds`) and relay logs.
+- **Ordered delivery:** The relay preserves batch order within a poll cycle. Across poll cycles, order is preserved for serial sources (single Kafka partition, NATS subject with `DeliverAll`). For partitioned or concurrent sources, downstream order is not guaranteed.
+
+---
+
 ## Comparison with Other Approaches
+
 
 To understand why the transactional outbox pattern is valuable, it helps to see how it compares with alternatives:
 
