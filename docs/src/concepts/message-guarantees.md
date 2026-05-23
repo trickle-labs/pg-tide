@@ -351,6 +351,99 @@ The `dedup_key` is always included in the outbound message payload as `_dedup_ke
 
 ---
 
+## Reverse Pipeline Sink vs. the Inbox→Outbox Bridge Pattern
+
+pg-trickle (the project pg_tide was extracted from) provides **stream tables**: a mechanism where a stream table attached to an outbox can watch an inbox, and any new row inserted into the inbox is automatically republished to the outbox. This creates a two-hop path:
+
+```
+External source → relay → inbox (PostgreSQL) → stream table → outbox (PostgreSQL) → relay → sink
+```
+
+Compare this with pg_tide's reverse pipeline sink, which is a single relay hop:
+
+```
+External source → relay → sink
+```
+
+Both patterns route data from an external source to a downstream sink without any application business logic. They are **functionally equivalent** for the simple "move data from A to B" use case. But they have different guarantees, costs, and capabilities — and choosing the wrong one has real consequences.
+
+### The dedup boundary is in a different system
+
+This is the most important structural difference.
+
+In the inbox→outbox bridge, the dedup boundary is a PostgreSQL `UNIQUE(event_id)` constraint on the inbox table. When the relay crashes after delivering to the inbox but before committing the Kafka offset, the re-delivered message hits `ON CONFLICT DO NOTHING` — the inbox row is not inserted a second time, the stream table trigger does not fire, and the outbox never sees a duplicate. **The dedup is enforced by the database engine, at the moment of receipt.** Nothing downstream of the inbox can ever receive a duplicate copy of the same event.
+
+In the reverse pipeline sink, the dedup boundary is inside the target system: a `_dedup_key` column scan for DuckLake inlined rows, a deterministic Parquet filename, a `replaceOne` upsert key in MongoDB, and so on. These mechanisms work, but they are **softer** — they rely on correct implementation in each individual sink, and for some sinks (ClickHouse, Snowflake) they are eventually-consistent rather than immediately enforced.
+
+```
+Inbox→outbox bridge:
+  Kafka → relay → [PostgreSQL UNIQUE constraint] → ... → sink
+                          ↑
+                  hard dedup wall — nothing past this point can be a duplicate
+
+Reverse pipeline sink:
+  Kafka → relay → [sink-specific dedup via _dedup_key]
+                          ↑
+                  soft dedup — depends on the sink's implementation
+```
+
+### Durability under extended downstream outage
+
+This is where the two approaches diverge most sharply in production.
+
+The inbox→outbox bridge writes messages to PostgreSQL before attempting to deliver them downstream. Once a message clears the inbox, it is durably stored in PostgreSQL — independent of whether the downstream sink (DuckLake, MongoDB, ClickHouse) is available. If the sink is down for hours or days, messages accumulate safely in the outbox table and are delivered in order when the sink recovers. The relay can be down, the sink can be down — the data is not at risk.
+
+The reverse pipeline maintains **Kafka (or NATS, Redis, etc.) as the only durable buffer**. If the sink is unavailable, the relay backs off and retries. Messages remain in Kafka only as long as Kafka's retention policy allows. If the outage lasts longer than the Kafka topic's retention period, messages in the undelivered segment are deleted by Kafka — and they are gone.
+
+| Scenario | Inbox→outbox bridge | Reverse pipeline sink |
+|---|---|---|
+| Sink unavailable for 2 hours | Messages accumulate in outbox; delivered when sink recovers | Relay backs off; messages safe in Kafka |
+| Sink unavailable for longer than Kafka retention | Safe — messages are in PostgreSQL | **Messages lost** — Kafka has deleted them |
+| Relay process restarts during backlog | Resumes from outbox offset; no data risk | Resumes from Kafka consumer-group offset; safe if within retention |
+| PostgreSQL unavailable | Both paths affected — relay cannot commit offsets | Reverse pipeline unaffected (if sink doesn't need PostgreSQL) |
+
+### Opportunity for SQL processing between receipt and publication
+
+The inbox→outbox bridge passes data through PostgreSQL between the two hops. This opens a window for SQL work that the reverse pipeline cannot do:
+
+- **Enrichment:** join the incoming event against a reference table (`JOIN products ON event->>'product_id' = products.id`) before publishing to the outbox
+- **Routing:** publish to different outboxes based on payload content (orders over €1000 go to `high-value-orders`, others to `standard-orders`)
+- **Fan-out:** one inbox can drive multiple outboxes and multiple downstream sinks with independent delivery guarantees per branch
+- **Aggregation:** accumulate inbox rows and publish a summary to the outbox on a schedule
+
+The reverse pipeline has no equivalent step. The only transforms available are wire-format template variables (`{stream_table}`, `{op}`, `{dedup_key}`) at routing time. For anything more complex, the inbox→outbox bridge is the correct tool.
+
+### Cost and latency comparison
+
+The inbox→outbox bridge writes every message to PostgreSQL twice — once to the inbox, once to the outbox — before the relay delivers it to the sink. For high-throughput analytics ingestion (millions of Kafka events per day landing in DuckLake), this is significant:
+
+- **Storage:** both the inbox table and the outbox table hold the message simultaneously
+- **Write load:** two PostgreSQL writes per message on the hot path, plus index maintenance for `UNIQUE(event_id)`
+- **Latency:** inbox write → stream table → outbox write → relay poll interval → sink deliver; minimum two PostgreSQL round-trips added to every message
+
+The reverse pipeline adds zero PostgreSQL writes. The relay reads from the source and writes directly to the sink.
+
+### Decision guide
+
+Use the **inbox→outbox bridge** when:
+
+- You need **PostgreSQL-strength exactly-once** and the sink does not have a strong native dedup mechanism
+- You need **durability beyond the Kafka retention window** — the downstream sink could be unavailable for an extended period
+- You need **SQL transforms, enrichment, or routing** between receipt and publication
+- You need **fan-out** — one incoming event should drive multiple downstream sinks with independent delivery guarantees
+- You need a **full PostgreSQL audit trail** of every received message (for compliance, debugging, or replay)
+
+Use the **reverse pipeline sink** when:
+
+- The path is a simple A→B data move with no SQL processing required
+- Kafka retention is long enough (or the topic is compacted) that an extended sink outage is not a data risk
+- The sink has a strong enough native dedup mechanism (`_dedup_key` in DuckLake/MongoDB, idempotent produces in Kafka) that sink-level exactly-once is sufficient
+- You want to minimise PostgreSQL write load — e.g. high-throughput analytics ingestion where the PostgreSQL hop is pure overhead with no business value
+
+> **If in doubt, use the inbox→outbox bridge.** It is more expensive but its guarantees are unconditional. The reverse pipeline sink is an explicit trade-off: lower cost and latency in exchange for accepting sink-dependent dedup and Kafka-bounded durability.
+
+---
+
 ## Comparison with Other Approaches
 
 

@@ -14,6 +14,50 @@ during a migration.
 | Need stream tables (`pg_trickle_streams`) | Stay on pg-trickle for now |
 | Need transactional outbox + inbox only | pg_tide covers this fully |
 
+## Stream tables and the inbox→outbox bridge
+
+pg-trickle's stream tables enable a powerful routing pattern: a stream table
+attached to an outbox can watch a pg_tide inbox, and any new row inserted into
+the inbox is automatically republished to the outbox. This creates a two-hop
+path from an external source to a downstream sink:
+
+```
+External source (Kafka) → relay → inbox (PostgreSQL)
+                                        ↓ stream table trigger
+                                   outbox (PostgreSQL) → relay → sink (DuckLake)
+```
+
+This pattern is functionally equivalent to pg_tide's reverse pipeline sinks
+(where the relay routes directly from source to sink without any PostgreSQL
+intermediate), but the two approaches have different guarantees, costs, and
+capabilities.
+
+**The critical distinction is durability and the dedup boundary:**
+
+- The inbox→outbox bridge provides **PostgreSQL-strength exactly-once**: the
+  inbox `UNIQUE(event_id)` constraint is the dedup wall. Once a message is in
+  PostgreSQL, it is durable regardless of Kafka retention or downstream sink
+  availability. Messages accumulate in the outbox and are delivered in order
+  when the sink recovers — even after days of outage.
+
+- pg_tide's reverse pipeline sinks provide **sink-dependent exactly-once**: the
+  relay routes directly from Kafka to the sink (DuckLake, MongoDB, etc.) using
+  `_dedup_key` for idempotency. Durability depends on Kafka retention — if the
+  sink is unavailable for longer than the Kafka topic's retention period,
+  messages that have not yet been delivered are lost.
+
+**Use the inbox→outbox bridge when** you need unconditional durability, SQL
+transforms or enrichment between receipt and publication, fan-out to multiple
+sinks, or a full PostgreSQL audit trail.
+
+**Use the reverse pipeline sink when** the path is a simple A→B data move, Kafka
+retention is long enough to absorb any realistic outage, and the PostgreSQL write
+overhead is not justified by business requirements.
+
+See [Message Guarantees — Reverse Pipeline Sink vs. Inbox→Outbox Bridge](../concepts/message-guarantees.md#reverse-pipeline-sink-vs-the-inboxoutbox-bridge-pattern)
+for a full side-by-side comparison including the durability table, dedup
+boundary explanation, and decision guide.
+
 ## Schema compatibility
 
 pg_tide uses a `tide.*` schema prefix. pg-trickle uses `pg_trickle_*` table
