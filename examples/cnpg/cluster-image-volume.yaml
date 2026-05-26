@@ -1,0 +1,143 @@
+# CloudNativePG + pg_tide — Image Volume Extensions Pattern
+#
+# This manifest deploys a CloudNativePG Cluster using the Image Volume
+# Extensions feature (CNPG 1.28+, Kubernetes 1.35+, PostgreSQL 18+).
+#
+# Benefits over the sidecar pattern (cluster.yaml):
+#   - Use official CloudNativePG PostgreSQL image (immutable, minimal)
+#   - Extensions are decoupled from the PostgreSQL image
+#   - Simpler image supply chain and security posture
+#   - Easier extension updates without rebuilding the base image
+#   - Extensions mounted as read-only volumes
+#
+# Requirements:
+#   - CloudNativePG operator v1.28+
+#   - Kubernetes v1.35+ (or 1.33/1.34 with ImageVolume feature gate enabled)
+#   - Container runtime with ImageVolume support (containerd 2.1+, CRI-O 1.31+)
+#   - pg_tide extension OCI image (built with examples/cnpg/Dockerfile.extension)
+#
+# Extension image build:
+#   docker build -f examples/cnpg/Dockerfile.extension \
+#     --build-arg PG_VERSION=18 \
+#     -t ghcr.io/your-org/pg-tide-extension:18-0.37.0 .
+#   docker push ghcr.io/your-org/pg-tide-extension:18-0.37.0
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-tide-cluster
+  namespace: default
+spec:
+  instances: 3
+
+  # Use the official minimal PostgreSQL image from CloudNativePG
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+
+  postgresql:
+    parameters:
+      shared_preload_libraries: ""   # pg_tide has no background workers
+    pg_hba:
+      - host all app 0.0.0.0/0 scram-sha-256
+    # PostgreSQL 18+ automatically configures extension_control_path and
+    # dynamic_library_path for each mounted image volume extension. You
+    # can override defaults if your extension image uses non-standard paths:
+    # extension_control_path: "/extensions/pg-tide/share"
+    # dynamic_library_path: "/extensions/pg-tide/lib"
+
+  # Image Volume Extensions: mount pg_tide extension container image
+  # as a read-only volume. CloudNativePG manages the mounting and the
+  # PostgreSQL GUC configuration automatically.
+  extensions:
+    - name: pg-tide
+      # Reference to the pg_tide extension OCI image.
+      # Build this image using examples/cnpg/Dockerfile.extension.
+      image:
+        reference: ghcr.io/your-org/pg-tide-extension:18-0.37.0
+
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+      postInitSQL:
+        # pg_tide will be discoverable via extension_control_path
+        # automatically configured by CloudNativePG
+        - CREATE EXTENSION IF NOT EXISTS pg_tide;
+        # Create a relay role with minimal privileges
+        - CREATE ROLE relay_user LOGIN PASSWORD 'change-me-in-production';
+        - GRANT USAGE ON SCHEMA tide TO relay_user;
+        - GRANT SELECT ON ALL TABLES IN SCHEMA tide TO relay_user;
+        - GRANT INSERT ON tide.tide_outbox_messages TO relay_user;
+
+  storage:
+    size: 10Gi
+    storageClass: standard
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+  # Mount the pg-tide relay sidecar alongside the PostgreSQL container.
+  # The sidecar reads pipeline configuration from the tide schema and
+  # forwards outbox messages to external sinks.
+  sidecars:
+    - name: pg-tide-relay
+      image: ghcr.io/trickle-labs/pg-tide:0.37.0
+      args:
+        - --log-format=json
+        - --log-level=info
+        - --metrics-addr=0.0.0.0:9090
+        - --relay-group-id=cnpg-primary
+        - --drain-timeout=30
+      env:
+        - name: PG_TIDE_POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: pg-tide-cluster-app
+              key: uri
+      ports:
+        - name: relay-metrics
+          containerPort: 9090
+          protocol: TCP
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "64Mi"
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: relay-metrics
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: relay-metrics
+        initialDelaySeconds: 3
+        periodSeconds: 5
+
+---
+# ServiceMonitor for Prometheus scraping relay metrics.
+# Requires the Prometheus Operator CRDs.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: pg-tide-relay-metrics
+  namespace: default
+  labels:
+    release: prometheus  # must match your Prometheus Operator selector
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: pg-tide-cluster
+  endpoints:
+    - port: relay-metrics
+      path: /metrics
+      interval: 30s

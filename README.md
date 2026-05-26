@@ -251,6 +251,13 @@ The `SchemaEvolutionGuard` computes SHA-256 fingerprints of message payload sche
 | `pause` | Stop the pipeline until the schema is acknowledged |
 | `dlq` | Route the message to the dead-letter queue |
 
+## Examples
+
+**Kubernetes / CloudNativePG:**
+
+- [Sidecar Pattern](examples/cnpg/cluster.yaml) — Deploy pg_tide with a relay sidecar alongside PostgreSQL. Works with any CloudNativePG version.
+- [Image Volume Extensions](examples/cnpg/IMAGE-VOLUMES.md) — Modern pattern for CloudNativePG 1.28+ using PostgreSQL 18 Image Volume Extensions. Decouples extension distribution from base images. See also [Dockerfile](examples/cnpg/Dockerfile.extension) and [example Cluster](examples/cnpg/cluster-image-volume.yaml).
+
 ## Architecture Decision Records
 
 Key design decisions are documented in `docs/adr/`:

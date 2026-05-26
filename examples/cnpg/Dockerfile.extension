@@ -1,0 +1,68 @@
+# pg_tide Extension Container Image for CloudNativePG Image Volumes
+#
+# This Dockerfile builds an OCI-compliant extension image for pg_tide
+# compatible with CloudNativePG's Image Volume Extensions feature (CNPG 1.28+,
+# PostgreSQL 18+).
+#
+# The extension image follows the standard layout:
+#   /share/extension/
+#     - pg_tide.control
+#     - pg_tide--0.37.0.sql (and all upgrade migration scripts)
+#   /lib/
+#     - pg_tide.so (compiled extension binary)
+#
+# Build and push:
+#   docker build -f examples/cnpg/Dockerfile.extension \
+#     --build-arg PG_VERSION=18 \
+#     -t ghcr.io/your-org/pg-tide-extension:18-0.37.0 .
+#   docker push ghcr.io/your-org/pg-tide-extension:18-0.37.0
+#
+# Then reference it in your Cluster resource's .spec.postgresql.extensions:
+#   postgresql:
+#     extensions:
+#       - name: pg-tide
+#         image:
+#           reference: ghcr.io/your-org/pg-tide-extension:18-0.37.0
+
+ARG PG_VERSION=18
+ARG BUILDER_IMAGE=ghcr.io/cloudnative-pg/postgresql:${PG_VERSION}-bookworm
+
+# Build stage: compile pg_tide extension
+FROM rust:1.84 AS builder
+
+ARG PG_VERSION=18
+
+# Install PostgreSQL development headers and build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-${PG_VERSION}-dev \
+    build-essential \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy the pg_tide extension source
+COPY pg-tide-ext/ ./
+
+# Build the extension using pgrx
+RUN cargo pgrx build --release --pg${PG_VERSION} pgx
+
+# Final stage: package the extension for CloudNativePG Image Volumes
+FROM ${BUILDER_IMAGE}
+
+ARG PG_VERSION=18
+
+# Copy compiled extension from builder
+COPY --from=builder /build/target/release/pg_tide-pg${PG_VERSION}/pg_tide.so \
+    /lib/
+
+# Copy extension control and SQL files
+COPY --from=builder /build/pg_tide.control /share/extension/
+COPY sql/pg_tide--*.sql /share/extension/
+
+# Verify the extension structure
+RUN test -f /lib/pg_tide.so && \
+    test -f /share/extension/pg_tide.control && \
+    echo "✓ pg_tide extension image built successfully" && \
+    ls -lh /lib/pg_tide.so && \
+    ls -lh /share/extension/pg_tide*

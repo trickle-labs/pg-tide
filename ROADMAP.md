@@ -1023,13 +1023,30 @@ This release completes the documented CLI surface, broadens test coverage to clo
 
 ---
 
-### SlateDuck Ecosystem Integration (v0.37.x)
+### Kubernetes & Ecosystem Integration (v0.37.x)
 
-SlateDuck must be released before this work can begin. v0.35.0 and v0.36.0 address all assessment-7 findings and complete the pre-v1.0.0 hardening; they are not reserved placeholders.
+SlateDuck must be released before the SlateDuck integration work can begin. v0.35.0 and v0.36.0 address all assessment-7 findings and complete the pre-v1.0.0 hardening; they are not reserved placeholders.
 
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
-| v0.37.0 | SlateDuck integration phases 0–5: spec-compliant `SlateDuckSink` / `SlateDuckSource` pair speaking SlateDuck's bounded SQL subset, enabling zero-infrastructure path from a PostgreSQL transaction to a queryable data lake in S3 with no separate database server | 🔜 Planned | Medium | [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md) |
+| v0.37.0 | CloudNativePG Image Volume Extensions support + SlateDuck integration phases 0–5: (1) OCI-compliant extension image, extension-specific Dockerfile, and documentation for CloudNativePG 1.28+ Image Volume Extensions pattern; (2) spec-compliant `SlateDuckSink` / `SlateDuckSource` pair speaking SlateDuck's bounded SQL subset, enabling zero-infrastructure path from a PostgreSQL transaction to a queryable data lake in S3 with no separate database server | 🔜 Planned | Large | [examples/cnpg/IMAGE-VOLUMES.md](examples/cnpg/IMAGE-VOLUMES.md) · [plans/ecosystem/slateduck.md](plans/ecosystem/slateduck.md) |
+
+#### v0.37.0 — CloudNativePG Image Volume Extensions (detail)
+
+**Image Volume Extensions** decouple PostgreSQL extensions from base container images, allowing extension OCI images to be mounted as read-only volumes at pod startup. Introduced in CloudNativePG 1.28 and PostgreSQL 18, this pattern improves security, simplifies supply chains, and decouples extension updates from PostgreSQL base image rebuilds.
+
+**Implementation for pg_tide:**
+- **Extension OCI image Dockerfile** (`examples/cnpg/Dockerfile.extension`) — multi-stage build producing a container image with standard layout: `/share/extension/` for control files and SQL upgrade scripts, `/lib/` for compiled `pg_tide.so`. Targets specific PostgreSQL major versions via `ARG PG_VERSION`.
+- **Example Cluster resource** (`examples/cnpg/cluster-image-volume.yaml`) — demonstrates CloudNativePG `Cluster` using `.spec.postgresql.extensions` to mount pg_tide extension volume, alongside the official minimal PostgreSQL image from CloudNativePG.
+- **Comprehensive documentation** (`examples/cnpg/IMAGE-VOLUMES.md`) — step-by-step guide covering: build procedure, deployment with Image Volume Extensions, extension discovery and installation verification, advanced topics (custom paths, system libraries, multi-extension images), updating extensions, comparison with sidecar pattern, and troubleshooting.
+- **Backwards compatibility** — existing sidecar pattern example (`examples/cnpg/cluster.yaml`) remains fully supported for CNPG versions <1.28.
+
+**Benefits and design rationale:**
+- **Immutable base images** — use official, minimal CloudNativePG PostgreSQL images; no custom image maintenance required.
+- **Simplified supply chain** — only distribute extension container images; PostgreSQL version bumps don't require extension rebuilds.
+- **Enhanced security** — smaller base image footprint; extension mounts are read-only and kernel-enforced.
+- **Flexible upgrades** — update extensions independently from PostgreSQL using declarative `Database` resource extension versioning.
+- **Kubernetes-native** — extends PostgreSQL 18's `extension_control_path` GUC with Kubernetes `ImageVolume` API for standardized extension distribution.
 
 #### v0.37.0 — SlateDuck Integration Phases 0–5 (detail)
 

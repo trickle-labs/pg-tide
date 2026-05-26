@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.37.0 — CloudNativePG Image Volume Extensions & SlateDuck Integration Phases 0–5](#0370--cloudnativepg-image-volume-extensions--slateduck-integration-phases-05)
 - [0.36.0 — CLI Completeness, Test Coverage Depth & v1.0 Pre-Flight](#0360--cli-completeness-test-coverage-depth--v10-pre-flight)
 - [0.35.0 — Assessment-7 P1/P2 Bug Fixes, KMS Encryption & Fan-In Performance Hardening](#0350--assessment-7-p1p2-bug-fixes-kms-encryption--fan-in-performance-hardening)
 - [0.34.0 — Universal Reverse Pipeline Sinks & DuckLake Ecosystem Completeness](#0340--universal-reverse-pipeline-sinks--ducklake-ecosystem-completeness)
@@ -44,6 +45,90 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.37.0] — CloudNativePG Image Volume Extensions & SlateDuck Integration Phases 0–5
+
+This release introduces CloudNativePG Image Volume Extensions support for pg_tide, enabling secure, 
+minimal container images with decoupled extension distribution. It also begins the SlateDuck ecosystem 
+integration with phases 0–5, opening a zero-infrastructure path from PostgreSQL transactions to queryable 
+data lakes in object storage.
+
+### CloudNativePG Image Volume Extensions
+
+Image Volume Extensions (CNPG 1.28+, Kubernetes 1.35+, PostgreSQL 18+) decouple extensions from base 
+container images by mounting extension OCI images as read-only volumes at pod startup.
+
+**New files:**
+- `examples/cnpg/Dockerfile.extension` — Multi-stage build for pg_tide extension OCI image. Produces 
+  standard layout: `/share/extension/` (control file + SQL migrations), `/lib/` (compiled `pg_tide.so`). 
+  Supports `--build-arg PG_VERSION=18` for version targeting.
+- `examples/cnpg/cluster-image-volume.yaml` — Complete CloudNativePG Cluster example using Image Volume 
+  Extensions pattern. Mounts pg_tide extension volume alongside official CloudNativePG PostgreSQL image; 
+  includes pg-tide relay sidecar.
+- `examples/cnpg/IMAGE-VOLUMES.md` — Comprehensive guide covering: build, deployment, verification, 
+  advanced topics (custom paths, system libraries, multi-extension images), extension updates, and 
+  troubleshooting.
+
+**Benefits:**
+- **Immutable base images** — use official, minimal CloudNativePG PostgreSQL images
+- **Simplified supply chain** — distribute only extension images; decouple from PostgreSQL version bumps
+- **Enhanced security** — smaller base image footprint; read-only extension mounts
+- **Flexible updates** — version extensions independently using declarative `Database` resources
+
+**Backwards compatibility:** Existing sidecar pattern (`examples/cnpg/cluster.yaml`) remains 
+fully supported for CNPG <1.28.
+
+### SlateDuck Integration Phases 0–5
+
+[SlateDuck](https://github.com/trickle-labs/slateduck) is a DuckLake catalog sidecar backed by 
+SlateDB, a cloud-native embedded LSM storage engine. This release implements phases 0–5 of the 
+SlateDuck integration, adding a `SlateDuckSink` / `SlateDuckSource` pair that operates on SlateDuck's 
+bounded SQL subset (no `ON CONFLICT`, no `RETURNING`, no `nextval()`), enabling zero-infrastructure 
+data lake ingestion from PostgreSQL outboxes into S3-backed catalogs.
+
+**Phase 0: Wire corpus capture**
+- Captured all SQL statement shapes emitted by current `DuckLakeSink` and `DuckLakeSource`
+- Formatted as JSONL wire corpus: `tests/fixtures/wire-corpus/pgtide-slateduck-0.37.0.jsonl`
+- Contributed to SlateDuck project as validation artifact
+
+**Phase 1: `SlateDuckSink` skeleton**
+- New `pg-tide-relay/src/sink/slateduck.rs` (feature-gated `--features slateduck`)
+- Replaces full `ensure_catalog()` with minimal `verify_catalog_ready()`: single `SELECT value FROM ducklake_metadata WHERE key = 'version'`
+- Removes all SlateDuck-incompatible SQL: no `CREATE TABLE`, no `CREATE SEQUENCE`, no `nextval()`, no `ON CONFLICT`, no `RETURNING`
+
+**Phase 2: Parquet write path**
+- `SlateDuckSink::publish()` for Parquet path
+- Pre-allocates IDs from `ducklake_snapshot` → write Parquet to object storage → commit catalog rows in plain `BEGIN`/`COMMIT`
+- No `nextval()`, no `RETURNING`, no `ON CONFLICT` — all operations SlateDuck-compatible
+
+**Phase 3: Inlined data path**
+- Inlined-data write path for batches ≤ `inline_row_limit`
+- Direct `INSERT INTO ducklake_inlined_data_{table_id}_{schema_version}` without `ON CONFLICT`
+
+**Phase 4: Schema evolution**
+- Adapted existing `DuckLakeSink` schema evolution bridge for SlateDuck's bounded SQL subset
+- Explicit `SELECT` → conditional `INSERT` pattern replaces `ON CONFLICT`
+
+**Phase 5: Auto-partition via `ducklake_metadata`**
+- Namespaced `ducklake_metadata` key/value entries (prefix `pg_tide.`) replace `tide.ducklake_partition_config` INSERTs
+- Aligns with SlateDuck's native KV layout
+
+**`SlateDuckSource`**
+- New `pg-tide-relay/src/source/slateduck.rs`
+- Single non-JOIN query: `SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $1`
+- Reads incremental data-file rows; delivers as `RelayMessage` objects
+
+**Coordinator integration**
+- Registers `"slateduck"` as valid `sink_type` and `source_type` in `coordinator.rs`
+- Gated on `#[cfg(feature = "slateduck")]`
+
+**Relationship to DuckLake (v0.34.0)**
+- `DuckLakeSink` (v0.34.0) — PostgreSQL-backed DuckLake catalog; full SQL support
+- `SlateDuckSink` (v0.37.0) — SlateDuck PG-wire sidecar; bounded SQL subset
+- Shared `ducklake_common` module for Parquet building and schema evolution
+- Both paths support all source types: Kafka, NATS, Redis, SQS, RabbitMQ, webhook, stdin
 
 ---
 
