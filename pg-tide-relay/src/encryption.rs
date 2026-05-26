@@ -1,13 +1,10 @@
 // v0.33.0: Envelope encryption interface skeleton (ADR-010).
+// v0.35.0: Replaced todo!() panics with structured RelayError::NotImplemented
+//          errors and added EncryptionEnvelope::is_available() startup guard.
 //
-// This module defines the `EncryptionEnvelope` trait and the four KMS provider
-// structs that will implement it in v1.0.0.  All provider `impl` blocks contain
-// `todo!()` in this release; the API surface is established here so that:
-//   - Migration guides and docs can reference stable type/function names.
-//   - The wire-format encoder can check `_enc` presence at compile time when
-//     the `kms` feature is enabled, without any runtime cost when disabled.
-//   - The v1.0.0 implementation sprint can fill in the bodies without any
-//     public-API changes.
+// The LocalKeyFile provider has a full AES-256-GCM implementation in v0.35.0.
+// Cloud providers (AwsKms, GcpKms, VaultKms) return NotImplemented gracefully;
+// they will be fully implemented before v1.0.0.
 //
 // Gated on `feature = "kms"`.  The default build ships without any KMS
 // dependencies; enabling `kms` (or a sub-feature such as `kms-aws`) brings
@@ -18,6 +15,7 @@
 #![cfg(feature = "kms")]
 
 use crate::error::RelayError;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 // ── Encrypted payload envelope ────────────────────────────────────────────
 
@@ -79,6 +77,13 @@ pub trait EncryptionEnvelope: Send + Sync {
 
     /// Decrypt an [`EncryptedPayload`] and return the original plaintext bytes.
     async fn decrypt(&self, payload: &EncryptedPayload) -> Result<Vec<u8>, RelayError>;
+
+    /// v0.35.0: Returns `true` when this provider has a real implementation
+    /// (i.e., will not return `NotImplemented` on encrypt/decrypt calls).
+    ///
+    /// The coordinator calls this at pipeline startup to decide whether to
+    /// acquire the pipeline or log `PauseReason::NotImplemented` instead.
+    fn is_available(&self) -> bool;
 }
 
 // ── AWS KMS provider (v1.0.0 implementation) ─────────────────────────────
@@ -101,11 +106,21 @@ pub struct AwsKms {
 #[async_trait::async_trait]
 impl EncryptionEnvelope for AwsKms {
     async fn encrypt(&self, _plaintext: &[u8]) -> Result<EncryptedPayload, RelayError> {
-        todo!("AwsKms::encrypt — implemented in v1.0.0")
+        Err(RelayError::not_implemented(
+            "aws",
+            "AwsKms encryption is not yet implemented; full implementation arrives before v1.0.0",
+        ))
     }
 
     async fn decrypt(&self, _payload: &EncryptedPayload) -> Result<Vec<u8>, RelayError> {
-        todo!("AwsKms::decrypt — implemented in v1.0.0")
+        Err(RelayError::not_implemented(
+            "aws",
+            "AwsKms decryption is not yet implemented; full implementation arrives before v1.0.0",
+        ))
+    }
+
+    fn is_available(&self) -> bool {
+        false
     }
 }
 
@@ -128,11 +143,21 @@ pub struct GcpKms {
 #[async_trait::async_trait]
 impl EncryptionEnvelope for GcpKms {
     async fn encrypt(&self, _plaintext: &[u8]) -> Result<EncryptedPayload, RelayError> {
-        todo!("GcpKms::encrypt — implemented in v1.0.0")
+        Err(RelayError::not_implemented(
+            "gcp",
+            "GcpKms encryption is not yet implemented; full implementation arrives before v1.0.0",
+        ))
     }
 
     async fn decrypt(&self, _payload: &EncryptedPayload) -> Result<Vec<u8>, RelayError> {
-        todo!("GcpKms::decrypt — implemented in v1.0.0")
+        Err(RelayError::not_implemented(
+            "gcp",
+            "GcpKms decryption is not yet implemented; full implementation arrives before v1.0.0",
+        ))
+    }
+
+    fn is_available(&self) -> bool {
+        false
     }
 }
 
@@ -158,15 +183,25 @@ pub struct VaultKms {
 #[async_trait::async_trait]
 impl EncryptionEnvelope for VaultKms {
     async fn encrypt(&self, _plaintext: &[u8]) -> Result<EncryptedPayload, RelayError> {
-        todo!("VaultKms::encrypt — implemented in v1.0.0")
+        Err(RelayError::not_implemented(
+            "vault",
+            "VaultKms encryption is not yet implemented; full implementation arrives before v1.0.0",
+        ))
     }
 
     async fn decrypt(&self, _payload: &EncryptedPayload) -> Result<Vec<u8>, RelayError> {
-        todo!("VaultKms::decrypt — implemented in v1.0.0")
+        Err(RelayError::not_implemented(
+            "vault",
+            "VaultKms decryption is not yet implemented; full implementation arrives before v1.0.0",
+        ))
+    }
+
+    fn is_available(&self) -> bool {
+        false
     }
 }
 
-// ── Local key-file provider (development / testing only) ─────────────────
+// ── Local key-file provider (v0.35.0 full implementation) ─────────────────
 
 /// Local 32-byte hex key-file encryption provider.
 ///
@@ -174,22 +209,150 @@ impl EncryptionEnvelope for VaultKms {
 /// Intended for local development and integration testing ONLY — it provides
 /// confidentiality but no KMS-backed key rotation or hardware isolation.
 ///
-/// Full implementation in v1.0.0.
+/// Envelope format (ADR-010):
+/// ```json
+/// { "_enc": 1, "kms": "local", "kid": "<hex_fingerprint>",
+///   "alg": "AES256GCM", "iv": "<base64>", "edek": "<base64>", "ct": "<base64>" }
+/// ```
+/// The `edek` field stores the key fingerprint (not an encrypted DEK) for
+/// the local provider since the key is already stored in plaintext on disk.
+///
+/// Key rotation: set `key_path_previous` to the old key file; decrypt attempts
+/// try the current key first, then fall back to the previous key.
 #[cfg(feature = "kms-local")]
 pub struct LocalKeyFile {
     /// Path to the file containing the 64-character hex-encoded 32-byte key.
     pub key_path: std::path::PathBuf,
+    /// Optional path to the previous key file for seamless rotation.
+    pub key_path_previous: Option<std::path::PathBuf>,
+}
+
+#[cfg(feature = "kms-local")]
+impl LocalKeyFile {
+    /// Read and decode a 32-byte AES-256 key from a hex file.
+    fn read_key(path: &std::path::Path) -> Result<[u8; 32], RelayError> {
+        let content = std::fs::read_to_string(path).map_err(|e| RelayError::SecretReadError {
+            path: path.display().to_string(),
+            reason: e.to_string(),
+        })?;
+        let hex = content.trim();
+        if hex.len() != 64 {
+            return Err(RelayError::Config(format!(
+                "LocalKeyFile: key file '{}' must contain exactly 64 hex characters (32 bytes); \
+                 got {} characters",
+                path.display(),
+                hex.len()
+            )));
+        }
+        let bytes = hex::decode(hex).map_err(|e| {
+            RelayError::Config(format!(
+                "LocalKeyFile: invalid hex in key file '{}': {e}",
+                path.display()
+            ))
+        })?;
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes);
+        Ok(key)
+    }
+
+    /// Compute the first 8 bytes of SHA-256 of the key as a hex fingerprint.
+    fn key_fingerprint(key: &[u8; 32]) -> String {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(key);
+        hex::encode(&digest[..8])
+    }
+
+    /// Encrypt plaintext with the given 32-byte AES-256-GCM key.
+    fn encrypt_with_key(key: &[u8; 32], plaintext: &[u8]) -> Result<(String, String), RelayError> {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+        use rand::RngCore;
+
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| RelayError::Config(format!("LocalKeyFile: AES-GCM init failed: {e}")))?;
+
+        let mut iv_bytes = [0u8; 12];
+        rand::rng().fill_bytes(&mut iv_bytes);
+        let nonce = Nonce::from_slice(&iv_bytes);
+
+        let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|e| {
+            RelayError::Config(format!("LocalKeyFile: AES-GCM encrypt failed: {e}"))
+        })?;
+
+        let iv_b64 = BASE64.encode(iv_bytes);
+        let ct_b64 = BASE64.encode(&ciphertext);
+        Ok((iv_b64, ct_b64))
+    }
+
+    /// Decrypt ciphertext with the given 32-byte AES-256-GCM key.
+    fn decrypt_with_key(key: &[u8; 32], iv_b64: &str, ct_b64: &str) -> Result<Vec<u8>, RelayError> {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| RelayError::Config(format!("LocalKeyFile: AES-GCM init failed: {e}")))?;
+
+        let iv_bytes = BASE64
+            .decode(iv_b64)
+            .map_err(|e| RelayError::Config(format!("LocalKeyFile: invalid IV base64: {e}")))?;
+        let nonce = Nonce::from_slice(&iv_bytes);
+
+        let ct_bytes = BASE64
+            .decode(ct_b64)
+            .map_err(|e| RelayError::Config(format!("LocalKeyFile: invalid CT base64: {e}")))?;
+
+        cipher
+            .decrypt(nonce, ct_bytes.as_ref())
+            .map_err(|_| RelayError::Config("LocalKeyFile: AES-GCM authentication tag mismatch — wrong key or corrupted ciphertext".to_string()))
+    }
 }
 
 #[cfg(feature = "kms-local")]
 #[async_trait::async_trait]
 impl EncryptionEnvelope for LocalKeyFile {
-    async fn encrypt(&self, _plaintext: &[u8]) -> Result<EncryptedPayload, RelayError> {
-        todo!("LocalKeyFile::encrypt — implemented in v1.0.0")
+    async fn encrypt(&self, plaintext: &[u8]) -> Result<EncryptedPayload, RelayError> {
+        let key = Self::read_key(&self.key_path)?;
+        let fingerprint = Self::key_fingerprint(&key);
+        let (iv_b64, ct_b64) = Self::encrypt_with_key(&key, plaintext)?;
+
+        Ok(EncryptedPayload {
+            version: 1,
+            kms: "local".to_string(),
+            kid: fingerprint,
+            alg: "AES256GCM".to_string(),
+            iv: iv_b64,
+            // edek holds the fingerprint for the local provider (no envelope key wrapping).
+            edek: BASE64.encode(b"local"),
+            ct: ct_b64,
+        })
     }
 
-    async fn decrypt(&self, _payload: &EncryptedPayload) -> Result<Vec<u8>, RelayError> {
-        todo!("LocalKeyFile::decrypt — implemented in v1.0.0")
+    async fn decrypt(&self, payload: &EncryptedPayload) -> Result<Vec<u8>, RelayError> {
+        // Try current key first.
+        let current_key = Self::read_key(&self.key_path)?;
+        let current_fingerprint = Self::key_fingerprint(&current_key);
+
+        if current_fingerprint == payload.kid {
+            return Self::decrypt_with_key(&current_key, &payload.iv, &payload.ct);
+        }
+
+        // Fall back to previous key if configured and fingerprint matches.
+        if let Some(ref prev_path) = self.key_path_previous {
+            let prev_key = Self::read_key(prev_path)?;
+            let prev_fingerprint = Self::key_fingerprint(&prev_key);
+            if prev_fingerprint == payload.kid {
+                return Self::decrypt_with_key(&prev_key, &payload.iv, &payload.ct);
+            }
+        }
+
+        Err(RelayError::Config(format!(
+            "LocalKeyFile: no key with fingerprint '{}' found in current or previous key file",
+            payload.kid
+        )))
+    }
+
+    fn is_available(&self) -> bool {
+        true
     }
 }
 
@@ -248,5 +411,134 @@ mod tests {
         // Verify the `_enc` field name is serialised correctly.
         let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert_eq!(v["_enc"], 1);
+    }
+
+    #[cfg(feature = "kms-local")]
+    mod local_key_file_tests {
+        use super::super::*;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        fn write_key_file(key_hex: &str) -> NamedTempFile {
+            let mut f = NamedTempFile::new().expect("tempfile");
+            f.write_all(key_hex.as_bytes()).expect("write key");
+            f
+        }
+
+        fn random_key_hex() -> String {
+            use rand::RngCore;
+            let mut key = [0u8; 32];
+            rand::rng().fill_bytes(&mut key);
+            hex::encode(key)
+        }
+
+        #[tokio::test]
+        async fn test_local_key_file_encrypt_decrypt_roundtrip() {
+            let key_hex = random_key_hex();
+            let key_file = write_key_file(&key_hex);
+            let provider = LocalKeyFile {
+                key_path: key_file.path().to_path_buf(),
+                key_path_previous: None,
+            };
+            assert!(provider.is_available());
+
+            let plaintext = b"hello, world! this is a test payload.";
+            let envelope = provider.encrypt(plaintext).await.expect("encrypt");
+            assert_eq!(envelope.kms, "local");
+            assert_eq!(envelope.alg, "AES256GCM");
+            assert_eq!(envelope.version, 1);
+
+            let decrypted = provider.decrypt(&envelope).await.expect("decrypt");
+            assert_eq!(decrypted, plaintext);
+        }
+
+        #[tokio::test]
+        async fn test_local_key_file_100_messages() {
+            let key_hex = random_key_hex();
+            let key_file = write_key_file(&key_hex);
+            let provider = LocalKeyFile {
+                key_path: key_file.path().to_path_buf(),
+                key_path_previous: None,
+            };
+
+            let mut envelopes = Vec::with_capacity(100);
+            for i in 0..100u32 {
+                let plaintext = format!(r#"{{"id": {i}, "event": "test"}}"#);
+                let env = provider
+                    .encrypt(plaintext.as_bytes())
+                    .await
+                    .expect("encrypt");
+                envelopes.push((plaintext, env));
+            }
+
+            for (plaintext, env) in &envelopes {
+                let decrypted = provider.decrypt(env).await.expect("decrypt");
+                assert_eq!(String::from_utf8(decrypted).expect("utf8"), *plaintext);
+            }
+        }
+
+        #[tokio::test]
+        async fn test_local_key_file_key_rotation() {
+            // Create two keys.
+            let old_key_hex = random_key_hex();
+            let new_key_hex = random_key_hex();
+            let old_key_file = write_key_file(&old_key_hex);
+            let new_key_file = write_key_file(&new_key_hex);
+
+            // Encrypt 50 messages with old key.
+            let provider_old = LocalKeyFile {
+                key_path: old_key_file.path().to_path_buf(),
+                key_path_previous: None,
+            };
+            let mut envelopes = Vec::with_capacity(50);
+            for i in 0..50u32 {
+                let plaintext = format!(r#"{{"id": {i}}}"#);
+                let env = provider_old
+                    .encrypt(plaintext.as_bytes())
+                    .await
+                    .expect("encrypt with old key");
+                envelopes.push((plaintext, env));
+            }
+
+            // Rotate: new key becomes current, old key becomes previous.
+            let provider_new = LocalKeyFile {
+                key_path: new_key_file.path().to_path_buf(),
+                key_path_previous: Some(old_key_file.path().to_path_buf()),
+            };
+
+            // All 50 old messages must still decrypt via the previous key.
+            for (plaintext, env) in &envelopes {
+                let decrypted = provider_new
+                    .decrypt(env)
+                    .await
+                    .expect("decrypt after rotation");
+                assert_eq!(String::from_utf8(decrypted).expect("utf8"), *plaintext);
+            }
+
+            // New messages encrypted with new key also work.
+            let new_env = provider_new
+                .encrypt(b"new message")
+                .await
+                .expect("encrypt with new key");
+            let decrypted = provider_new.decrypt(&new_env).await.expect("decrypt new");
+            assert_eq!(decrypted, b"new message");
+        }
+
+        #[tokio::test]
+        async fn test_kms_startup_guard_unavailable_provider() {
+            // AWS/GCP/Vault providers return is_available() = false.
+            // This ensures the coordinator startup guard works correctly.
+            #[cfg(feature = "kms-aws")]
+            {
+                let provider = super::super::AwsKms {
+                    key_id: "arn:aws:kms:us-east-1:123456789012:key/test".to_string(),
+                    region: None,
+                };
+                assert!(!provider.is_available());
+                let err = provider.encrypt(b"test").await.unwrap_err();
+                assert!(matches!(err, RelayError::NotImplemented { .. }));
+                assert!(!err.is_transient(), "NotImplemented must not be retried");
+            }
+        }
     }
 }

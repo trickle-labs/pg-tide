@@ -54,6 +54,13 @@ pub struct RelayConfig {
     /// `toml_allowed` (default) — emit a warning for TOML-only pipelines and
     ///   continue, preserving backward compatibility.
     pub config_mode: ConfigMode,
+
+    /// v0.35.0: Interval in hours between automatic delivery-receipt sweep runs.
+    /// The coordinator background task calls `tide.relay_truncate_delivery_receipts()`
+    /// on this schedule to prune old receipt rows.
+    /// `--sweep-interval-hours` / `PG_TIDE_SWEEP_INTERVAL_HOURS` / TOML `sweep_interval_hours`.
+    /// Default: 24 (once per day).
+    pub sweep_interval_hours: u64,
 }
 
 /// v0.28.0: Controls how the relay handles TOML-defined pipeline blocks that
@@ -84,6 +91,7 @@ impl Default for RelayConfig {
             max_connections: 52, // 2 coordinator + 50 workers by default
             tenant_id: None,
             config_mode: ConfigMode::TomlAllowed,
+            sweep_interval_hours: 24,
         }
     }
 }
@@ -418,6 +426,7 @@ mod tests {
             max_connections: 32,
             tenant_id: None,
             config_mode: ConfigMode::TomlAllowed,
+            sweep_interval_hours: 24,
         };
         let toml_str = toml::to_string(&cfg).unwrap();
         let decoded: RelayConfig = toml::from_str(&toml_str).unwrap();

@@ -14,9 +14,12 @@ pub async fn run_dag_command(
     default_url: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
-        DagCommands::Show { postgres_url } => {
+        DagCommands::Show {
+            postgres_url,
+            format,
+        } => {
             let url = resolve_url(postgres_url, default_url, "dag show");
-            run_dag_show(&url).await
+            run_dag_show(&url, &format).await
         }
         DagCommands::Check { postgres_url } => {
             let url = resolve_url(postgres_url, default_url, "dag check");
@@ -45,37 +48,98 @@ fn resolve_url(postgres_url: Option<String>, default_url: &str, for_cmd: &str) -
     url
 }
 
-/// `pg-tide dag show` — emit the pipeline dependency graph as a Mermaid diagram.
-async fn run_dag_show(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// `pg-tide dag show` — emit the pipeline dependency graph as a Mermaid diagram
+/// or JSON adjacency list (v0.35.0: enhanced with paused-node styling and `--format json`).
+async fn run_dag_show(url: &str, format: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (client, conn) = pg_tls::connect(url).await?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
 
+    // Query edges and whether downstream pipeline is enabled.
+    // LEFT JOIN to relay_outbox_config and relay_inbox_config to detect paused pipelines.
+    struct DagEdge {
+        upstream: String,
+        downstream: String,
+        policy: String,
+        downstream_enabled: bool,
+    }
+
     let rows = client
         .query(
-            "SELECT upstream_pipeline, downstream_pipeline, trigger_policy \
-             FROM tide.relay_pipeline_deps \
-             ORDER BY upstream_pipeline, downstream_pipeline",
+            "SELECT d.upstream_pipeline, d.downstream_pipeline, d.trigger_policy,
+                    COALESCE(roc.enabled, ric.enabled, TRUE) AS downstream_enabled
+             FROM tide.relay_pipeline_deps d
+             LEFT JOIN tide.relay_outbox_config roc ON roc.name = d.downstream_pipeline
+             LEFT JOIN tide.relay_inbox_config  ric ON ric.name = d.downstream_pipeline
+             ORDER BY d.upstream_pipeline, d.downstream_pipeline",
             &[],
         )
-        .await?;
+        .await
+        .unwrap_or_default();
 
-    if rows.is_empty() {
-        println!("graph LR");
-        println!("    %% No pipeline dependencies defined.");
+    let edges: Vec<DagEdge> = rows
+        .iter()
+        .map(|row| DagEdge {
+            upstream: row.get(0),
+            downstream: row.get(1),
+            policy: row.get(2),
+            downstream_enabled: row.try_get::<_, bool>(3).unwrap_or(true),
+        })
+        .collect();
+
+    if edges.is_empty() {
+        if format == "json" {
+            println!(r#"{{"nodes":[],"edges":[]}}"#);
+        } else {
+            println!("graph LR");
+            println!("    %% No pipeline dependencies defined.");
+        }
         return Ok(());
     }
 
-    println!("graph LR");
-    for row in &rows {
-        let up: String = row.get(0);
-        let down: String = row.get(1);
-        let policy: String = row.get(2);
-        // Sanitise names for Mermaid node IDs (replace hyphens with underscores).
-        let up_id = up.replace('-', "_");
-        let down_id = down.replace('-', "_");
-        println!("    {up_id}[\"{up}\"] -->|{policy}| {down_id}[\"{down}\"]");
+    if format == "json" {
+        // Collect unique node names.
+        let mut nodes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for e in &edges {
+            nodes.insert(e.upstream.clone());
+            nodes.insert(e.downstream.clone());
+        }
+        let nodes_json: Vec<serde_json::Value> =
+            nodes.iter().map(|n| serde_json::json!({"id": n})).collect();
+        let edges_json: Vec<serde_json::Value> = edges
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "from": e.upstream,
+                    "to": e.downstream,
+                    "trigger_policy": e.policy,
+                    "downstream_enabled": e.downstream_enabled,
+                })
+            })
+            .collect();
+        let out = serde_json::json!({"nodes": nodes_json, "edges": edges_json});
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        // Mermaid output.
+        println!("```mermaid");
+        println!("graph LR");
+        for e in &edges {
+            // Sanitise names for Mermaid node IDs (replace hyphens and dots with underscores).
+            let up_id = e.upstream.replace(['-', '.'], "_");
+            let down_id = e.downstream.replace(['-', '.'], "_");
+            let style = if e.downstream_enabled {
+                String::new()
+            } else {
+                ":::paused".to_string()
+            };
+            println!(
+                "  {}[\"{}\"] -->|{}| {}[\"{}\"]{}",
+                up_id, e.upstream, e.policy, down_id, e.downstream, style
+            );
+        }
+        println!("  classDef paused fill:#f99,stroke:#c33");
+        println!("```");
     }
 
     Ok(())

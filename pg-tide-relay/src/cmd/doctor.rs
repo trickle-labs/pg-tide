@@ -326,6 +326,27 @@ pub async fn run_doctor_with_threshold(
         );
     }
 
+    // v0.35.0: Delivery receipt row count warning — warn when the table has
+    // grown large enough to impact sweep performance or storage.
+    if receipt_table_exists {
+        let receipt_count: i64 = client
+            .query_one("SELECT COUNT(*) FROM tide.relay_delivery_receipts", &[])
+            .await
+            .map(|r| r.get(0))
+            .unwrap_or(0);
+        const RECEIPT_WARN_THRESHOLD: i64 = 1_000_000;
+        if receipt_count > RECEIPT_WARN_THRESHOLD {
+            println!(
+                "  [WARN] tide.relay_delivery_receipts has {receipt_count} rows \
+                 (> {RECEIPT_WARN_THRESHOLD}) — consider running \
+                 `SELECT tide.relay_truncate_delivery_receipts()` or \
+                 reducing sweep_interval_hours"
+            );
+        } else {
+            println!("  [OK] relay_delivery_receipts row count: {receipt_count}");
+        }
+    }
+
     if all_ok {
         println!("\npg-tide doctor: all checks passed.");
         Ok(())

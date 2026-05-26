@@ -175,9 +175,13 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0.33.0 -> 0.34.0",
         include_str!("../../../sql/pg_tide--0.33.0--0.34.0.sql"),
     ),
+    (
+        "0.34.0 -> 0.35.0",
+        include_str!("../../../sql/pg_tide--0.34.0--0.35.0.sql"),
+    ),
 ];
 
-/// Install the v0.1.0 base schema then apply all migrations through v0.34.0.
+/// Install the v0.1.0 base schema then apply all migrations through v0.35.0.
 pub async fn install_full_schema(client: &tokio_postgres::Client) {
     client
         .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")

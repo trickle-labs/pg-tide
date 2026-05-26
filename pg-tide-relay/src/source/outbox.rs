@@ -610,6 +610,215 @@ async fn update_simple_offset(
     Ok(())
 }
 
+// ── Fan-in source (v0.35.0) ───────────────────────────────────────────────
+
+/// v0.35.0: Multi-outbox fan-in source.
+///
+/// Polls multiple outboxes in round-robin order and commits offsets for all
+/// contributing members in a single UNNEST batch query, replacing N sequential
+/// UPDATE calls with one round-trip per committed batch.
+///
+/// Offset tracking uses `tide.relay_consumer_offsets` with `fanin_member` set
+/// to the contributing outbox name so each member's position is tracked
+/// independently.
+pub struct FanInSource {
+    db: Arc<Client>,
+    /// Fan-in pipeline name (used as the `pipeline_id` for offset rows).
+    pipeline_name: String,
+    /// Sub-sources for each contributing outbox; polled in round-robin order.
+    sources: Vec<OutboxPollerSource>,
+    /// Index of the next sub-source to poll (round-robin counter).
+    next_idx: usize,
+    /// Per-source pending offsets accumulated during a poll cycle.
+    /// Flushed in a single UNNEST batch upsert during `acknowledge`.
+    pending_offsets: Vec<(String, i64)>, // (outbox_name, offset)
+    relay_group_id: String,
+    worker_id: String,
+}
+
+impl FanInSource {
+    /// Create a new `FanInSource`, loading the last committed offset for each
+    /// contributing outbox from `tide.relay_consumer_offsets`.
+    pub async fn new(
+        db: Arc<Client>,
+        pipeline_name: &str,
+        outbox_names: Vec<String>,
+        subject_template: &str,
+        relay_group_id: &str,
+        raw_mode: bool,
+    ) -> Result<Self, RelayError> {
+        let worker_id = format!("pg-tide-fanin-{}", Uuid::new_v4());
+        let mut sources = Vec::with_capacity(outbox_names.len());
+
+        for outbox_name in &outbox_names {
+            // Load last committed offset for this member from the fanin-aware
+            // offset row where fanin_member = outbox_name.
+            let last_offset = db
+                .query_opt(
+                    "SELECT last_change_id \
+                     FROM tide.relay_consumer_offsets \
+                     WHERE relay_group_id = $1 \
+                       AND pipeline_id    = $2 \
+                       AND fanin_member   = $3",
+                    &[&relay_group_id, &pipeline_name, &outbox_name],
+                )
+                .await
+                .map_err(|e| {
+                    RelayError::other(format!("fanin offset load error for '{outbox_name}': {e}"))
+                })?
+                .map(|r| r.get::<_, i64>(0))
+                .unwrap_or(0);
+
+            let table_name = format!("tide.{outbox_name}");
+            let mut src = OutboxPollerSource {
+                db: Arc::clone(&db),
+                stream_table_name: outbox_name.clone(),
+                outbox_table_name: table_name,
+                subject_template: subject_template.to_string(),
+                relay_group_id: relay_group_id.to_string(),
+                pipeline_id: pipeline_name.to_string(),
+                worker_id: worker_id.clone(),
+                consumer_group: None,
+                last_offset,
+                raw_payload_mode: raw_mode,
+                pending_cc_oids: Vec::new(),
+            };
+            // Override the last_offset on the source so it starts from the
+            // correct position for this member.
+            src.last_offset = last_offset;
+            sources.push(src);
+        }
+
+        Ok(Self {
+            db,
+            pipeline_name: pipeline_name.to_string(),
+            sources,
+            next_idx: 0,
+            pending_offsets: Vec::new(),
+            relay_group_id: relay_group_id.to_string(),
+            worker_id,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl super::Source for FanInSource {
+    fn name(&self) -> &str {
+        "fanin"
+    }
+
+    async fn poll(&mut self, batch_size: i64) -> Result<Vec<RelayMessage>, RelayError> {
+        self.pending_offsets.clear();
+        if self.sources.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Round-robin across contributing outboxes; collect up to `batch_size` messages.
+        let num_sources = self.sources.len();
+        let per_source = (batch_size / num_sources as i64).max(1);
+        let mut messages = Vec::with_capacity(batch_size as usize);
+
+        for i in 0..num_sources {
+            let idx = (self.next_idx + i) % num_sources;
+            let batch = self.sources[idx].poll(per_source).await?;
+            for msg in batch {
+                // Record which outbox produced this message for UNNEST commit.
+                let outbox_name = self.sources[idx].stream_table_name.clone();
+                if let AckToken::OutboxOffset(offset) = &msg.ack_token {
+                    self.pending_offsets.push((outbox_name, *offset));
+                }
+                messages.push(msg);
+            }
+        }
+
+        self.next_idx = (self.next_idx + 1) % num_sources;
+        Ok(messages)
+    }
+
+    async fn acknowledge(&mut self, _last_message: &RelayMessage) -> Result<(), RelayError> {
+        if self.pending_offsets.is_empty() {
+            return Ok(());
+        }
+
+        // v0.35.0 P2: UNNEST batch upsert — one round-trip instead of N sequential writes.
+        // Groups offsets by outbox_name and keeps only the highest offset per member.
+        let mut max_by_member: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        for (member, offset) in &self.pending_offsets {
+            let entry = max_by_member.entry(member.clone()).or_insert(0);
+            if *offset > *entry {
+                *entry = *offset;
+            }
+        }
+
+        let relay_group_ids: Vec<&str> = vec![self.relay_group_id.as_str(); max_by_member.len()];
+        let pipeline_ids: Vec<&str> = vec![self.pipeline_name.as_str(); max_by_member.len()];
+        let worker_ids: Vec<&str> = vec![self.worker_id.as_str(); max_by_member.len()];
+
+        let members: Vec<String> = max_by_member.keys().cloned().collect();
+        let offsets: Vec<i64> = members
+            .iter()
+            .map(|m| *max_by_member.get(m).unwrap())
+            .collect();
+
+        self.db
+            .execute(
+                "INSERT INTO tide.relay_consumer_offsets
+                     (relay_group_id, pipeline_id, fanin_member, last_change_id, worker_id, updated_at)
+                 SELECT
+                     unnest($1::text[]),
+                     unnest($2::text[]),
+                     unnest($3::text[]),
+                     unnest($4::bigint[]),
+                     unnest($5::text[]),
+                     now()
+                 ON CONFLICT (relay_group_id, pipeline_id, fanin_member)
+                 WHERE fanin_member IS NOT NULL
+                 DO UPDATE SET
+                     last_change_id = GREATEST(
+                         EXCLUDED.last_change_id,
+                         relay_consumer_offsets.last_change_id
+                     ),
+                     worker_id  = EXCLUDED.worker_id,
+                     updated_at = EXCLUDED.updated_at",
+                &[
+                    &relay_group_ids,
+                    &pipeline_ids,
+                    &members,
+                    &offsets,
+                    &worker_ids,
+                ],
+            )
+            .await
+            .map_err(|e| {
+                RelayError::other(format!(
+                    "fanin UNNEST offset upsert failed for pipeline '{}': {e}",
+                    self.pipeline_name
+                ))
+            })?;
+
+        // Update the last_offset on each sub-source so the next poll advances correctly.
+        for (member, max_offset) in &max_by_member {
+            if let Some(src) = self
+                .sources
+                .iter_mut()
+                .find(|s| &s.stream_table_name == member)
+            {
+                src.last_offset = *max_offset;
+            }
+        }
+
+        self.pending_offsets.clear();
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<(), RelayError> {
+        // Nothing to close for an outbox fan-in source — the DB connection
+        // is managed by the Arc<Client> shared with the coordinator.
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

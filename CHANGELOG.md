@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.35.0 — Assessment-7 P1/P2 Bug Fixes, KMS Encryption & Fan-In Performance Hardening](#0350--assessment-7-p1p2-bug-fixes-kms-encryption--fan-in-performance-hardening)
 - [0.34.0 — Universal Reverse Pipeline Sinks & DuckLake Ecosystem Completeness](#0340--universal-reverse-pipeline-sinks--ducklake-ecosystem-completeness)
 - [0.33.0 — Pre-GA Supply-Chain Hardening, KMS Foundation & v1.0 Readiness](#0330--2026-05-20--pre-ga-supply-chain-hardening-kms-foundation--v10-readiness)
 - [0.32.0 — Performance Engineering, Code Internals Quality & Benchmark Hardening](#0320--2026-05-20--performance-engineering-code-internals-quality--benchmark-hardening)
@@ -42,6 +43,79 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.35.0] — Assessment-7 P1/P2 Bug Fixes, KMS Encryption & Fan-In Performance Hardening
+
+This release addresses all P1 and P2 items identified in Overall Assessment 7: eliminates
+`todo!()` panics in the KMS encryption layer, provides a complete LocalKeyFile AES-256-GCM
+implementation with key rotation, hardens SQL functions against SQL injection and division-by-zero,
+adds a delivery receipt background sweep, and implements the fan-in source type with UNNEST batch
+offset commits.
+
+### P1: KMS `todo!()` panic elimination
+
+Previously, any pipeline configured with `kms_provider = "aws"`, `"gcp"`, or `"vault"` would
+panic at runtime when the relay attempted to encrypt or decrypt a message. These panics have been
+replaced with a `RelayError::NotImplemented` error that is logged at `WARN` and does not crash the
+relay process. A new `is_available()` trait method provides a startup-time guard — pipelines with
+unavailable KMS providers emit an `[INFO]` diagnostic and are skipped rather than panicking.
+
+The `LocalKeyFile` provider is now fully implemented using AES-256-GCM (`aes-gcm 0.10`) with
+SHA-256 key fingerprinting. Key rotation is supported via `key_path_previous` — the relay tries the
+primary key first, then falls back to the previous key for decrypt, and always encrypts with the
+primary key.
+
+### P1: `relay_provision_tenant()` / `relay_deprovision_tenant()` role-name validation
+
+The `EXECUTE format('CREATE ROLE %I …', p_db_role)` pathway now validates the supplied role name
+against `[A-Za-z_][A-Za-z0-9_]{0,62}` before execution. A blocklist of reserved PostgreSQL and
+pg_tide system roles (`postgres`, `pg_monitor`, `tide_admin`, etc.) is also checked, preventing
+accidental privilege escalation.
+
+### P2: `backfill_progress()` division-by-zero fix
+
+`backfill_progress()` now returns `NULL` for `estimated_completion` when:
+- `rows_processed = 0` (job just started),
+- elapsed time < 1 second (throughput not yet measurable), or
+- throughput is otherwise zero.
+
+This replaces the previous `EXTRACT(epoch …) / 0` arithmetic error.
+
+### P2: `relay_pipeline_dep_add()` SIMILAR TO validation
+
+`trigger_policy` input validation was upgraded from `NOT LIKE 'on_offset_gte(%)'` (which accepted
+`on_offset_gte(notanumber)`) to `SIMILAR TO 'always|on_idle|on_offset_gte\([0-9]+\)'`. A
+corresponding `CHECK` constraint was also added to `relay_pipeline_deps.trigger_policy` as
+defence-in-depth for direct SQL inserts.
+
+### P2: Delivery receipt background sweep
+
+A new SQL function `tide.relay_truncate_delivery_receipts(p_older_than INTERVAL DEFAULT '24 hours')`
+deletes receipt rows older than the supplied retention interval and returns the deleted row count.
+The relay coordinator now spawns a background sweep task that calls this function on a configurable
+schedule (`--sweep-interval-hours` / `PG_TIDE_SWEEP_INTERVAL_HOURS`, default `24`).
+
+The `pg-tide doctor` command reports a `[WARN]` when `relay_delivery_receipts` exceeds 1,000,000
+rows so operators are alerted before storage becomes a concern.
+
+### P2: Fan-in source type with UNNEST batch offset commits
+
+The relay coordinator now recognises `source_type = "fanin"`, loading contributing outbox names
+from `tide.relay_fanin_config`. On each `acknowledge()`, all per-member offsets are committed in a
+single `INSERT … ON CONFLICT … DO UPDATE` using `UNNEST` arrays, replacing N sequential round-trips
+with one. A unique partial index `uq_relay_consumer_offsets_fanin` on
+`(relay_group_id, pipeline_id, fanin_member) WHERE fanin_member IS NOT NULL` supports the ON
+CONFLICT target.
+
+### `pg-tide dag show` — paused-node styling and JSON output
+
+`pg-tide dag show` now:
+- Marks disabled pipelines with `:::paused` class and adds `classDef paused fill:#f99,stroke:#c33`
+  (red nodes in Mermaid).
+- Accepts `--format json` for programmatic adjacency-list output
+  `{"nodes":[...],"edges":[...]}`.
 
 ---
 

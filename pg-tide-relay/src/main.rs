@@ -87,6 +87,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "catalog_only" => config::ConfigMode::CatalogOnly,
         _ => config::ConfigMode::TomlAllowed,
     };
+    // v0.35.0: Delivery receipt sweep interval.
+    cfg.sweep_interval_hours = cli.sweep_interval_hours;
     let drain_timeout = Duration::from_secs(cli.drain_timeout);
 
     // Expand ${ENV:VAR_NAME} placeholders in connection strings.
@@ -345,6 +347,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ref tid) = cfg.tenant_id {
         coordinator.set_tenant_id(tid.clone());
     }
+    // v0.35.0: Apply delivery receipt sweep interval from config.
+    coordinator.set_sweep_interval_hours(cfg.sweep_interval_hours);
 
     // Shutdown watch channel: signal handler sends true when SIGTERM/Ctrl-C arrives.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
