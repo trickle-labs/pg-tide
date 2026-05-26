@@ -103,15 +103,14 @@ async fn test_relay_set_outbox_v2_still_works() {
     let (client, _container) = setup_db().await;
     let result = client
         .execute(
-            r#"SELECT tide.relay_set_outbox_v2($1::jsonb)"#,
+            r#"SELECT tide.relay_set_outbox_v2($1)"#,
             &[&serde_json::json!({
                 "outbox_name": "v036_test_outbox",
                 "sink_type": "http",
                 "sink_config": {"url": "http://localhost:9999"},
                 "batch_size": 50,
                 "enabled": true
-            })
-            .to_string()],
+            })],
         )
         .await;
     assert!(
