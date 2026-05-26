@@ -168,7 +168,7 @@ async fn test_dag_fan_out_topology_is_acyclic() {
 
 // ── Multi-level mixed trigger policies ────────────────────────────────────────
 //
-// A →(on_idle) B →(on_offset_gte_500) C
+// A →(on_idle) B →(on_offset_gte(500)) C
 //
 // Tests that the DAG accepts a chain where different edges use different
 // trigger policies.
@@ -186,14 +186,14 @@ async fn test_dag_mixed_trigger_policies_are_accepted() {
         .await
         .expect("A→B on_idle");
 
-    // B→C with on_offset_gte policy.
+    // B→C with on_offset_gte(N) policy.
     client
         .execute(
-            "SELECT tide.relay_pipeline_dep_add('mixed-b', 'mixed-c', 'on_offset_gte_500')",
+            "SELECT tide.relay_pipeline_dep_add('mixed-b', 'mixed-c', 'on_offset_gte(500)')",
             &[],
         )
         .await
-        .expect("B→C on_offset_gte_500");
+        .expect("B→C on_offset_gte(500)");
 
     let cycles = client
         .query("SELECT cycle_path FROM tide.relay_dag_check()", &[])
@@ -217,7 +217,7 @@ async fn test_dag_mixed_trigger_policies_are_accepted() {
         .collect();
     assert_eq!(
         policies,
-        vec!["on_idle", "on_offset_gte_500"],
+        vec!["on_idle", "on_offset_gte(500)"],
         "trigger policies should be stored as supplied"
     );
 }
