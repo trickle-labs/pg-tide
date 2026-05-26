@@ -845,9 +845,187 @@ The v0.20.0–v0.22.0 DuckLake integration covers the seven Feature Opportunity 
 
 ---
 
+### Assessment-7 Remediation, KMS Encryption & Fan-In Hardening (v0.35.x – v0.36.x)
+
+Building on the zero-P0 record maintained through v0.34.0, this tranche resolves every finding from overall-assessment-7 — three P1 correctness and security bugs, five P2 performance and ergonomics gaps, four P3 polish items — and delivers the last major v1.0.0 blocker: full KMS envelope encryption across all four provider backends. v0.35.0 closes the P1/P2 findings and implements KMS encryption. v0.36.0 completes the CLI surface, broadens the test coverage depth, and performs the final pre-v1.0.0 hardening pass.
+
+| Version | Theme | Status | Scope | Full details |
+|---------|-------|--------|-------|--------------|
+| v0.35.0 | Assessment-7 P1/P2 bug fixes, KMS encryption full implementation & fan-in performance hardening: KMS `todo!()` panic elimination, migration test chain completeness through v0.34.0, `relay_provision_tenant()` role-name validation, fan-in UNNEST offset upsert, `backfill_progress()` division-by-zero fix, delivery receipt background sweep, `trigger_policy` CHECK constraint, `pg-tide dag show` Mermaid export | 🔜 Planned | Large | [plans/overall-assessment-7.md](plans/overall-assessment-7.md) |
+| v0.36.0 | CLI completeness, test coverage depth & v1.0 pre-flight: `pg-tide history --since`, AsyncAPI validate exit-code distinction, DAG branching/diamond topology tests, KMS feature-gate documentation, positional SQL API removal, final `cargo deny` refresh, stability-guarantee verification, v1.0.0 migration guide update, pre-flight checklist closure | 🔜 Planned | Large | [plans/overall-assessment-7.md](plans/overall-assessment-7.md) |
+
+#### v0.35.0 — Assessment-7 P1/P2 Bug Fixes, KMS Encryption & Fan-In Performance Hardening (detail)
+
+This release resolves all three P1 and all five P2 findings from overall-assessment-7, then delivers the v1.0.0 headline feature — full KMS envelope encryption — that has been scaffolded as `todo!()` since v0.33.0. Completing encryption here, before v1.0.0, gives the community a full release cycle to validate the KMS providers in staging before the Production GA declaration.
+
+**P1: KMS provider `todo!()` panic elimination and full implementation**
+
+The v0.33.0 skeleton defined the `EncryptionEnvelope` trait and four provider structs with `todo!()` method bodies. `todo!()` panics at runtime. This release replaces every `todo!()` with a real implementation for all four providers, or — for providers that cannot be tested in CI — a structured `RelayError::NotImplemented` error that fails gracefully.
+
+- **`RelayError::NotImplemented` variant** — add `NotImplemented { provider: String, message: String }` to `pg-tide-relay/src/error.rs`. Implement `Display` as `"provider '{provider}' is not yet implemented: {message}"`. The `is_transient()` predicate returns `false` so the coordinator immediately pauses the pipeline rather than retrying.
+- **Coordinator startup guard** — before spawning a worker for a pipeline that has `encryption_config` set, check whether the configured KMS provider implements `EncryptionEnvelope::is_available()` (a new method that returns `false` for unimplemented providers). If not available, log a structured error and decline to acquire the pipeline, writing a `PauseReason::NotImplemented` entry to `tide.relay_pipeline_state`. This prevents any runtime panic regardless of whether the fix below is fully complete.
+- **`LocalKeyFile` provider (full implementation)** — AES-256-GCM encryption using the `aes-gcm` crate, key loaded from a configurable file path at startup. The envelope format matches ADR-010: `{"kms_provider": "local", "key_id": "<hex_fingerprint>", "alg": "AES256GCM", "iv": "<base64>", "ciphertext": "<base64>", "tag": "<base64>"}`. Key rotation: load both the current and previous key files if `key_id_previous` is configured; decrypt with either, re-encrypt with current on read. Add a full integration test: encrypt 100 messages, rotate the key file, decrypt all 100 messages, and assert correct plaintext.
+- **`AwsKms` provider (full implementation)** — envelope key (32-byte random) encrypted with `kms:Encrypt` using the configured CMK ARN; data encrypted with AES-256-GCM using the envelope key. Uses the `aws-sdk-kms` crate (already in `deny.toml` license allowlist). Key caching: encrypted envelope keys are cached in a `DashMap<String, (Vec<u8>, Instant)>` keyed by `(cmk_arn, envelope_key_fingerprint)` with a configurable TTL (default 5 minutes) to minimise KMS API call volume. CI tests: mock `AwsKmsClient` using `mockall` that records `Encrypt`/`Decrypt` calls; assert call count matches expected KMS interactions for a 100-message batch.
+- **`GcpKms` provider (full implementation)** — envelope key encrypted with the Cloud KMS REST API using `gcp-kms` crate or `reqwest` + service-account JWT. Same envelope format and caching strategy as `AwsKms`. CI tests: mock the REST API endpoint using `wiremock`; assert correct `projects/.../cryptoKeyVersions/.../encrypt` request shapes.
+- **`VaultKms` provider (full implementation)** — envelope key encrypted with HashiCorp Vault Transit secrets engine (`POST /v1/transit/encrypt/<key_name>`). Token authentication from `VAULT_TOKEN` env var or AppRole (configurable). Same envelope format and caching strategy. CI tests: use `vaultrs` in-process Vault dev server or mock with `wiremock`.
+- **Wire format encoder integration** — update `WireFormat::encode()` to check the pipeline's `encryption_config`; if set and provider is available, encrypt the `payload` field of the encoded message before writing to the sink. The `_dedup_key` and `_subject` fields are never encrypted to preserve routing and deduplication capability. Add an integration test that configures `LocalKeyFile` encryption on a `kafka` sink, publishes 50 messages, reads them back from the mock Kafka consumer, and asserts the payloads are ciphertext while dedup keys are plaintext.
+- **`tide.outbox_encryption_config()` SQL function full implementation** — replace the v0.33.0 placeholder `RAISE NOTICE` body with a real `INSERT INTO tide.outbox_encryption_config (outbox_name, kms_provider, key_id, algorithm, created_at) VALUES ($1, $2, $3, $4, now()) ON CONFLICT (outbox_name) DO UPDATE SET ...` implementation. Add `tide.outbox_encryption_config_drop(outbox_name TEXT)` for disabling encryption on an outbox (for pre-encryption-era data that has already been consumed). Add a `pg-tide doctor` check that verifies the relay can reach the configured KMS endpoint before a pipeline starts.
+
+**P1: Migration test chain completeness through v0.34.0**
+
+- **Add `V0_32_0_TO_0_33_0` and `V0_33_0_TO_0_34_0` entries** — add `const` bindings and UPGRADES tuples for both missing migration scripts in `pg-tide-relay/tests/migration_test.rs`. The v0.32.0→0.33.0 migration adds `tide.relay_config_audit`, `tide.relay_pipeline_state`, and deprecation-warning activations; the v0.33.0→0.34.0 migration adds `tide.relay_pipeline_templates`, `tide.relay_delivery_receipts`, and the eight new registered sinks' companion catalog functions.
+- **Fix CI lint step label format** — audit the `just lint-migration-test` recipe (introduced in v0.31.0) that asserts `migration_test.rs` contains the current version label. If the label format comparison is incorrect (e.g., comparing `"0.33.0 → 0.34.0"` as a plain string prefix), fix the `grep` pattern to match the exact `("X.Y.Z → A.B.C", ...)` tuple syntax, making the check robust for all future releases.
+- **Extend `sql_to_sink_e2e.rs` through v0.34.0** — ensure `apply_full_schema()` applies all 34 migration scripts so the E2E test environment includes `tide.relay_delivery_receipts`, `tide.relay_fanin_config`, `tide.relay_pipeline_deps`, and the new pipeline template catalog.
+
+**P1: `relay_provision_tenant()` role-name validation**
+
+- **Add identifier validation before `EXECUTE format()`** — prepend the following guard block to both `tide.relay_provision_tenant()` and `tide.relay_deprovision_tenant()` in a new migration script:
+  ```sql
+  IF NOT (p_db_role ~ '^[A-Za-z_][A-Za-z0-9_]{0,62}$') THEN
+    RAISE EXCEPTION 'role name must match [A-Za-z_][A-Za-z0-9_]{0,62}: %', p_db_role;
+  END IF;
+  IF p_db_role = ANY(ARRAY['pg_monitor','pg_read_all_data','pg_read_all_settings',
+      'pg_signal_backend','pg_write_all_data','tide_admin','postgres']) THEN
+    RAISE EXCEPTION 'reserved role name may not be used for tenant provisioning: %', p_db_role;
+  END IF;
+  ```
+- **Test** — add integration tests that call `tide.relay_provision_tenant()` with: (a) a digit-leading name, (b) a reserved role name, (c) a name containing `$` — and assert each raises the expected exception. Also test a valid name succeeds and the role is visible in `pg_roles`.
+
+**P2: Fan-in coordinator UNNEST offset upsert**
+
+- **Batch all per-source offset updates into a single UNNEST upsert** — replace the sequential `commit_offset()` call loop in the fan-in worker with a single parameterised batch:
+  ```sql
+  INSERT INTO tide.relay_consumer_offsets
+    (pipeline_name, fanin_member, committed_offset, updated_at)
+  SELECT * FROM UNNEST($1::text[], $2::text[], $3::bigint[], $4::timestamptz[])
+  ON CONFLICT (pipeline_name, fanin_member)
+  DO UPDATE SET
+    committed_offset = EXCLUDED.committed_offset,
+    updated_at = EXCLUDED.updated_at
+  WHERE relay_consumer_offsets.committed_offset <= EXCLUDED.committed_offset
+  ```
+  Build four `Vec`s (one per column) before executing. The monotonicity guard (`WHERE committed_offset <= EXCLUDED`) is preserved, consistent with the single-source path.
+- **Benchmark** — add a `fanin_offset_commit` Criterion benchmark measuring wall-clock time for 10-source, 50-source, and 100-source batch commits. Assert P99 latency for 100 sources is under 5 ms. Add the benchmark to `baseline.json` and the CI regression gate.
+- **Integration test** — verify that a fan-in pipeline with 20 contributing outboxes commits all 20 offsets in exactly 1 SQL statement (measured via `pg_stat_statements` within the testcontainer transaction).
+
+**P2: `backfill_progress()` division-by-zero fix**
+
+- **Guard against zero elapsed time and zero throughput** — rewrite the `estimated_completion` computation in the SQL function body:
+  ```sql
+  estimated_completion = CASE
+    WHEN rows_processed = 0 THEN NULL
+    WHEN EXTRACT(epoch FROM (now() - job_started_at)) < 1 THEN NULL
+    ELSE now() + (
+      (total_rows - rows_processed)::float /
+      GREATEST(rows_processed::float /
+        NULLIF(EXTRACT(epoch FROM (now() - job_started_at)), 0), 0.001)
+    ) * interval '1 second'
+  END
+  ```
+  Return `NULL` when throughput is not yet measurable (job just started or no rows processed). Update the `tide.backfill_progress()` function comment to document this behaviour.
+- **Test** — add a unit test that calls `tide.backfill_progress()` immediately after `tide.backfill_schedule()` and asserts: (a) no exception is raised; (b) `estimated_completion` is `NULL`; (c) `rows_processed = 0` and `pct_complete = 0.0`.
+
+**P2: Delivery receipt background sweep**
+
+- **Coordinator background sweep task** — in the relay coordinator initialisation (after the LISTEN connection is established and before the reconcile loop starts), spawn a `tokio::spawn`-ed background task that calls `tide.relay_truncate_delivery_receipts($1::interval)` on a configurable interval. Default interval: 24 hours. The task is cancellable via the existing `CancellationToken` that controls graceful shutdown.
+- **`sweep_interval_hours` TOML / env var** — add `sweep_interval_hours: u64` (default `24`) to `CoordinatorConfig`. Expose as `PG_TIDE_SWEEP_INTERVAL_HOURS` env var and `--sweep-interval-hours` CLI flag (hidden from `--help` unless `--verbose`).
+- **`pg-tide doctor` receipt table check** — add a check that queries `SELECT COUNT(*) FROM tide.relay_delivery_receipts` and emits a `WARNING` when the row count exceeds 1 000 000, advising the operator to verify the sweep is configured or manually invoke `tide.relay_truncate_delivery_receipts()`.
+- **Test** — add an integration test that inserts 5 000 receipt rows with `delivered_at` 60 days ago, triggers the sweep task, and asserts the table is empty afterward. Verify the sweep does not delete rows within the configured retention window.
+
+**P2: `trigger_policy` CHECK constraint**
+
+- **Add validation in `relay_pipeline_dep_add()`** — prepend a policy validation guard to the function body:
+  ```sql
+  IF p_trigger_policy NOT SIMILAR TO 'always|on_idle|on_offset_gte\([0-9]+\)' THEN
+    RAISE EXCEPTION
+      'invalid trigger_policy ''%''; valid: always | on_idle | on_offset_gte(N)',
+      p_trigger_policy;
+  END IF;
+  ```
+  Also add a `CHECK (trigger_policy SIMILAR TO 'always|on_idle|on_offset_gte\([0-9]+\)')` constraint on the `tide.relay_pipeline_deps` table column for defence-in-depth against direct SQL inserts.
+- **Add `pg-tide dag check --validate-policies`** — extend the `pg-tide dag check` subcommand with a `--validate-policies` flag that queries all existing `trigger_policy` values against the regex and reports any that fail, enabling remediation of policies stored before this constraint was added.
+- **Test** — assert `relay_pipeline_dep_add()` raises an exception for `"on_idel"`, `"ON_IDLE"`, and `"on_offset_gte(notanumber)"`, and succeeds for `"always"`, `"on_idle"`, and `"on_offset_gte(500)"`.
+
+**P2: `pg-tide dag show` Mermaid diagram export**
+
+- **Implement `pg-tide dag show`** — query `tide.relay_pipeline_deps` with a LEFT JOIN to `tide.tide_outbox_config` and `tide.tide_inbox_config` to annotate each node with direction (forward/reverse) and enabled state:
+  ```rust
+  println!("```mermaid");
+  println!("graph LR");
+  for row in rows {
+      let style = if row.downstream_enabled { "" } else { ":::paused" };
+      println!("  {}-->|{}|{}{}", row.upstream, row.trigger_policy, row.downstream, style);
+  }
+  println!("  classDef paused fill:#f99,stroke:#c33");
+  println!("```");
+  ```
+  Paused pipelines render in red; the trigger policy label is shown on the edge.
+- **`--format json` option** — add `--format json` (default `mermaid`) that outputs the DAG as a JSON adjacency list `{"nodes": [...], "edges": [...]}` for programmatic consumption.
+- **Test** — configure a known three-node DAG in a testcontainers environment, run `pg-tide dag show`, and assert the output contains the expected `-->|always|` edge and `-->|on_idle|` edge.
+
+---
+
+#### v0.36.0 — CLI Completeness, Test Coverage Depth & v1.0 Pre-flight (detail)
+
+This release completes the documented CLI surface, broadens test coverage to close the P3 gaps, performs the final supply-chain and stability-guarantee verification, and removes the deprecated positional SQL API variants — making v0.36.0 the last pre-v1.0.0 release. Operators who upgrade to v0.36.0 before v1.0.0 get a full release cycle to update any SQL scripts still using the old positional forms.
+
+**P3: `pg-tide history <pipeline> --since TIMESTAMP`**
+
+- **Add `--since` flag to `pg-tide history`** — add a `NaiveDateTime` `clap` argument `--since <ISO-8601-TIMESTAMP>` validated by a `value_parser` that parses `YYYY-MM-DDTHH:MM:SS` format and converts to `DateTime<Utc>`. Pass as a `$since TIMESTAMPTZ` bind parameter to the `tide.relay_config_history()` query: `WHERE changed_at >= $since`. Combine with `--limit N` (default 20).
+- **`--output json`** — add `--output json | table` (default `table`) flag to `pg-tide history` so that CI scripts can parse the config diff history without screen-scraping.
+- **Test** — add a test that inserts three config-history rows with known timestamps, calls `pg-tide history --since <middle_timestamp>`, and asserts only two rows are returned.
+
+**P3: AsyncAPI `validate` exit-code distinction**
+
+- **Use exit code 1 for missing channels, exit code 2 for schema mismatches** — refactor the exit logic in the `pg-tide asyncapi validate` command:
+  ```rust
+  let missing_channels: Vec<_> = spec_channels.difference(&relay_channels).collect();
+  let schema_mismatches: Vec<_> = matched_channels.iter()
+      .filter(|c| !schema_matches(c, &relay_schemas)).collect();
+  if !missing_channels.is_empty() { std::process::exit(1); }
+  if !schema_mismatches.is_empty() { std::process::exit(2); }
+  ```
+  Document both exit codes in the `--help` output and in `docs/src/cli-reference/asyncapi-validate.md`.
+- **Test** — add tests asserting exit code 0 on a matching spec, exit code 1 on a spec with an extra channel, and exit code 2 on a spec where a channel's schema type has changed.
+
+**P3: DAG branching and diamond topology tests**
+
+- **Add three new DAG integration test topologies:**
+  1. Diamond: `A → B`, `A → C`, `B → D`, `C → D` — assert `D` does not acquire until both `B` and `C` have idle consumer lag.
+  2. Fan-out: `A → B`, `A → C`, `A → D` — assert all three downstream pipelines acquire independently and run in parallel.
+  3. Multi-level mixed policies: `A →(on_idle) B →(on_offset_gte(500)) C` — assert `B` waits for `A` idle, then `C` waits until `B` has committed ≥ 500 messages.
+- **Test `relay_dag_check()` cycle detection** — add tests for: self-loop (`A → A`), two-node cycle (`A → B, B → A`), long cycle (`A → B → C → A`). Assert each raises the expected `cycle_path` error.
+
+**P3: KMS feature-gate documentation**
+
+- **README feature table** — add a `> ⚠️ v1.0.0: Full implementation in progress. `LocalKeyFile` is available from v0.35.0; cloud providers (`aws`, `gcp`, `vault`) require `--features kms`.` note under the `kms` row.
+- **`docs/src/relay-guide/configuration.md` KMS section** — add a "Provider availability" table listing which providers are available in which version, with a "Getting started with local key encryption" sub-section pointing to the `LocalKeyFile` config example.
+
+**Positional SQL API removal (v1.0.0 breaking change)**
+
+- **Remove `relay_set_outbox()` 6-parameter form** — drop the positional `relay_set_outbox(outbox_name, sink_type, sink_config, batch_size, enabled, wire_format)` overload from `pg-tide-ext/src/relay.rs` and the corresponding `CREATE OR REPLACE FUNCTION` in the migration script. The deprecation warning has been active since v0.33.0 (two full release cycles). Document the removal in `CHANGELOG.md` and the v0.x→v1.0 migration guide.
+- **Remove `relay_set_inbox()` 8-parameter form** — apply the same removal to the 8-parameter `relay_set_inbox()`. Both removals are gated on the v0.36.0 migration script so that existing databases continue to work until `ALTER EXTENSION pg_tide UPDATE` is run.
+- **Migration guide update** — add a "Positional API removal" section to `docs/src/operations/v0-to-v1-migration-guide.md` with a before/after SQL snippet showing the migration from the old positional form to `relay_set_outbox_v2(config JSONB)`.
+- **CI assertion** — add a `just check-no-positional-api` recipe that greps `pg-tide-ext/src/relay.rs` for the old function signatures and fails if they are present, preventing accidental re-introduction.
+
+**Final supply-chain and stability-guarantee verification**
+
+- **`cargo deny check` and `cargo audit` re-evaluation** — re-evaluate all nine `audit.toml` ignored advisories. Update `comment` fields with re-evaluation date. Run `cargo deny check --all-features` and `cargo audit --all-features` and assert clean output.
+- **`just check-stability` recipe** — run the stability-guarantee enforcement recipe introduced in v0.33.0. Assert: (a) all public SQL functions in `pg-tide-ext/src/` have `#[pg_extern(schema = "tide")]`; (b) the Prometheus metric name list in `metrics.rs` matches `stability-guarantees.md`; (c) the v1.0.0 stable API surface (all `_v2` SQL functions, relay catalog schema, Prometheus metric names) has not changed since v0.33.0.
+- **Pre-flight checklist closure** — update `docs/src/operations/pre-ga-checklist.md` with v0.35.0 and v0.36.0 resolutions. The checklist should show all items from assessments 1–7 as resolved. Print the checklist summary in the `just release-notes --ga` output.
+- **v1.0.0 scope freeze** — update `docs/src/v1-scope.md` to reflect the actual v1.0.0 delivery: KMS encryption with four providers (all implemented in v0.35.0), positional API removal (done in v0.36.0), and the stability guarantee boundary (unchanged from v0.33.0). Mark v0.36.0 as the final pre-GA release in all documentation headers.
+
+**Extended test coverage: KMS integration tests**
+
+- **`LocalKeyFile` key rotation test** — configure an encrypted outbox with `LocalKeyFile`, publish 50 messages, write the ciphertext to a capture sink, rotate the key file (move current → previous, generate new current), then assert all 50 messages decrypt correctly and new publishes use the new key.
+- **KMS startup guard test** — configure a `GcpKms` pipeline on a coordinator built without mock credentials; assert the coordinator logs `PauseReason::NotImplemented` and does not spawn a worker (rather than panicking).
+- **Migration test chain: through v0.35.0 and v0.36.0** — immediately after the two new migration scripts are merged, add their `const` bindings and UPGRADES tuples to `migration_test.rs`. The v0.36.0 migration removes the positional SQL functions; assert the migration test verifies those functions are absent after the migration is applied.
+
+---
+
 ### SlateDuck Ecosystem Integration (v0.37.x)
 
-SlateDuck must be released before this work can begin. v0.35.0 and v0.36.0 are reserved for work that emerges between v0.34.0 and this release.
+SlateDuck must be released before this work can begin. v0.35.0 and v0.36.0 address all assessment-7 findings and complete the pre-v1.0.0 hardening; they are not reserved placeholders.
 
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
