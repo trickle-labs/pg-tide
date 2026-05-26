@@ -17,10 +17,6 @@ DROP FUNCTION IF EXISTS tide.relay_set_outbox(text, text, text, jsonb, integer, 
 --             boolean DEFAULT true, integer DEFAULT 3, boolean DEFAULT true)
 DROP FUNCTION IF EXISTS tide.relay_set_inbox(text, text, jsonb, integer, text, boolean, integer, boolean);
 
-COMMENT ON FUNCTION tide.relay_set_outbox_v2(jsonb) IS
-  'v0.36.0: Only surviving form of relay_set_outbox(). '
-  'The positional 6-parameter form was removed in v0.36.0.';
-
-COMMENT ON FUNCTION tide.relay_set_inbox_v2(jsonb) IS
-  'v0.36.0: Only surviving form of relay_set_inbox(). '
-  'The positional 8-parameter form was removed in v0.36.0.';
+-- Note: tide.relay_set_outbox_v2(jsonb) and tide.relay_set_inbox_v2(jsonb) are
+-- implemented as Rust #[pg_extern] functions in the pgrx extension and remain
+-- the authoritative API.  No DDL change is required here.
