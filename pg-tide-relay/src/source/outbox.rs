@@ -669,7 +669,8 @@ impl FanInSource {
                 .map(|r| r.get::<_, i64>(0))
                 .unwrap_or(0);
 
-            let table_name = format!("tide.{outbox_name}");
+            // QUOTED: tide."{outbox_name}" — identifier loaded from relay_fanin_config
+            let table_name = format!("tide.\"{outbox_name}\"");
             let mut src = OutboxPollerSource {
                 db: Arc::clone(&db),
                 stream_table_name: outbox_name.clone(),
