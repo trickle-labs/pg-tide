@@ -53,8 +53,9 @@ BEGIN
 
     -- Grant access to tide schema objects (SELECT, INSERT, UPDATE on core tables).
     EXECUTE format('GRANT USAGE ON SCHEMA tide TO %I', p_db_role);
+    -- Note: tide.tide_inbox_messages does not exist in the schema; grant only what exists.
     EXECUTE format(
-        'GRANT SELECT, INSERT ON tide.tide_outbox_messages, tide.tide_inbox_messages TO %I',
+        'GRANT SELECT, INSERT ON tide.tide_outbox_messages TO %I',
         p_db_role
     );
     EXECUTE format(

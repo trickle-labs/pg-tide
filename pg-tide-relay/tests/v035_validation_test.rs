@@ -80,9 +80,10 @@ async fn test_provision_tenant_digit_leading_role_rejected() {
         "digit-leading role name should raise an error"
     );
     let err = result.unwrap_err();
+    let err_str = format!("{err:?}");
     assert!(
-        err.to_string().contains("role name must match"),
-        "expected 'role name must match' in error, got: {err}"
+        err_str.contains("role name must match"),
+        "expected 'role name must match' in error, got: {err_str}"
     );
 }
 
@@ -113,9 +114,10 @@ async fn test_provision_tenant_reserved_postgres_role_rejected() {
         "reserved role 'postgres' should raise an error"
     );
     let err = result.unwrap_err();
+    let err_str = format!("{err:?}");
     assert!(
-        err.to_string().contains("reserved role"),
-        "expected 'reserved role' in error, got: {err}"
+        err_str.contains("reserved role"),
+        "expected 'reserved role' in error, got: {err_str}"
     );
 }
 
