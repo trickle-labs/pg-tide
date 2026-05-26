@@ -113,6 +113,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Free disk space for integration tests
+        run: |
+          echo "Disk usage before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          docker system prune -af || true
+          echo "Disk usage after cleanup:"
+          df -h
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
