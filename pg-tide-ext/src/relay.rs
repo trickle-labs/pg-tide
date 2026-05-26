@@ -1,9 +1,12 @@
 //! Relay Catalog API for pg_tide.
 //!
-//! Provides `tide.relay_set_outbox()`, `tide.relay_set_outbox_v2()`,
-//! `tide.relay_set_inbox()`, `tide.relay_set_inbox_v2()`,
+//! Provides `tide.relay_set_outbox_v2()`, `tide.relay_set_inbox_v2()`,
 //! `tide.relay_enable()`, `tide.relay_disable()`, `tide.relay_delete()`,
 //! `tide.relay_list_configs()` in the `tide` schema.
+//!
+//! v0.36.0: The positional-parameter forms `relay_set_outbox()` (6 params)
+//! and `relay_set_inbox()` (8 params) were removed as a breaking change.
+//! Use `relay_set_outbox_v2(config JSONB)` and `relay_set_inbox_v2(config JSONB)`.
 //!
 //! The relay catalog stores pipeline configurations that the `pg-tide` binary
 //! reads to set up source/sink connections.
@@ -27,70 +30,12 @@ fn relay_exists(name: &str) -> Result<bool, PgTideError> {
     Ok(in_outbox || in_inbox)
 }
 
-// ── TIDE-API: relay_set_outbox ────────────────────────────────────────────
-
-/// Configure a forward relay pipeline (outbox → external sink).
-#[pg_extern(schema = "tide")]
-pub fn relay_set_outbox(
-    p_name: &str,
-    p_outbox: &str,
-    p_sink: &str,
-    p_config: default!(pgrx::JsonB, "'{}'::jsonb"),
-    p_batch_size: default!(i32, 100),
-    p_enabled: default!(bool, true),
-) {
-    pgrx::warning!(
-        "relay_set_outbox() positional form is deprecated; \
-         use relay_set_outbox_v2(config JSONB) instead. \
-         The positional form will be removed in v1.0.0."
-    );
-    relay_set_outbox_impl(p_name, p_outbox, p_sink, p_config, p_batch_size, p_enabled)
-        .unwrap_or_else(|e| pgrx::error!("{}", e))
-}
-
-fn relay_set_outbox_impl(
-    name: &str,
-    outbox: &str,
-    sink: &str,
-    config: pgrx::JsonB,
-    batch_size: i32,
-    enabled: bool,
-) -> Result<(), PgTideError> {
-    crate::validation::validate_identifier(name)?;
-    crate::validation::validate_identifier(outbox)?;
-    // Build combined config matching the relay runtime's expected shape:
-    // source_type / source.outbox + sink_type / sink.* + batch_size.
-    let full_config = serde_json::json!({
-        "source_type": "outbox",
-        "source": { "outbox": outbox },
-        "sink_type": sink,
-        "sink": config.0,
-        "batch_size": batch_size,
-    });
-    let full_str = serde_json::to_string(&full_config)
-        .map_err(|e| PgTideError::SpiError(format!("serialize full config: {e}")))?;
-
-    Spi::run_with_args(
-        "INSERT INTO tide.relay_outbox_config (name, enabled, config) \
-         VALUES ($1, $2, $3::jsonb) \
-         ON CONFLICT (name) DO UPDATE \
-         SET enabled = EXCLUDED.enabled, config = EXCLUDED.config",
-        &[name.into(), enabled.into(), full_str.as_str().into()],
-    )
-    .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_outbox_config: {e}")))?;
-
-    // Notify relay binary.
-    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
-
-    Ok(())
-}
-
 // ── TIDE-API: relay_set_outbox_v2 (v0.18.0) ──────────────────────────────
 
 /// Configure a forward relay pipeline using a single JSONB config parameter.
 ///
-/// This is the v0.18.0 single-parameter form of `relay_set_outbox()` for
-/// symmetric API ergonomics with `relay_set_inbox_v2()`.
+/// v0.36.0: This is the only remaining form of `relay_set_outbox()`; the
+/// 6-positional-parameter form was removed in v0.36.0.
 /// The config object accepts the following keys:
 ///
 /// - `name`        TEXT  (required) Pipeline name.
@@ -100,9 +45,6 @@ fn relay_set_outbox_impl(
 /// - `batch_size`  INT   (default: 100)
 /// - `enabled`     BOOL  (default: true)
 /// - `wire_format` TEXT  (default: `"native"`)
-///
-/// The 6-positional-parameter `relay_set_outbox()` is **deprecated** and will
-/// be removed in a future major version; migrate to this form.
 #[pg_extern(schema = "tide")]
 pub fn relay_set_outbox_v2(p_config: pgrx::JsonB) {
     relay_set_outbox_v2_impl(p_config).unwrap_or_else(|e| pgrx::error!("{}", e))
@@ -171,87 +113,12 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
     Ok(())
 }
 
-// ── TIDE-API: relay_set_inbox ─────────────────────────────────────────────
-
-/// Configure a reverse relay pipeline (external source → inbox).
-#[pg_extern(schema = "tide")]
-#[allow(clippy::too_many_arguments)]
-pub fn relay_set_inbox(
-    p_name: &str,
-    p_inbox: &str,
-    p_config: default!(pgrx::JsonB, "'{}'::jsonb"),
-    p_batch_size: default!(i32, 100),
-    p_source: default!(&str, "'stdout'"),
-    p_enabled: default!(bool, true),
-    p_max_retries: default!(i32, 3),
-    p_idempotent: default!(bool, true),
-) {
-    pgrx::warning!(
-        "relay_set_inbox() positional form is deprecated; \
-         use relay_set_inbox_v2(config JSONB) instead. \
-         The positional form will be removed in v1.0.0."
-    );
-    relay_set_inbox_impl(
-        p_name,
-        p_inbox,
-        p_config,
-        p_batch_size,
-        p_source,
-        p_enabled,
-        p_max_retries,
-        p_idempotent,
-    )
-    .unwrap_or_else(|e| pgrx::error!("{}", e))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn relay_set_inbox_impl(
-    name: &str,
-    inbox: &str,
-    config: pgrx::JsonB,
-    batch_size: i32,
-    source: &str,
-    enabled: bool,
-    max_retries: i32,
-    idempotent: bool,
-) -> Result<(), PgTideError> {
-    crate::validation::validate_identifier(name)?;
-    crate::validation::validate_identifier(inbox)?;
-    // Build config matching the relay runtime's expected shape for reverse pipelines:
-    // source_type / source.* + sink_type=inbox / sink.inbox + batch_size.
-    let full_config = serde_json::json!({
-        "source_type": source,
-        "source": config.0,
-        "sink_type": "inbox",
-        "sink": {
-            "inbox": inbox,
-            "max_retries": max_retries,
-            "idempotent": idempotent,
-        },
-        "batch_size": batch_size,
-    });
-    let full_str = serde_json::to_string(&full_config)
-        .map_err(|e| PgTideError::SpiError(format!("serialize config: {e}")))?;
-
-    Spi::run_with_args(
-        "INSERT INTO tide.relay_inbox_config (name, enabled, config) \
-         VALUES ($1, $2, $3::jsonb) \
-         ON CONFLICT (name) DO UPDATE \
-         SET enabled = EXCLUDED.enabled, config = EXCLUDED.config",
-        &[name.into(), enabled.into(), full_str.as_str().into()],
-    )
-    .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_inbox_config: {e}")))?;
-
-    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
-
-    Ok(())
-}
-
 // ── TIDE-API: relay_set_inbox_v2 (v0.16.0) ───────────────────────────────
 
 /// Configure a reverse relay pipeline using a single JSONB config parameter.
 ///
-/// This is the v0.16.0 single-parameter form of `relay_set_inbox()`.
+/// v0.36.0: This is the only remaining form of `relay_set_inbox()`; the
+/// 8-positional-parameter form was removed in v0.36.0.
 /// The config object accepts the following keys:
 ///
 /// - `name`        TEXT  (required) Pipeline name.
@@ -569,46 +436,47 @@ mod tests {
         }
     }
 
-    // ── relay_set_outbox / relay_set_inbox ─────────────────────────────────
+    // ── relay_set_outbox_v2 / relay_set_inbox_v2 ───────────────────────────
+    // v0.36.0: positional forms removed; all tests use v2 (JSONB) API.
 
     #[pg_test]
     fn test_relay_set_outbox_creates_config() {
         setup_outbox("relay-src-outbox");
-        crate::relay::relay_set_outbox(
-            "my-pipeline",
-            "relay-src-outbox",
-            "nats",
-            pgrx::JsonB(serde_json::json!({"url": "nats://localhost:4222"})),
-            100,
-            true,
-        );
+        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "my-pipeline",
+            "outbox": "relay-src-outbox",
+            "sink_type": "nats",
+            "config": {"url": "nats://localhost:4222"},
+            "batch_size": 100,
+            "enabled": true,
+        })));
         let exists: bool = Spi::get_one(
             "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = 'my-pipeline')",
         )
         .unwrap()
         .unwrap_or(false);
-        assert!(exists, "relay_set_outbox must create a config row");
+        assert!(exists, "relay_set_outbox_v2 must create a config row");
     }
 
     #[pg_test]
     fn test_relay_set_inbox_creates_config() {
         crate::inbox::inbox_create("relay-dst-inbox", "tide", 3, 72, 0);
-        crate::relay::relay_set_inbox(
-            "my-reverse-pipeline",
-            "relay-dst-inbox",
-            pgrx::JsonB(serde_json::json!({"url": "nats://localhost:4222"})),
-            100,
-            "nats",
-            true,
-            3,
-            true,
-        );
+        crate::relay::relay_set_inbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "my-reverse-pipeline",
+            "inbox": "relay-dst-inbox",
+            "source": "nats",
+            "config": {"url": "nats://localhost:4222"},
+            "batch_size": 100,
+            "enabled": true,
+            "max_retries": 3,
+            "idempotent": true,
+        })));
         let exists: bool = Spi::get_one(
             "SELECT EXISTS(SELECT 1 FROM tide.relay_inbox_config WHERE name = 'my-reverse-pipeline')",
         )
         .unwrap()
         .unwrap_or(false);
-        assert!(exists, "relay_set_inbox must create a config row");
+        assert!(exists, "relay_set_inbox_v2 must create a config row");
     }
 
     // ── relay_enable / relay_disable ───────────────────────────────────────
@@ -616,14 +484,11 @@ mod tests {
     #[pg_test]
     fn test_relay_enable_disable_roundtrip() {
         setup_outbox("toggle-relay-outbox");
-        crate::relay::relay_set_outbox(
-            "toggle-pipeline",
-            "toggle-relay-outbox",
-            "stdout",
-            pgrx::JsonB(serde_json::json!({})),
-            100,
-            true,
-        );
+        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "toggle-pipeline",
+            "outbox": "toggle-relay-outbox",
+            "sink_type": "stdout",
+        })));
 
         crate::relay::relay_disable("toggle-pipeline");
         let enabled: bool = Spi::get_one(
@@ -647,14 +512,11 @@ mod tests {
     #[pg_test]
     fn test_relay_delete_removes_config() {
         setup_outbox("del-relay-outbox");
-        crate::relay::relay_set_outbox(
-            "delete-me-pipeline",
-            "del-relay-outbox",
-            "stdout",
-            pgrx::JsonB(serde_json::json!({})),
-            100,
-            true,
-        );
+        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "delete-me-pipeline",
+            "outbox": "del-relay-outbox",
+            "sink_type": "stdout",
+        })));
         crate::relay::relay_delete("delete-me-pipeline");
         let exists: bool = Spi::get_one(
             "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = 'delete-me-pipeline')",
@@ -669,14 +531,13 @@ mod tests {
     #[pg_test]
     fn test_relay_get_config_returns_json() {
         setup_outbox("cfg-relay-outbox");
-        crate::relay::relay_set_outbox(
-            "cfg-pipeline",
-            "cfg-relay-outbox",
-            "stdout",
-            pgrx::JsonB(serde_json::json!({"key": "value"})),
-            50,
-            true,
-        );
+        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "cfg-pipeline",
+            "outbox": "cfg-relay-outbox",
+            "sink_type": "stdout",
+            "config": {"key": "value"},
+            "batch_size": 50,
+        })));
         let cfg = crate::relay::relay_get_config("cfg-pipeline");
         assert_eq!(cfg.0["source_type"], "outbox");
         assert_eq!(cfg.0["source"]["outbox"], "cfg-relay-outbox");
@@ -686,14 +547,11 @@ mod tests {
     #[pg_test]
     fn test_relay_list_configs_includes_pipeline() {
         setup_outbox("list-relay-outbox");
-        crate::relay::relay_set_outbox(
-            "list-pipeline",
-            "list-relay-outbox",
-            "kafka",
-            pgrx::JsonB(serde_json::json!({})),
-            100,
-            true,
-        );
+        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "list-pipeline",
+            "outbox": "list-relay-outbox",
+            "sink_type": "kafka",
+        })));
         let list = crate::relay::relay_list_configs();
         let arr = list.0.as_array().expect("must be array");
         let found = arr.iter().any(|v| v["name"] == "list-pipeline");
@@ -714,14 +572,11 @@ mod tests {
     #[pg_test]
     fn test_relay_set_tenant_updates_config() {
         setup_outbox("tenant-relay-outbox");
-        crate::relay::relay_set_outbox(
-            "tenant-pipeline",
-            "tenant-relay-outbox",
-            "stdout",
-            pgrx::JsonB(serde_json::json!({})),
-            100,
-            true,
-        );
+        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "tenant-pipeline",
+            "outbox": "tenant-relay-outbox",
+            "sink_type": "stdout",
+        })));
         crate::relay::relay_set_tenant("tenant-pipeline", "acme");
         let tenant: String = Spi::get_one(
             "SELECT tenant_name FROM tide.relay_outbox_config WHERE name = 'tenant-pipeline'",

@@ -852,7 +852,7 @@ Building on the zero-P0 record maintained through v0.34.0, this tranche resolves
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
 | v0.35.0 | Assessment-7 P1/P2 bug fixes, KMS encryption full implementation & fan-in performance hardening: KMS `todo!()` panic elimination, migration test chain completeness through v0.34.0, `relay_provision_tenant()` role-name validation, fan-in UNNEST offset upsert, `backfill_progress()` division-by-zero fix, delivery receipt background sweep, `trigger_policy` CHECK constraint, `pg-tide dag show` Mermaid export | ✅ Released | Large | [plans/overall-assessment-7.md](plans/overall-assessment-7.md) |
-| v0.36.0 | CLI completeness, test coverage depth & v1.0 pre-flight: `pg-tide history --since`, AsyncAPI validate exit-code distinction, DAG branching/diamond topology tests, KMS feature-gate documentation, positional SQL API removal, final `cargo deny` refresh, stability-guarantee verification, v1.0.0 migration guide update, pre-flight checklist closure | 🔜 Planned | Large | [plans/overall-assessment-7.md](plans/overall-assessment-7.md) |
+| v0.36.0 | CLI completeness, test coverage depth & v1.0 pre-flight: `pg-tide history --since`, AsyncAPI validate exit-code distinction, DAG branching/diamond topology tests, KMS feature-gate documentation, positional SQL API removal, final `cargo deny` refresh, stability-guarantee verification, v1.0.0 migration guide update, pre-flight checklist closure | ✅ Released | Large | [plans/overall-assessment-7.md](plans/overall-assessment-7.md) |
 
 #### v0.35.0 — Assessment-7 P1/P2 Bug Fixes, KMS Encryption & Fan-In Performance Hardening (detail)
 

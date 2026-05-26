@@ -337,6 +337,8 @@ pub enum Commands {
     ///
     /// Queries `tide.relay_config_history()` and prints a timestamped table
     /// of config changes with a compact diff.
+    ///
+    /// Exit codes: 0 = success, 1 = connection error.
     History {
         /// Pipeline name to show history for.
         pipeline: String,
@@ -348,6 +350,12 @@ pub enum Commands {
         /// Show only changes at or after this timestamp (ISO 8601).
         #[arg(long)]
         since: Option<String>,
+
+        /// Output format: table (default) or json.
+        ///
+        /// Use `--output json` to get machine-readable output for CI scripts.
+        #[arg(long, default_value = "table", value_parser = ["table", "json"])]
+        output: String,
 
         /// PostgreSQL URL.  Overrides --postgres-url.
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]

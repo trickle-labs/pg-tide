@@ -2,7 +2,7 @@
 
 > **Audience:** Operators and application developers upgrading from any v0.x release
 > to v1.0.0 GA.  
-> **Last updated:** v0.33.0
+> **Last updated:** v0.36.0 (positional API forms removed in v0.36.0)
 
 ## Overview
 
@@ -17,15 +17,17 @@ procedure, the rollback procedure, and the feature compatibility matrix.
 
 ### 1. Positional SQL API variants removed
 
-The following function signatures have been **removed** in v1.0.0:
+The following function signatures were **removed in v0.36.0** and will not exist in v1.0.0:
 
 | Deprecated form (removed) | Replacement |
 |---|---|
 | `tide.relay_set_outbox(name, outbox, sink, config, batch_size, enabled)` | `tide.relay_set_outbox_v2(config JSONB)` |
 | `tide.relay_set_inbox(name, inbox, config, batch_size, source, enabled, max_retries, idempotent)` | `tide.relay_set_inbox_v2(config JSONB)` |
 
-These forms were deprecated since v0.18.0 and have emitted a `WARNING` on every call
-since v0.30.0.
+These forms were deprecated since v0.18.0, emitted a `WARNING` on every call since v0.30.0,
+and were **removed in v0.36.0** via the `pg_tide--0.35.0--0.36.0.sql` migration script.
+After running `ALTER EXTENSION pg_tide UPDATE`, any call to the positional forms will fail
+with `ERROR: function tide.relay_set_outbox(...) does not exist`.
 
 **Action required:** Search your application code and migration files for calls to the
 positional forms and replace them with the JSONB form before upgrading.

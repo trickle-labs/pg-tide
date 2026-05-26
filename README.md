@@ -22,7 +22,7 @@ When you're ready to fan out to Kafka, NATS, Redis Streams, or any analytics pla
 - **Replay Workbench** — rewind consumer offsets, preview replays, and manage the DLQ from SQL or CLI
 - **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart; `--self-test` and `--expect-extension-version` flags for Kubernetes readiness probes
 - **Observable** — OpenTelemetry spans, Prometheus metrics, Grafana dashboard, and pre-built alerting rules included
-- **Envelope Encryption Foundation** — KMS-backed AES-256-GCM envelope encryption (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file); full implementation in v1.0.0
+- **Envelope Encryption Foundation** — KMS-backed AES-256-GCM envelope encryption (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file); `LocalKeyFile` provider fully implemented in v0.35.0; cloud providers ship in v1.0.0
 
 ## Quick Start
 
@@ -157,7 +157,7 @@ pg-tide asyncapi validate --spec-url https://example.com/asyncapi.yaml
 - **SSRF protection** — webhook sinks reject loopback, link-local, private ranges, and plain HTTP by default
 - **Secret redaction** — `${env:…}` and `${file:…}` references are replaced with `[REDACTED]` in logs
 - **Supply-chain audit** — `cargo-deny` checks every dependency for RUSTSEC advisories and license compliance in CI
-- **Envelope Encryption Foundation** — `tide.outbox_encryption_config` catalog table and `EncryptionEnvelope` trait skeleton for AES-256-GCM KMS-backed payload encryption; four provider backends (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file); full implementation ships in v1.0.0
+- **Envelope Encryption Foundation** — `tide.outbox_encryption_config` catalog table and `EncryptionEnvelope` trait for AES-256-GCM KMS-backed payload encryption; `LocalKeyFile` provider is fully implemented (including key rotation) in v0.35.0; cloud providers (AWS KMS, GCP Cloud KMS, HashiCorp Vault) ship in v1.0.0
 
 ## Observability
 

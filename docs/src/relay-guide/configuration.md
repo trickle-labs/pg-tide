@@ -205,6 +205,42 @@ On `SIGTERM`:
 
 ---
 
+## Envelope Encryption (KMS)
+
+pg-tide supports AES-256-GCM envelope encryption via the `kms` feature gate.
+Encryption is enabled per-outbox in the `tide.outbox_encryption_config` catalog table.
+
+### KMS Provider Availability
+
+| Provider | Feature flag | Status | Notes |
+|---|---|---|---|
+| `LocalKeyFile` | `kms-local` | **Fully implemented** (v0.35.0) | AES-256-GCM with key rotation via `key_path_previous`. Ready for production use in non-cloud environments. |
+| `AwsKms` | `kms-aws` | Not yet implemented | Returns `NotImplemented` gracefully. Full implementation before v1.0.0. |
+| `GcpKms` | `kms-gcp` | Not yet implemented | Returns `NotImplemented` gracefully. Full implementation before v1.0.0. |
+| `VaultKms` | `kms-vault` | Not yet implemented | Returns `NotImplemented` gracefully. Full implementation before v1.0.0. |
+
+> **Startup guard**: The relay checks `is_available()` on any configured KMS provider at pipeline startup.
+> If a provider returns `false` (e.g. cloud providers in v0.35.0), the pipeline is paused with
+> `PauseReason::NotImplemented` rather than crashing. This ensures safe operation when a
+> cloud KMS feature is enabled but credentials are absent.
+
+### LocalKeyFile Configuration
+
+```toml
+# relay.toml — KMS section (when kms-local feature is enabled)
+[pipelines.my-encrypted-outbox.encryption]
+provider = "local"
+key_path = "/etc/pg-tide/kms/current.key"
+# Optional: key_path_previous for zero-downtime key rotation.
+# Messages encrypted with the old key are decrypted via the previous key file.
+key_path_previous = "/etc/pg-tide/kms/previous.key"
+```
+
+Key files must contain exactly 64 hex characters (32 bytes / 256 bits).
+Generate a new key: `openssl rand -hex 32 > /etc/pg-tide/kms/current.key`
+
+---
+
 ## Example: Production Configuration
 
 ```toml

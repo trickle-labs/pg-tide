@@ -46,6 +46,7 @@ const V0_31_0_TO_0_32_0: &str = include_str!("../../sql/pg_tide--0.31.0--0.32.0.
 const V0_32_0_TO_0_33_0: &str = include_str!("../../sql/pg_tide--0.32.0--0.33.0.sql");
 const V0_33_0_TO_0_34_0: &str = include_str!("../../sql/pg_tide--0.33.0--0.34.0.sql");
 const V0_34_0_TO_0_35_0: &str = include_str!("../../sql/pg_tide--0.34.0--0.35.0.sql");
+const V0_35_0_TO_0_36_0: &str = include_str!("../../sql/pg_tide--0.35.0--0.36.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -83,6 +84,7 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.32.0 → 0.33.0", V0_32_0_TO_0_33_0),
     ("0.33.0 → 0.34.0", V0_33_0_TO_0_34_0),
     ("0.34.0 → 0.35.0", V0_34_0_TO_0_35_0),
+    ("0.35.0 → 0.36.0", V0_35_0_TO_0_36_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
@@ -461,4 +463,63 @@ async fn test_sequential_migration_upgrade() {
         .expect("count deps")
         .get(0);
     assert_eq!(dep_count, 0, "relay_pipeline_deps must be empty after drop");
+
+    // After v0.36.0 upgrade: positional API forms must no longer exist.
+    // relay_set_outbox(text, text, text, jsonb, integer, boolean) must be gone.
+    let has_positional_outbox: bool = client
+        .query_one(
+            "SELECT EXISTS(
+               SELECT 1 FROM information_schema.routines
+               WHERE routine_schema = 'tide'
+                 AND routine_name = 'relay_set_outbox'
+                 AND routine_type = 'FUNCTION'
+             )",
+            &[],
+        )
+        .await
+        .expect("routine check")
+        .get(0);
+    assert!(
+        !has_positional_outbox,
+        "after v0.36.0 upgrade, tide.relay_set_outbox() positional form must not exist"
+    );
+
+    // relay_set_inbox(text, text, jsonb, integer, text, boolean, integer, boolean) must be gone.
+    let has_positional_inbox: bool = client
+        .query_one(
+            "SELECT EXISTS(
+               SELECT 1 FROM information_schema.routines
+               WHERE routine_schema = 'tide'
+                 AND routine_name = 'relay_set_inbox'
+                 AND routine_type = 'FUNCTION'
+             )",
+            &[],
+        )
+        .await
+        .expect("routine check")
+        .get(0);
+    assert!(
+        !has_positional_inbox,
+        "after v0.36.0 upgrade, tide.relay_set_inbox() positional form must not exist"
+    );
+
+    // relay_set_outbox_v2() must still exist (created as SQL in v0.17.0→v0.18.0).
+    // Note: relay_set_inbox_v2() is a pgrx #[pg_extern] and is only present when
+    // the extension is loaded — it cannot be checked in a plain-SQL test env.
+    let has_outbox_v2: bool = client
+        .query_one(
+            "SELECT EXISTS(
+               SELECT 1 FROM information_schema.routines
+               WHERE routine_schema = 'tide'
+                 AND routine_name = 'relay_set_outbox_v2'
+             )",
+            &[],
+        )
+        .await
+        .expect("routine check")
+        .get(0);
+    assert!(
+        has_outbox_v2,
+        "after v0.36.0 upgrade, tide.relay_set_outbox_v2() must still exist"
+    );
 }
