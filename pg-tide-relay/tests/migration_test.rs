@@ -503,7 +503,9 @@ async fn test_sequential_migration_upgrade() {
         "after v0.36.0 upgrade, tide.relay_set_inbox() positional form must not exist"
     );
 
-    // relay_set_outbox_v2() and relay_set_inbox_v2() must still exist.
+    // relay_set_outbox_v2() must still exist (created as SQL in v0.17.0→v0.18.0).
+    // Note: relay_set_inbox_v2() is a pgrx #[pg_extern] and is only present when
+    // the extension is loaded — it cannot be checked in a plain-SQL test env.
     let has_outbox_v2: bool = client
         .query_one(
             "SELECT EXISTS(
@@ -519,22 +521,5 @@ async fn test_sequential_migration_upgrade() {
     assert!(
         has_outbox_v2,
         "after v0.36.0 upgrade, tide.relay_set_outbox_v2() must still exist"
-    );
-
-    let has_inbox_v2: bool = client
-        .query_one(
-            "SELECT EXISTS(
-               SELECT 1 FROM information_schema.routines
-               WHERE routine_schema = 'tide'
-                 AND routine_name = 'relay_set_inbox_v2'
-             )",
-            &[],
-        )
-        .await
-        .expect("routine check")
-        .get(0);
-    assert!(
-        has_inbox_v2,
-        "after v0.36.0 upgrade, tide.relay_set_inbox_v2() must still exist"
     );
 }

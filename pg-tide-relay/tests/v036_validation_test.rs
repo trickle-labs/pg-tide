@@ -4,7 +4,8 @@
 //   1. Positional `relay_set_outbox()` 6-arg form must not exist after v0.36.0 migration.
 //   2. Positional `relay_set_inbox()` 8-arg form must not exist after v0.36.0 migration.
 //   3. `relay_set_outbox_v2(jsonb)` still works after v0.36.0 migration.
-//   4. `relay_set_inbox_v2(jsonb)` still works after v0.36.0 migration.
+//   Note: `relay_set_inbox_v2(jsonb)` is a pgrx #[pg_extern] and only exists when the
+//   extension is loaded; it is covered by pg-tide-ext pgrx unit tests instead.
 mod common;
 
 use std::time::Duration;
@@ -120,28 +121,7 @@ async fn test_relay_set_outbox_v2_still_works() {
     );
 }
 
-/// `tide.relay_set_inbox_v2(jsonb)` must still be present and functional
-/// after the v0.36.0 migration.
-#[tokio::test]
-async fn test_relay_set_inbox_v2_still_works() {
-    let (client, _container) = setup_db().await;
-    let result = client
-        .execute(
-            r#"SELECT tide.relay_set_inbox_v2($1::jsonb)"#,
-            &[&serde_json::json!({
-                "inbox_name": "v036_test_inbox",
-                "source_type": "http",
-                "source_config": {"listen_addr": "0.0.0.0:9998"},
-                "batch_size": 50,
-                "consumer_group": "default",
-                "enabled": true
-            })
-            .to_string()],
-        )
-        .await;
-    assert!(
-        result.is_ok(),
-        "relay_set_inbox_v2() must still work after v0.36.0 migration, got: {:?}",
-        result
-    );
-}
+// Note: tide.relay_set_inbox_v2(jsonb) is a pgrx #[pg_extern] and only exists
+// when the pg_tide extension is loaded.  It cannot be exercised in the plain-SQL
+// testcontainers environment.  Functional coverage is provided by the pgrx unit
+// tests in pg-tide-ext.
