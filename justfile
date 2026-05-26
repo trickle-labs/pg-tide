@@ -408,3 +408,23 @@ check-stability:
         echo "=== Stability contract check: FAIL ==="
         exit 1
     fi
+
+# v0.36.0: Assert that the deprecated positional relay API forms are absent from
+# relay.rs. Prevents accidental re-introduction of removed functions.
+check-no-positional-api:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FAIL=0
+    if grep -n 'pub fn relay_set_outbox\b' pg-tide-ext/src/relay.rs 2>/dev/null | grep -v 'relay_set_outbox_v2'; then
+        echo "ERROR: relay_set_outbox() positional form still exists in relay.rs"
+        FAIL=1
+    fi
+    if grep -n 'pub fn relay_set_inbox\b' pg-tide-ext/src/relay.rs 2>/dev/null | grep -v 'relay_set_inbox_v2'; then
+        echo "ERROR: relay_set_inbox() positional form still exists in relay.rs"
+        FAIL=1
+    fi
+    if [[ "$FAIL" -eq 0 ]]; then
+        echo "OK: No positional API forms found in relay.rs"
+    else
+        exit 1
+    fi

@@ -196,13 +196,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pipeline,
             limit,
             since,
+            output,
             postgres_url,
         }) => {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "history");
-            return cmd::history::run_history(&url, &pipeline, limit, since.as_deref()).await;
+            return cmd::history::run_history(&url, &pipeline, limit, since.as_deref(), &output)
+                .await;
         }
         Some(Commands::Backfill(backfill_cmd)) => {
             use cli::BackfillCommands;

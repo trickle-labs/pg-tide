@@ -37,7 +37,7 @@ The following features are explicitly deferred to post-v1.0.0 releases:
 | WASM plugin system for custom transforms | API design not finalized |
 | Web UI for pipeline management | Out of scope for server binary |
 | Additional connector ecosystems (Airbyte v2, Singer v2) | Connector protocol updates needed |
-| KMS envelope encryption | Interface designed in v0.33.0; implementation post-GA |
+| KMS envelope encryption | `LocalKeyFile` provider is fully implemented (v0.35.0); cloud providers (AWS KMS, GCP KMS, Vault) implemented before v1.0.0 |
 | Envelope-encrypted inbox replay | Depends on KMS implementation |
 
 ## Version Compatibility

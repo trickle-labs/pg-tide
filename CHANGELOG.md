@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.36.0 — CLI Completeness, Test Coverage Depth & v1.0 Pre-Flight](#0360--cli-completeness-test-coverage-depth--v10-pre-flight)
 - [0.35.0 — Assessment-7 P1/P2 Bug Fixes, KMS Encryption & Fan-In Performance Hardening](#0350--assessment-7-p1p2-bug-fixes-kms-encryption--fan-in-performance-hardening)
 - [0.34.0 — Universal Reverse Pipeline Sinks & DuckLake Ecosystem Completeness](#0340--universal-reverse-pipeline-sinks--ducklake-ecosystem-completeness)
 - [0.33.0 — Pre-GA Supply-Chain Hardening, KMS Foundation & v1.0 Readiness](#0330--2026-05-20--pre-ga-supply-chain-hardening-kms-foundation--v10-readiness)
@@ -43,6 +44,63 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.36.0] — CLI Completeness, Test Coverage Depth & v1.0 Pre-Flight
+
+This release completes the CLI surface, deepens integration test coverage, and performs final
+v1.0 pre-flight clean-up including removal of deprecated positional API forms.
+
+### Breaking change: positional relay SQL API forms removed
+
+`tide.relay_set_outbox(text, text, text, jsonb, integer, boolean)` and
+`tide.relay_set_inbox(text, text, jsonb, integer, text, boolean, integer, boolean)` have been
+removed. These 6- and 8-parameter positional forms were deprecated in v0.34.0 when the unified
+JSONB forms `relay_set_outbox_v2(jsonb)` and `relay_set_inbox_v2(jsonb)` were introduced.
+The v2 forms are unchanged. Migrate any callers by wrapping your config payload in a single
+`jsonb` argument.
+
+### CLI: `pg-tide history --output json|table`
+
+The `pg-tide history` command now accepts `--output table` (default, unchanged) or
+`--output json` (emits a JSON array). This enables pipeline audit log consumption by external
+scripts and monitoring tools without screen-scraping table output.
+
+### AsyncAPI validate: distinct exit codes
+
+`pg-tide asyncapi validate` now returns:
+- **exit 0** — catalog matches spec exactly
+- **exit 1** — channels present in spec but absent from live catalog (schema drift, ERROR)
+- **exit 2** — live pipelines not present in spec (undocumented pipelines, WARNING)
+
+This enables CI pipelines to differentiate schema drift (blocking) from undocumented pipelines
+(advisory).
+
+### DAG topology integration tests
+
+Six new DAG topology integration tests cover: diamond topology, fan-out topology, mixed trigger
+policies, self-loop rejection, two-node cycle rejection, and diamond back-edge rejection. All
+tests run on the fully migrated schema via `install_full_schema`.
+
+### KMS documentation
+
+The `LocalKeyFile` AES-256-GCM provider (fully implemented in v0.35.0) is now documented in
+`docs/src/relay-guide/configuration.md` with a provider availability table and example
+configuration. Cloud providers (AWS KMS, GCP Cloud KMS, HashiCorp Vault) remain as stubs
+returning `NotImplemented` until v1.0.0.
+
+### KMS integration tests
+
+New `kms_test.rs` integration tests (feature-gated `kms-local` and `kms-gcp`) cover:
+key rotation across 50 messages, forward-secrecy, round-trip correctness, `LocalKeyFile`
+availability, and GCP KMS startup guard (`is_available() = false`, `NotImplemented` errors,
+`is_transient() = false`).
+
+### Migration test chain
+
+`migration_test.rs`, `sql_to_sink_e2e.rs`, and `common/mod.rs` now include the 0.35.0→0.36.0
+migration script and verify that positional API functions are absent after the upgrade.
 
 ---
 

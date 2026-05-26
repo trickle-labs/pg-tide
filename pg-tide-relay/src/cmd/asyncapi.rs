@@ -449,6 +449,15 @@ fn to_pascal_case(s: &str) -> String {
 ///
 /// v0.27.0: Checks that every channel in the spec exists as a configured
 /// pipeline in the live catalog, and warns about undocumented pipelines.
+///
+/// v0.36.0: Exit code distinction:
+///   - Exit 0: catalog fully matches the spec.
+///   - Exit 1: channels declared in the spec are **missing** from the live
+///     catalog (the spec expects pipelines that are not running).
+///   - Exit 2: live pipelines are **not documented** in the spec (schema
+///     mismatch — running pipelines absent from the spec).
+///
+/// When both conditions are true, exit code 1 takes precedence.
 async fn run_asyncapi_validate(
     postgres_url: &str,
     spec_url: &str,
@@ -493,9 +502,7 @@ async fn run_asyncapi_validate(
 
     let live_channels: HashSet<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
 
-    let mut exit_code = 0;
-
-    // Channels in spec but not in catalog (undocumented pipelines).
+    // Channels in spec but not in live catalog (exit code 1: missing channels).
     let mut spec_only: Vec<&str> = spec_channels
         .iter()
         .filter(|c| {
@@ -508,7 +515,7 @@ async fn run_asyncapi_validate(
         .collect();
     spec_only.sort();
 
-    // Channels in catalog but not in spec.
+    // Channels in live catalog but not in spec (exit code 2: schema mismatch).
     let mut live_only: Vec<&str> = live_channels
         .iter()
         .filter(|c| {
@@ -522,25 +529,29 @@ async fn run_asyncapi_validate(
 
     if spec_only.is_empty() && live_only.is_empty() {
         println!("OK: relay catalog matches AsyncAPI spec ({})", spec_url);
-    } else {
-        if !spec_only.is_empty() {
-            eprintln!("WARNING: channels in spec but not in live catalog:");
-            for ch in &spec_only {
-                eprintln!("  - {ch}");
-            }
-            exit_code = 1;
+        return Ok(());
+    }
+
+    if !spec_only.is_empty() {
+        // Exit 1: channels declared in the spec are missing from the live catalog.
+        eprintln!("ERROR: channels declared in spec but missing from live catalog (exit 1):");
+        for ch in &spec_only {
+            eprintln!("  - {ch}");
         }
-        if !live_only.is_empty() {
-            eprintln!("WARNING: live pipelines not documented in spec:");
-            for ch in &live_only {
-                eprintln!("  + {ch}");
-            }
-            exit_code = 1;
+    }
+    if !live_only.is_empty() {
+        // Exit 2: live pipelines not documented in spec (schema mismatch).
+        eprintln!(
+            "WARNING: live pipelines not documented in spec (exit 2 if no missing channels):"
+        );
+        for ch in &live_only {
+            eprintln!("  + {ch}");
         }
     }
 
-    if exit_code != 0 {
-        std::process::exit(exit_code);
+    // Exit 1 takes precedence over exit 2.
+    if !spec_only.is_empty() {
+        std::process::exit(1);
     }
-    Ok(())
+    std::process::exit(2);
 }
