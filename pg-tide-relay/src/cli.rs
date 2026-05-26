@@ -219,6 +219,17 @@ pub struct Cli {
     )]
     pub config_mode: String,
 
+    /// v0.35.0: Interval in hours between automatic delivery-receipt sweep runs.
+    /// The coordinator calls `tide.relay_truncate_delivery_receipts()` on this schedule.
+    #[arg(
+        long = "sweep-interval-hours",
+        env = "PG_TIDE_SWEEP_INTERVAL_HOURS",
+        default_value = "24",
+        hide = true,
+        help = "Hours between delivery-receipt background sweep runs (default: 24)"
+    )]
+    pub sweep_interval_hours: u64,
+
     /// Optional subcommand.  When absent the relay daemon is started.
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -659,6 +670,14 @@ pub enum DagCommands {
         /// PostgreSQL URL.  Overrides --postgres-url.
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
+
+        /// Output format: mermaid (default) or json.
+        ///
+        /// `mermaid` emits a `graph LR` block suitable for Mermaid renderers.
+        /// `json` emits a JSON adjacency list `{"nodes":[...],"edges":[...]}` for
+        /// programmatic consumption.
+        #[arg(long, default_value = "mermaid", value_parser = ["mermaid", "json"])]
+        format: String,
     },
 
     /// Run DAG cycle detection and exit 1 if a cycle is found.

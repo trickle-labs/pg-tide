@@ -78,7 +78,7 @@ kms             = []
 kms-aws         = ["kms"]
 kms-gcp         = ["kms"]
 kms-vault       = ["kms"]
-kms-local       = ["kms"]
+kms-local       = ["kms", "dep:aes-gcm", "dep:base64"]
 
 [dependencies]
 # Core async runtime + CLI
@@ -146,6 +146,8 @@ hex = "0.4"
 regex-lite = "0.1"
 # v0.18.0: proper random jitter for backoff
 rand = "0.9"
+# v0.35.0: AES-256-GCM for LocalKeyFile KMS provider
+aes-gcm = { version = "0.10", optional = true }
 # v0.23.0: optional native-tls backend via platform OpenSSL stack
 postgres-openssl = { version = "0.5", optional = true }
 openssl = { version = "0.10", optional = true }

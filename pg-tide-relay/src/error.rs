@@ -90,6 +90,10 @@ pub enum RelayError {
 
     #[error("TLS setup failed: {0}")]
     TlsSetup(String),
+
+    // v0.35.0: KMS provider not yet implemented
+    #[error("provider '{provider}' is not yet implemented: {message}")]
+    NotImplemented { provider: String, message: String },
 }
 
 impl RelayError {
@@ -99,6 +103,14 @@ impl RelayError {
 
     pub fn other(msg: impl Into<String>) -> Self {
         Self::Other(msg.into())
+    }
+
+    /// v0.35.0: Construct a `NotImplemented` error for KMS providers.
+    pub fn not_implemented(provider: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::NotImplemented {
+            provider: provider.into(),
+            message: message.into(),
+        }
     }
 
     pub fn sink<E: std::error::Error + Send + Sync + 'static>(
@@ -128,7 +140,8 @@ impl RelayError {
             | Self::SecretNotFound { .. }
             | Self::SecretReadError { .. }
             | Self::TlsRequired { .. }
-            | Self::TlsSetup(_) => false,
+            | Self::TlsSetup(_)
+            | Self::NotImplemented { .. } => false,
             // Transient: network / I/O / temporary backend issues
             _ => true,
         }

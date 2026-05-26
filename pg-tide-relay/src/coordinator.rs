@@ -39,6 +39,8 @@ pub struct Coordinator {
     /// v0.25.0: Optional tenant ID for multi-tenant relay groups.
     /// When set, only pipelines with matching tenant_name are owned.
     tenant_id: Option<String>,
+    /// v0.35.0: Delivery receipt background sweep interval (hours, default 24).
+    sweep_interval_hours: u64,
 }
 
 impl Coordinator {
@@ -56,6 +58,7 @@ impl Coordinator {
             owned: HashMap::new(),
             max_owned_pipelines: 50, // default: matches tide.relay_limits
             tenant_id: None,
+            sweep_interval_hours: 24,
         }
     }
 
@@ -68,6 +71,13 @@ impl Coordinator {
     /// When set, only pipelines matching this tenant_name are discovered.
     pub fn set_tenant_id(&mut self, tenant_id: impl Into<String>) {
         self.tenant_id = Some(tenant_id.into());
+    }
+
+    /// v0.35.0: Set the delivery receipt sweep interval in hours.
+    /// The coordinator will spawn a background task that calls
+    /// `tide.relay_truncate_delivery_receipts()` on this schedule.
+    pub fn set_sweep_interval_hours(&mut self, hours: u64) {
+        self.sweep_interval_hours = hours;
     }
 
     /// Get the current max_owned_pipelines limit.
@@ -89,6 +99,60 @@ impl Coordinator {
         mut shutdown_rx: watch::Receiver<bool>,
         mut notif_rx: mpsc::Receiver<()>,
     ) -> Result<(), RelayError> {
+        // v0.35.0: Spawn a background task that periodically prunes delivery
+        // receipt rows older than `sweep_interval_hours`.  The task exits when
+        // `shutdown_rx` fires or when the pool is dropped.
+        let sweep_pool = self.pool.clone();
+        let mut sweep_shutdown = shutdown_rx.clone();
+        let sweep_interval_hours: u64 = self.sweep_interval_hours;
+        tokio::spawn(async move {
+            let sweep_interval = Duration::from_secs(sweep_interval_hours * 3600);
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(sweep_interval) => {}
+                    _ = sweep_shutdown.changed() => {
+                        tracing::debug!("receipt sweep task exiting on shutdown signal");
+                        break;
+                    }
+                }
+                match sweep_pool.get().await {
+                    Ok(client) => {
+                        let interval_param = format!("{sweep_interval_hours} hours");
+                        match client
+                            .query_one(
+                                "SELECT tide.relay_truncate_delivery_receipts($1::interval)",
+                                &[&interval_param],
+                            )
+                            .await
+                        {
+                            Ok(row) => {
+                                let deleted: i64 = row.try_get(0).unwrap_or(0);
+                                if deleted > 0 {
+                                    tracing::info!(
+                                        deleted,
+                                        sweep_interval_hours,
+                                        "delivery receipt sweep completed"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "delivery receipt sweep query failed (non-fatal)"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "delivery receipt sweep could not get pool connection (non-fatal)"
+                        );
+                    }
+                }
+            }
+        });
+
         // Initial load.
         self.reconcile(&db_url, batch_size).await;
 
@@ -1868,14 +1932,65 @@ async fn build_source(
             Ok(src)
         }
 
+        // v0.35.0: Fan-in source type — polls multiple outboxes and commits
+        // offsets for all contributing members in a single UNNEST batch query,
+        // replacing N sequential UPDATE calls with one round-trip per batch.
+        "fanin" => {
+            let fanin_name = pipeline.name.clone();
+            let subject_template = pipeline
+                .opt_str(&["source", "subject_template"])
+                .unwrap_or("{stream_table}.{op}")
+                .to_string();
+            let raw_mode = pipeline
+                .opt_str(&["source", "payload_mode"])
+                .map(|m| m == "raw")
+                .unwrap_or(false);
+
+            // Load contributing outbox names from the catalog.
+            let row = db
+                .query_opt(
+                    "SELECT outbox_names FROM tide.relay_fanin_config WHERE name = $1",
+                    &[&fanin_name],
+                )
+                .await
+                .map_err(|e| RelayError::other(format!("fanin config query error: {e}")))?
+                .ok_or_else(|| RelayError::InvalidConfig {
+                    name: fanin_name.clone(),
+                    reason: format!(
+                        "fan-in pipeline '{}' not found in tide.relay_fanin_config",
+                        fanin_name
+                    ),
+                })?;
+
+            let outbox_names: Vec<String> = row.get(0);
+            if outbox_names.is_empty() {
+                return Err(RelayError::InvalidConfig {
+                    name: fanin_name.clone(),
+                    reason: format!(
+                        "fan-in pipeline '{}' has no outbox_names configured",
+                        fanin_name
+                    ),
+                });
+            }
+
+            let src = crate::source::outbox::FanInSource::new(
+                db,
+                &fanin_name,
+                outbox_names,
+                &subject_template,
+                relay_group_id,
+                raw_mode,
+            )
+            .await?;
+            Ok(Box::new(src))
+        }
+
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
             reason: format!("unknown source_type: {other}"),
         }),
     }
 }
-
-// ── Sink factory ──────────────────────────────────────────────────────────
 
 async fn build_sink(
     pipeline: &PipelineConfig,
