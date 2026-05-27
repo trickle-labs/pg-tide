@@ -58,6 +58,7 @@ const V0_32_0_TO_0_33_0: &str = include_str!("../../sql/pg_tide--0.32.0--0.33.0.
 const V0_33_0_TO_0_34_0: &str = include_str!("../../sql/pg_tide--0.33.0--0.34.0.sql");
 const V0_34_0_TO_0_35_0: &str = include_str!("../../sql/pg_tide--0.34.0--0.35.0.sql");
 const V0_35_0_TO_0_36_0: &str = include_str!("../../sql/pg_tide--0.35.0--0.36.0.sql");
+const V0_36_0_TO_0_37_0: &str = include_str!("../../sql/pg_tide--0.36.0--0.37.0.sql");
 
 /// Apply the full migration chain so tests run on the current schema.
 async fn apply_full_schema(client: &tokio_postgres::Client) {
@@ -98,6 +99,7 @@ async fn apply_full_schema(client: &tokio_postgres::Client) {
         ("0.33.0→0.34.0", V0_33_0_TO_0_34_0),
         ("0.34.0→0.35.0", V0_34_0_TO_0_35_0),
         ("0.35.0→0.36.0", V0_35_0_TO_0_36_0),
+        ("0.36.0→0.37.0", V0_36_0_TO_0_37_0),
     ];
     client
         .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")

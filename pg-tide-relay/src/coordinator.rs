@@ -1985,6 +1985,31 @@ async fn build_source(
             Ok(Box::new(src))
         }
 
+        // v0.37.0: RockLake reverse relay source.
+        // Polls new snapshots from a RockLake PG-wire catalog sidecar.
+        // Uses only the bounded SQL subset (single non-JOIN SELECT).
+        #[cfg(feature = "rocklake")]
+        "rocklake" => {
+            use crate::source::rocklake::{RockLakeSource, RockLakeSourceConfig};
+            let catalog_connection = pipeline.require_str(&["source", "catalog_connection"])?;
+            let schema = pipeline.require_str(&["source", "schema"])?;
+            let table = pipeline.require_str(&["source", "table"])?;
+            let poll_ms = pipeline
+                .opt_i64(&["source", "snapshot_poll_interval_ms"])
+                .unwrap_or(1_000) as u64;
+            let consumer_group = pipeline
+                .opt_str(&["source", "consumer_group"])
+                .unwrap_or("default")
+                .to_string();
+            let last_snapshot_id = pipeline
+                .opt_i64(&["source", "last_snapshot_id"])
+                .unwrap_or(0);
+            let mut cfg = RockLakeSourceConfig::new(catalog_connection, schema, table);
+            cfg.snapshot_poll_interval_ms = poll_ms;
+            cfg.consumer_group = consumer_group;
+            Ok(Box::new(RockLakeSource::new(cfg, last_snapshot_id)))
+        }
+
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
             reason: format!("unknown source_type: {other}"),
@@ -2626,6 +2651,64 @@ async fn build_sink(
             ))
         }
 
+        // v0.37.0: RockLake PG-wire sidecar sink.
+        // Speaks RockLake's bounded SQL subset (no nextval, no ON CONFLICT,
+        // no RETURNING, no catalog DDL).  Shares Parquet-building logic with
+        // DuckLakeSink via the ducklake_common module.
+        #[cfg(feature = "rocklake")]
+        "rocklake" => {
+            use crate::ducklake_common::{DuckLakePartition, SchemaChangePolicy};
+            use crate::sink::rocklake::{RockLakeConfig, RockLakeSink};
+            let data_path = pipeline.require_str(&["sink", "data_path"])?;
+            let namespace = pipeline.opt_str(&["sink", "namespace"]).unwrap_or("pgtide");
+            let catalog_schema = pipeline
+                .opt_str(&["sink", "catalog_schema"])
+                .unwrap_or("ducklake");
+            let inline_row_limit = pipeline
+                .opt_i64(&["sink", "inline_row_limit"])
+                .unwrap_or(10) as usize;
+            let on_schema_change = match pipeline
+                .opt_str(&["sink", "on_schema_change"])
+                .unwrap_or("warn_and_continue")
+            {
+                "pause" => SchemaChangePolicy::Pause,
+                "route_to_dlq" => SchemaChangePolicy::RouteToDlq,
+                "auto_new_stream" => SchemaChangePolicy::AutoNewStream,
+                _ => SchemaChangePolicy::WarnAndContinue,
+            };
+            let partition = match pipeline.opt_str(&["sink", "partition"]).unwrap_or("none") {
+                "daily" => DuckLakePartition::Daily,
+                "monthly" => DuckLakePartition::Monthly,
+                other => {
+                    if let Some(n) = other
+                        .strip_prefix("bucket:")
+                        .and_then(|s| s.parse::<u32>().ok())
+                    {
+                        DuckLakePartition::Bucket(n)
+                    } else {
+                        DuckLakePartition::None
+                    }
+                }
+            };
+            // `catalog_connection` is required: the RockLake sink needs its own
+            // connection to the RockLake PG-wire sidecar for catalog commits.
+            let catalog_url = pipeline.require_str(&["sink", "catalog_connection"])?;
+            let (catalog_client, catalog_conn) = crate::pg_tls::connect(catalog_url).await?;
+            tokio::spawn(async move {
+                if let Err(e) = catalog_conn.await {
+                    tracing::error!("rocklake catalog connection closed with error: {e}");
+                }
+            });
+            let store = build_object_store_from_pipeline(pipeline)?;
+            let mut cfg = RockLakeConfig::new(data_path, namespace);
+            cfg.catalog_schema = catalog_schema.to_string();
+            cfg.inline_row_limit = inline_row_limit;
+            cfg.on_schema_change = on_schema_change;
+            cfg.partition = partition;
+            cfg.pipeline_name = Some(pipeline.name.clone());
+            Ok(Box::new(RockLakeSink::new(store, catalog_client, cfg)))
+        }
+
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
             reason: format!("unknown sink_type: {other}"),
@@ -2639,8 +2722,13 @@ async fn build_sink(
 ///
 /// Reads `sink.storage_provider` (`s3` | `gcs` | `azure` | `local`, default
 /// `local`) and the corresponding provider-specific keys.  Used by the
-/// `delta`, `iceberg`, and `ducklake` sink arms introduced in v0.34.0.
-#[cfg(any(feature = "delta", feature = "iceberg", feature = "ducklake"))]
+/// `delta`, `iceberg`, `ducklake`, and `rocklake` sink arms introduced in v0.34.0–v0.37.0.
+#[cfg(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "ducklake",
+    feature = "rocklake"
+))]
 fn build_object_store_from_pipeline(
     pipeline: &PipelineConfig,
 ) -> Result<std::sync::Arc<dyn object_store::ObjectStore>, RelayError> {

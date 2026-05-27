@@ -10,7 +10,10 @@
 pub mod circuit_breaker;
 pub mod config;
 pub mod coordinator;
+// v0.37.0: Shared Parquet-building and schema-evolution logic for
+// DuckLakeSink (PostgreSQL-backed) and RockLakeSink (RockLake PG-wire).
 pub mod dlq;
+pub mod ducklake_common;
 pub mod encryption;
 pub mod envelope;
 pub mod error;
