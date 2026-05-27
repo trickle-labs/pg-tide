@@ -662,6 +662,11 @@ which invalidates DuckDB's schema cache correctly — exactly as SlateDuck's des
 
 ## 5. Implementation Phases
 
+> [!NOTE]
+> **Release Target Split:** To avoid blocking other ecosystem improvements (like CloudNativePG Image Volume Extensions), this integration is divided into two separate releases:
+> 1. **v0.37.0 (Ecosystem Scaffold):** Focuses on the foundation — extracting `ducklake_common`, coding the new `SlateDuckSink` / `SlateDuckSource` skeletons, wiring up factory configurations, and contributing the Phase 0 SQL wire corpus.
+> 2. **v0.38.0 (Native Ingestion & Reverse Pipelines):** Focuses on full data-plane code completion (Phases 2-5), end-to-end integration testing (Phase 6), and production hardening (Phase 7), launching immediately after SlateDuck v0.27.14 is released.
+
 ### Phase 0 — Prerequisite: Upgrade to Real DuckLake v1.0 Spec (Shared with ducklake.md)
 
 **Owner:** Team (shared with DuckLake PostgreSQL upgrade)  
