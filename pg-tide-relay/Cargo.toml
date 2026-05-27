@@ -57,6 +57,11 @@ bigquery        = []
 iceberg         = ["dep:object_store", "dep:parquet"]
 delta           = ["dep:object_store", "dep:parquet"]
 ducklake        = ["dep:object_store", "dep:parquet"]
+# v0.37.0: RockLake PG-wire sidecar — bounded SQL subset; no nextval/DDL/ON CONFLICT.
+# Phases 0-5: catalog verification, Parquet write, inlined data, schema evolution,
+# auto-partition via ducklake_metadata.
+# See plans/ecosystem/rocklake.md for design details.
+rocklake        = ["dep:object_store", "dep:parquet"]
 # v0.11.0: Pluggable wire formats
 debezium        = []
 maxwell         = []

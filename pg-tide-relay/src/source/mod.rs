@@ -48,6 +48,12 @@ pub mod airbyte;
 // v0.22.0: DuckLake reverse relay source
 pub mod ducklake;
 
+// v0.37.0: RockLake reverse relay source (bounded SQL subset).
+// Enabled with --features rocklake.
+// See plans/ecosystem/rocklake.md for design details.
+#[cfg(feature = "rocklake")]
+pub mod rocklake;
+
 // v0.32.0: WAL logical-replication source groundwork (feature-gated spike).
 // Enabled only with --features wal-source; skipped in default CI.
 // See docs/adr/adr-009-wal-logical-replication-source.md for design.

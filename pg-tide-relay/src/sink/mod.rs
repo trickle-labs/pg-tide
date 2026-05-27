@@ -87,6 +87,12 @@ pub mod delta;
 #[cfg(feature = "ducklake")]
 pub mod ducklake;
 
+// v0.37.0: RockLake PG-wire sidecar sink (bounded SQL subset).
+// Enabled with --features rocklake.
+// See plans/ecosystem/rocklake.md for design details.
+#[cfg(feature = "rocklake")]
+pub mod rocklake;
+
 use async_trait::async_trait;
 
 use crate::envelope::RelayMessage;

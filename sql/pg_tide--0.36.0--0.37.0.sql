@@ -1,0 +1,15 @@
+-- pg_tide v0.36.0 → v0.37.0 migration
+-- v0.37.0: CloudNativePG Image Volume Extensions support and RockLake
+--          Integration Phases 0–5 scaffold.
+--
+-- This migration adds no new SQL catalog objects.  The RockLake integration
+-- (phases 0–5) operates exclusively via the relay binary's connection to a
+-- RockLake PG-wire sidecar and does not require any new tide.* tables.
+--
+-- The CloudNativePG Image Volume Extensions support is entirely at the
+-- packaging and deployment layer (Dockerfile, YAML manifests, documentation)
+-- and requires no database-side changes.
+--
+-- No-op migration: a comment-only script satisfies the pg_tide upgrade
+-- chain requirement without making schema changes.
+SELECT 1;
