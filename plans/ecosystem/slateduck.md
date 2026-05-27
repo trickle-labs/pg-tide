@@ -365,6 +365,22 @@ isolation (as specified in its design doc). `READ COMMITTED` may not map cleanly
 
 ---
 
+### 3.12 Data File and Delete File Schema Gaps (SlateDuck v0.27.12 & v0.27.13 Updates)
+
+**Locations:** `publish()` Parquet path — `ducklake_data_file` and `ducklake_delete_file` queries and inserts.
+
+**Why incompatible / problematic:** The original pg-tide plans assumed a simplified or slightly drifted schema representation for external data/delete files (e.g. referencing `file_id` or `file_path`). In SlateDuck v0.27.12, the catalog writer is updated to persist and expose the spec-complete columns for `ducklake_data_file` and `ducklake_delete_file`:
+- For data files: `footer_size` (BIGINT), `partition_id` (BIGINT), `encryption_key` (VARCHAR), `mapping_id` (BIGINT), `partial_max` (BIGINT), along with standard columns `data_file_id` and `path`.
+- For delete files: `data_file_id`, `path_is_relative`, `format`, `footer_size`, `encryption_key`, `partial_max`.
+Additionally, SlateDuck v0.27.13 introduces MVCC visibility rules and requires that scans over data files sort explicitly by `file_order ASC` to prevent query planner regressions.
+
+**Resolution:**
+- pg-tide's `SlateDuckSource` must query metadata using the exact spec column names: `data_file_id`, `path`, `record_count`, `begin_snapshot`, `file_size_bytes` (avoiding references to `file_id` or `file_path`).
+- pg-tide's `SlateDuckSource` must append `ORDER BY file_order ASC` to all data-file scans to strictly respect standard layout ordering.
+- pg-tide's `SlateDuckSink` must explicitly serialize and supply the newly supported spec columns (`footer_size`, `partition_id`, `encryption_key`, `mapping_id`, `partial_max`) when writing to `ducklake_data_file` and `ducklake_delete_file`, using exact OID data types to avoid schema registry mismatch errors.
+
+---
+
 ### Summary Table
 
 | # | Pattern | Severity | Resolution |
@@ -380,6 +396,7 @@ isolation (as specified in its design doc). `READ COMMITTED` may not map cleanly
 | 9 | CTE with DELETE | **Blocker** | Skip DLQ archival in SlateDuck path |
 | 10 | Complex CASE in ON CONFLICT | **Blocker** | SELECT + merge in Rust + INSERT/UPDATE |
 | 11 | `ReadCommitted` isolation level | **Resolved** | Handled natively; client handles `SQLSTATE 40001` conflict retries |
+| 12 | Data / Delete File Columns | **Resolved** | Query and write spec-complete columns; order by `file_order ASC` |
 
 All 10 hard blockers have clean resolutions. None require SlateDuck to be extended.
 
@@ -674,15 +691,15 @@ Implement `pg-tide-relay/src/source/slateduck.rs`:
 1. **Startup cache population:**
    - `SELECT schema_id FROM ducklake_schema WHERE schema_name = $1` — no JOIN
    - `SELECT table_id FROM ducklake_table WHERE schema_id = $1 AND table_name = $2`
-   - `SELECT value FROM ducklake_metadata WHERE metadata_key = 'pg_tide.{pipeline}.offset'` — load last offset
-   - Cache all three; only re-query metadata key on each poll
+   - `SELECT value FROM ducklake_metadata WHERE key = 'pg_tide.{pipeline}.offset'` — load last offset
+   - Cache all three; only re-query offset key on each poll
 
 2. **Snapshot poll (per poll cycle):**
    - `SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $1` (catalog-wide)
    - If unchanged: return empty, sleep `snapshot_poll_interval_ms`
 
 3. **Data file fetch:**
-   - `SELECT file_id, file_path, record_count, begin_snapshot, file_size_bytes FROM ducklake_data_file WHERE table_id = $1 AND begin_snapshot > $2 AND begin_snapshot <= $3 AND (end_snapshot IS NULL OR end_snapshot > $3) ORDER BY begin_snapshot ASC`
+   - `SELECT data_file_id, path, record_count, begin_snapshot, file_size_bytes, file_order FROM ducklake_data_file WHERE table_id = $1 AND begin_snapshot > $2 AND begin_snapshot <= $3 AND (end_snapshot IS NULL OR end_snapshot > $3) ORDER BY file_order ASC`
    - Remove `LIMIT` if SlateDuck doesn't support parameterised LIMIT; implement client-side slicing
 
 4. **Acknowledge:**
@@ -704,7 +721,7 @@ Implement `pg-tide-relay/src/sink/slateduck.rs` — Parquet write path (batches 
 
 1. **`verify_catalog_ready()`** — replaces `ensure_catalog()`:
    ```sql
-   SELECT value FROM ducklake_metadata WHERE metadata_key = 'version'
+   SELECT value FROM ducklake_metadata WHERE key = 'version'
    ```
    Returns `RelayError::Config` with a helpful message if the catalog isn't initialized
    (directing the user to run `slateduck init`).
@@ -783,7 +800,7 @@ Reuse `ducklake_common::schema_evolution::detect_new_json_keys()`. Adapt
 Replace `tide.ducklake_partition_config` INSERTs with `ducklake_metadata` entries:
 
 ```sql
-INSERT INTO ducklake_metadata (scope, scope_id, metadata_key, value)
+INSERT INTO ducklake_metadata (scope, scope_id, key, value)
 VALUES ('global', 0,
         'pg_tide.partition.{pipeline_name}.{namespace}.{table}',
         '{partition_type}')
