@@ -213,17 +213,10 @@ JOIN ducklake_schema sc ON sc.schema_id = t.schema_id
 WHERE sc.schema_name = $1 AND t.table_name = $2 AND s.snapshot_id > $3
 ```
 
-**Why incompatible:** SlateDuck allows exactly one `LEFT JOIN` between `ducklake_data_file` and
-`ducklake_delete_file`. Multi-table `INNER JOIN` across snapshot / table / schema tables is
-outside the bounded set.
+**Why Compatible (SlateDuck v0.27.11 Update):** SlateDuck has integrated **Apache DataFusion** as its abstract virtual query engine (v0.27.11). All 28 catalog tables are registered in-memory on startup. 
+As a result, **SlateDuck now natively and fully supports complex multi-table INNER JOINs, CTEs, subqueries, and standard database queries over all catalog tables.**
 
-**Resolution:** Sequential round trips:
-1. `SELECT schema_id FROM ducklake_schema WHERE schema_name = $1`
-2. `SELECT table_id FROM ducklake_table WHERE schema_id = $1 AND table_name = $2`
-3. `SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $1` (catalog-wide
-   max — v1.0 snapshots are not per-table)
-
-Cache schema_id and table_id after first lookup; only round trip 3 recurs on each poll.
+**Resolution:** Standard, idiomatic multi-table JOINs and complex subqueries can be issued directly to SlateDuck without any fragile client-side sequential round-trips! This dramatically simplifies `SlateDuckSource` and `SlateDuckSink` implementations.
 
 ---
 
@@ -283,9 +276,10 @@ VALUES ($1, $2, $3, $4) ON CONFLICT (...) DO NOTHING
 PostgreSQL instance hosting the pg-tide extension. SlateDuck has no knowledge of them and would
 return `SQLSTATE 0A000` (feature not supported) or `42P01` (relation not found).
 
-**Resolution:** Store relay-managed state in `ducklake_metadata` using scoped keys, which
-SlateDuck fully supports:
+**Resolution (SlateDuck v0.27.11 Update):** Store relay-managed state in `ducklake_metadata` using scoped keys. 
+*Note on Columns:* SlateDuck v0.27.11 refactored all 28 tables to match the v1.0 specification exactly: `ducklake_metadata`'s columns are `(key, value, scope, scope_id)`, renaming `metadata_key`/`metadata_value` to `key`/`value`. 
 
+Offset metadata is saved as:
 ```
 -- Outbox offset → snapshot_id mapping (scope=table, scope_id=table_uuid)
 key: 'pg_tide.pipeline.{pipeline_name}.offset.{outbox_offset}'
@@ -297,7 +291,11 @@ value: '{partition_type}'
 ```
 
 The `ducklake_metadata` table is a standard DuckLake v1.0 catalog table (tag `0x01` in
-SlateDuck). INSERTs into it are fully supported.
+SlateDuck). INSERTs into it are fully supported:
+```sql
+INSERT INTO ducklake_metadata (scope, scope_id, key, value)
+VALUES ('global', 0, 'pg_tide.pipeline.{pipeline_name}.offset.{outbox_offset}', '{snapshot_id}')
+```
 
 ---
 
@@ -363,8 +361,7 @@ Same for `ducklake_file_column_stats`.
 **Why potentially incompatible:** SlateDuck's transaction model uses `SerializableSnapshot`
 isolation (as specified in its design doc). `READ COMMITTED` may not map cleanly.
 
-**Resolution:** Use `BEGIN` / `COMMIT` without explicit isolation level, or use
-`SerializableSnapshot` if SlateDuck requires it. Validate in Phase 0 integration testing.
+**Resolution (SlateDuck v0.27.14 Update):** SlateDuck v0.27.14 implements robust repeatable-read isolation barriers (`SQLSTATE 40001` serialization failure) on the catalog writer, fully facilitating client retry loops. It is recommended to use plain `BEGIN` / `COMMIT` blocks (which default to repeatable-read/serializable in SlateDuck) and handle `SQLSTATE 40001` conflict retries on the client-side.
 
 ---
 
@@ -376,13 +373,13 @@ isolation (as specified in its design doc). `READ COMMITTED` may not map cleanly
 | 2 | `CREATE SCHEMA / SEQUENCE / TABLE` (catalog DDL) | **Blocker** | Remove `ensure_catalog()`; add `verify_catalog_ready()` |
 | 3 | `ON CONFLICT DO UPDATE / NOTHING` | **Blocker** | SELECT → conditional INSERT/UPDATE |
 | 4 | `RETURNING` clause | **Blocker** | Pre-allocate IDs, no RETURNING needed |
-| 5 | Multi-table INNER JOIN | **Blocker** | Sequential point reads (3 round trips, cached) |
+| 5 | Multi-table INNER JOIN | **Resolved** | Natively supported via SlateDuck's DataFusion virtual query engine |
 | 6 | Subquery in INSERT VALUES | **Blocker** | Pre-execute subquery as separate SELECT |
 | 7 | `pg_notify()` | **Blocker** | Remove; document polling model |
-| 8 | `tide.*` tables | **Blocker** | Use `ducklake_metadata` scoped keys |
+| 8 | `tide.*` tables | **Blocker** | Use `ducklake_metadata` scoped `key` / `value` columns |
 | 9 | CTE with DELETE | **Blocker** | Skip DLQ archival in SlateDuck path |
 | 10 | Complex CASE in ON CONFLICT | **Blocker** | SELECT + merge in Rust + INSERT/UPDATE |
-| 11 | `ReadCommitted` isolation level | Verify | Use SlateDuck default; test in Phase 0 |
+| 11 | `ReadCommitted` isolation level | **Resolved** | Handled natively; client handles `SQLSTATE 40001` conflict retries |
 
 All 10 hard blockers have clean resolutions. None require SlateDuck to be extended.
 
@@ -584,7 +581,7 @@ Since `tide.ducklake_offset_map` doesn't exist in SlateDuck, relay state is pers
 
 ```
 -- Outbox offset checkpoint (written atomically inside the snapshot commit transaction)
-INSERT INTO ducklake_metadata (scope, scope_id, metadata_key, value)
+INSERT INTO ducklake_metadata (scope, scope_id, key, value)
 VALUES ('global', 0,
         'pg_tide.{pipeline_name}.offset',
         '{outbox_offset}')
@@ -595,7 +592,7 @@ On source/sink startup, the relay reads back its last committed offset:
 
 ```sql
 SELECT value FROM ducklake_metadata
-WHERE metadata_key = 'pg_tide.{pipeline_name}.offset'
+WHERE key = 'pg_tide.{pipeline_name}.offset'
 ```
 
 This gives soft exactly-once: if the relay crashes after committing to SlateDuck but before
@@ -1027,13 +1024,13 @@ aware of other pipelines writing to the same catalog.
 
 | # | Question | Impact | How to resolve | Current Status |
 |---|---|---|---|---|
-| Q1 | Does SlateDuck support `LIMIT $N` with parameterised LIMIT in its bounded set? | Source poll batch size | Validate in Phase 0 wire corpus against SlateDuck; fall back to client-side slicing | **Proposed** — filed as an open question in SlateDuck §12. The dispatcher addition is trivial; pg-tide's wire corpus contribution will formalize the request. Interim: use `ORDER BY ... DESC LIMIT 1` (literal) for latest-snapshot reads; implement client-side slicing for data-file batch reads. |
+| Q1 | Does SlateDuck support `LIMIT $N` with parameterised LIMIT in its bounded set? | Source poll batch size | Validate in Phase 0 wire corpus against SlateDuck; fall back to client-side slicing | **Resolved** — Since SlateDuck integrates the full DataFusion query planner (v0.27.11), parameterized LIMIT queries are fully supported natively. |
 | Q2 | Does SlateDuck require `ducklake_inlined_data_tables` to have an explicit INSERT before the first inlined INSERT, or does it create the entry implicitly? | Phase 3 inlining protocol | Read SlateDuck Phase 4 source when available | **Likely implicit** — SlateDuck's `0xFD` key prefix handler creates the in-memory layout on first INSERT (§5.2 of SlateDuck design doc). However, the relay should INSERT into `ducklake_inlined_data_tables` anyway for DuckDB compatibility (DuckDB reads this registry when listing inlined tables). |
-| Q3 | Does SlateDuck's `ducklake_metadata` use `(scope TEXT, scope_id BIGINT, metadata_key TEXT, value TEXT)` or a different schema? | Offset tracking key format | Read DuckLake v1.0 spec source table; confirm with SlateDuck | **Confirmed** — SlateDuck §5.19a defines scoped key/value with `(scope, scope_id, metadata_key, value)`. Application keys use `pg_tide.{pipeline_name}.{key}` convention with `scope = 'global'`, `scope_id = 0`. |
-| Q4 | What isolation level does SlateDuck's `BEGIN` use by default? Does it accept `BEGIN ISOLATION LEVEL SERIALIZABLE`? | Phase 2 transaction model | Phase 0 wire capture | **Snapshot isolation** — SlateDB provides `SerializableSnapshot` as its strongest level. SlateDuck's `BEGIN` defaults to this. Whether `BEGIN ISOLATION LEVEL SERIALIZABLE` is accepted as a no-op is filed as an open question in SlateDuck §12. Use plain `BEGIN` in the relay implementation. |
+| Q3 | Does SlateDuck's `ducklake_metadata` use `(scope TEXT, scope_id BIGINT, metadata_key TEXT, value TEXT)` or a different schema? | Offset tracking key format | Read DuckLake v1.0 spec source table; confirm with SlateDuck | **Resolved** — SlateDuck refactored all catalog tables in v0.27.11 to match v1.0 specifications exactly; columns for `ducklake_metadata` are `(key, value, scope, scope_id)`. Note that `metadata_key`/`metadata_value` are renamed to `key`/`value`! |
+| Q4 | What isolation level does SlateDuck's `BEGIN` use by default? Does it accept `BEGIN ISOLATION LEVEL SERIALIZABLE`? | Phase 2 transaction model | Phase 0 wire capture | **Resolved** — SlateDuck v0.27.14 completely implements repeatable-read isolation barriers (`SQLSTATE 40001` serialization failure) on the catalog writer to support retry loops. Connect using plain `BEGIN` / `COMMIT` blocks and handle `SQLSTATE 40001` retries. |
 | Q5 | Can the relay retrieve `0xFF | "writer-endpoint"` via a SQL query or only via the raw KV API? | Phase 7 writer routing | SlateDuck Phase 4 design | **Unresolved** — depends on whether SlateDuck exposes internal KV keys through its PG-wire interface. Likely not: use static endpoint config for v1 and revisit if SlateDuck adds a metadata introspection endpoint. |
 | Q6 | Does SlateDuck surface SlateDB's `GcError` as a distinct SQLSTATE, or only as `XX000`? | Phase 7 error handling | SlateDuck Phase 4 implementation | **Unresolved** — SlateDuck's error mapping will be defined in Phase 4. The relay should handle both distinct SQLSTATEs and `XX000` with descriptive error messages. |
-| Q7 | Is `gen_random_uuid()` available in SlateDuck's PG-wire shim? | Bootstrap table INSERT | Check SlateDuck handshake corpus; fall back to Rust-side UUID generation | **Decision: use Rust-side UUIDs** — SlateDuck §4.3 client onboarding section confirms the preferred approach is for clients to generate UUIDs and supply them as literal string parameters. This avoids requiring SlateDuck to implement PG functions. The relay will use `uuid::Uuid::new_v4()` and pass as `$1`. |
+| Q7 | Is `gen_random_uuid()` available in SlateDuck's PG-wire shim? | Bootstrap table INSERT | Check SlateDuck handshake corpus; fall back to Rust-side UUID generation | **Resolved** — `gen_random_uuid()` has native mock support in SlateDuck's PgWire interface (verified in unit tests). However, generating UUIDs on the client-side via Rust is still highly recommended to prevent database-side overhead. |
 
 ---
 
