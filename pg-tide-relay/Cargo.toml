@@ -186,6 +186,9 @@ sha2 = "0.10"
 rumqttc = "0.24"
 object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
 parquet = "54"
+# v0.38.0: RockLake testkit for Phase 6 integration tests.
+# Provides PgWireHarness: spins up an in-memory RockLake PG-wire server.
+rocklake-testkit = { path = "../../rocklake2/crates/rocklake-testkit" }
 
 [[bench]]
 name = "throughput"

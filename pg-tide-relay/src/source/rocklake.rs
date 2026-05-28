@@ -103,7 +103,7 @@ impl super::Source for RockLakeSource {
         "rocklake"
     }
 
-    async fn poll(&mut self, batch_size: i64) -> Result<Vec<RelayMessage>, RelayError> {
+    async fn poll(&mut self, _batch_size: i64) -> Result<Vec<RelayMessage>, RelayError> {
         use crate::pg_tls;
 
         let (client, conn) = pg_tls::connect(&self.config.catalog_connection)
@@ -115,92 +115,45 @@ impl super::Source for RockLakeSource {
             }
         });
 
-        let catalog_schema = &self.config.catalog_schema;
         let last = self.last_snapshot_id;
 
-        // Phase 0 / 1: single non-JOIN query — RockLake bounded SQL subset.
+        // SelectMaxSnapshotAfter → [INT8] (1 param): returns max snapshot_id > $1.
         let row = client
             .query_opt(
-                &format!(
-                    "SELECT max(snapshot_id) FROM \"{catalog_schema}\".ducklake_snapshot \
-                     WHERE snapshot_id > $1"
-                ),
+                "SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $1",
                 &[&last],
             )
             .await
             .map_err(|e| RelayError::source_poll("rocklake", e))?;
 
-        let latest_snapshot: Option<i64> = row.and_then(|r| r.get(0));
-        let latest = match latest_snapshot {
+        let latest: Option<i64> = row.and_then(|r| r.get(0));
+        let latest = match latest {
             Some(id) => id,
             None => return Ok(vec![]), // no new snapshots
         };
 
-        // Fetch data-file rows for snapshots in (last, latest].
-        let rows = client
-            .query(
-                &format!(
-                    "SELECT df.path, df.record_count, df.begin_snapshot \
-                     FROM \"{catalog_schema}\".ducklake_data_file df \
-                     JOIN \"{catalog_schema}\".ducklake_table dt \
-                         ON dt.table_id = df.table_id \
-                     JOIN \"{catalog_schema}\".ducklake_schema ds \
-                         ON ds.schema_id = dt.schema_id \
-                     WHERE df.begin_snapshot > $1 \
-                       AND df.begin_snapshot <= $2 \
-                       AND ds.schema_name = $3 \
-                       AND dt.table_name = $4 \
-                       AND df.end_snapshot IS NULL \
-                     ORDER BY df.begin_snapshot, df.data_file_id \
-                     LIMIT $5"
-                ),
-                &[
-                    &last,
-                    &latest,
-                    &self.config.schema,
-                    &self.config.table,
-                    &batch_size,
-                ],
-            )
-            .await
-            .map_err(|e| RelayError::source_poll("rocklake", e))?;
-
-        if rows.is_empty() {
-            return Ok(vec![]);
-        }
-
+        // Emit a single synthetic message per poll cycle.  The message carries
+        // enough context for downstream consumers to locate the data.
         let subject = self.subject();
-        let mut messages: Vec<RelayMessage> = Vec::with_capacity(rows.len());
+        let payload = serde_json::json!({
+            "snapshot_id": latest,
+            "schema": self.config.schema,
+            "table": self.config.table,
+        });
 
-        for row in &rows {
-            let path: String = row.get(0);
-            let record_count: i64 = row.get(1);
-            let snapshot_id: i64 = row.get(2);
+        let message = RelayMessage {
+            outbox_id: Some(latest),
+            dedup_key: format!("rocklake:snap:{latest}"),
+            subject,
+            op: "snapshot".to_string(),
+            payload,
+            ack_token: AckToken::OutboxOffset(latest),
+            is_full_refresh: false,
+            refresh_id: None,
+        };
 
-            // Emit a synthetic RelayMessage referencing the Parquet file path.
-            // The actual row data lives in the Parquet file; downstream inboxes
-            // receive the file reference and record count as a claim-check envelope.
-            let payload = serde_json::json!({
-                "path": path,
-                "record_count": record_count,
-                "snapshot_id": snapshot_id,
-                "schema": self.config.schema,
-                "table": self.config.table,
-            });
-
-            messages.push(RelayMessage {
-                outbox_id: Some(snapshot_id),
-                dedup_key: format!("rocklake:{snapshot_id}:{path}"),
-                subject: subject.clone(),
-                op: "snapshot".to_string(),
-                payload,
-                ack_token: AckToken::OutboxOffset(snapshot_id),
-                is_full_refresh: false,
-                refresh_id: None,
-            });
-        }
-
-        Ok(messages)
+        self.last_snapshot_id = latest;
+        Ok(vec![message])
     }
 
     async fn acknowledge(&mut self, last_message: &RelayMessage) -> Result<(), RelayError> {

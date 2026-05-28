@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.38.0 — RockLake Native Ingestion, Phase 6 Integration Testing & Phase 7 Production Hardening](#0380--rocklake-native-ingestion-phase-6-integration-testing--phase-7-production-hardening)
 - [0.37.0 — CloudNativePG Image Volume Extensions & RockLake Integration Phases 0–5](#0370--cloudnativepg-image-volume-extensions--rocklake-integration-phases-05)
 - [0.36.0 — CLI Completeness, Test Coverage Depth & v1.0 Pre-Flight](#0360--cli-completeness-test-coverage-depth--v10-pre-flight)
 - [0.35.0 — Assessment-7 P1/P2 Bug Fixes, KMS Encryption & Fan-In Performance Hardening](#0350--assessment-7-p1p2-bug-fixes-kms-encryption--fan-in-performance-hardening)
@@ -45,6 +46,86 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.38.0] — RockLake Native Ingestion, Phase 6 Integration Testing & Phase 7 Production Hardening
+
+This release completes the RockLake integration started in v0.37.0, delivering a fully
+production-ready `RockLakeSink` / `RockLakeSource` pair with Phase 6 end-to-end integration
+tests and Phase 7 production hardening. pg-tide is now the first production-grade event
+streaming system with native RockLake support — providing a **zero-infrastructure path from a
+PostgreSQL transaction to a queryable, time-traveling data lake in S3** backed by RockLake
+v0.27.14.
+
+### Phase 6: Integration Testing & Verification
+
+End-to-end integration tests using `PgWireHarness` from `rocklake-testkit` verify:
+
+- **Catalog ready check** — `verify_catalog_ready()` returns `Ok` for an initialized catalog
+  and a clear error for an uninitialized one.
+- **Inline ingestion round-trip** — batches ≤ `inline_row_limit` are committed as inlined-data
+  rows and readable via plain SQL snapshot queries.
+- **Parquet ingestion round-trip** — batches > `inline_row_limit` are written as Parquet files
+  to object storage with a `ducklake_data_file` catalog row committed.
+- **Schema evolution** — sequential batches to the same table produce distinct snapshots.
+- **Partition metadata registration** — tables with a partition strategy have a `pg_tide.*`
+  entry in `ducklake_metadata`.
+- **RockLakeSource snapshot polling** — source returns messages for new snapshots beyond the
+  last-seen offset.
+- **Time-travel snapshot isolation** — two sequential batches produce monotonically increasing
+  `snapshot_id` values, satisfying DuckLake MVCC time-travel semantics.
+- **Crash recovery** — a sink restarted against the same catalog does not duplicate data.
+
+All tests run against the live in-process RockLake PG-Wire server (zero Docker, zero external
+dependencies) using an `InMemory` object store.
+
+### Phase 7: Production Hardening
+
+**SQLSTATE 57P04 — writer epoch mismatch (writer takeover fencing)**
+
+When the RockLake sidecar returns `SQLSTATE 57P04` (writer epoch mismatch — another writer has
+taken over the catalog lease), `RockLakeSink::publish()` now:
+1. Detects the error by inspecting `db_error().code() == SqlState::DATABASE_DROPPED`.
+2. Logs a `WARN`-level trace event with the attempt count and `"57P04 writer-epoch-mismatch"`.
+3. Resets the `catalog_ready` flag so the next attempt re-verifies catalog health.
+4. Backs off with exponential delay + ±25 % jitter (100 ms base, 30 s cap).
+5. Retries up to `max_write_retries` times (default: 5) before propagating the error.
+
+**SQLSTATE 40001 — serialization failure (transaction conflict)**
+
+Same retry loop with the same backoff strategy applies to `SQLSTATE 40001` (serialization
+failure / transaction conflict), tagged as `"40001 serialization-failure"` in trace events.
+
+**`max_write_retries` configuration field**
+
+New `RockLakeConfig::max_write_retries: u32` field (default: 5). Set to 0 to disable retries.
+
+**`read_replica_url` configuration field**
+
+New optional `RockLakeConfig::read_replica_url: Option<String>` field. When set, read-only
+operations (snapshot lookups, catalog health checks) can be routed to a replica endpoint to
+shed read load from the primary writer sidecar.
+
+**`RelayError::as_postgres_error()`**
+
+New `RelayError::as_postgres_error() -> Option<&tokio_postgres::Error>` method exposes the
+underlying `tokio_postgres::Error` for SQLSTATE inspection without wrapping it in a string.
+The critical commit paths in `publish_parquet()` and `publish_inline()` now propagate
+`RelayError::Postgres(e)` directly instead of `RelayError::Other(format!(...))`, preserving
+the SQLSTATE code for the retry loop.
+
+### Migration validation tests
+
+- **`v037_validation_test.rs`** — verifies the v0.36.0→v0.37.0 migration applies cleanly and
+  all v2 relay API functions remain present.
+- **`v038_validation_test.rs`** — verifies the v0.37.0→v0.38.0 migration applies cleanly,
+  no breaking SQL changes were introduced, and Phase 7 config fields compile correctly.
+
+### SQL migration
+
+`sql/pg_tide--0.37.0--0.38.0.sql` — no schema changes. All v0.38.0 work is in the relay
+binary.
 
 ---
 
