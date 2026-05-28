@@ -20,7 +20,10 @@ jobs:
         with:
           repository: trickle-labs/rocklake
           ref: v0.27.14
-          path: ../rocklake2
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -47,6 +50,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -94,6 +106,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -127,7 +148,10 @@ jobs:
         with:
           repository: trickle-labs/rocklake
           ref: v0.27.14
-          path: ../rocklake2
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Free disk space for integration tests
         run: |
@@ -160,6 +184,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -197,7 +230,10 @@ jobs:
         with:
           repository: trickle-labs/rocklake
           ref: v0.27.14
-          path: ../rocklake2
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -223,6 +259,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -247,6 +292,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -268,6 +322,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -302,6 +365,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -353,6 +425,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -457,6 +538,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -691,6 +781,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
 
       - name: Install Rust nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
