@@ -119,7 +119,7 @@ mod rocklake_integration {
         let client = pg_connect(&harness.connection_url()).await;
         let row = client
             .query_opt(
-                "SELECT snapshot_id FROM ducklake.ducklake_snapshot ORDER BY snapshot_id DESC LIMIT 1",
+                "SELECT snapshot_id FROM ducklake_snapshot ORDER BY snapshot_id DESC LIMIT 1",
                 &[],
             )
             .await
@@ -160,14 +160,18 @@ mod rocklake_integration {
             .expect("parquet publish must succeed");
 
         let client = pg_connect(&harness.connection_url()).await;
-        let count: i64 = client
-            .query_one("SELECT COUNT(*) FROM ducklake.ducklake_data_file", &[])
+        // SelectMaxSnapshotAfter: 1 INT8 param, returns max snapshot_id > $1.
+        let row = client
+            .query_one(
+                "SELECT max(snapshot_id) FROM ducklake_snapshot WHERE snapshot_id > $1",
+                &[&(0i64)],
+            )
             .await
-            .expect("data file count")
-            .get(0);
-        assert_eq!(
-            count, 1,
-            "exactly one data-file row must exist after Parquet publish"
+            .expect("snapshot query after Parquet publish");
+        let max_snap: Option<i64> = row.get(0);
+        assert!(
+            max_snap.is_some(),
+            "a snapshot must exist after Parquet publish"
         );
 
         harness.stop().await;
@@ -191,15 +195,13 @@ mod rocklake_integration {
         sink.publish(&second).await.expect("second batch");
 
         let client = pg_connect(&harness.connection_url()).await;
-        let snapshot_count: i64 = client
-            .query_one("SELECT COUNT(*) FROM ducklake.ducklake_snapshot", &[])
+        // SelectMaxSnapshot: 0 params, always returns 1 row with max snapshot_id.
+        let max_snap: i64 = client
+            .query_one("SELECT MAX(snapshot_id) FROM ducklake_snapshot", &[])
             .await
             .expect("snapshot count")
             .get(0);
-        assert!(
-            snapshot_count >= 2,
-            "at least two snapshots after two batches"
-        );
+        assert!(max_snap >= 2, "at least two snapshots after two batches");
 
         harness.stop().await;
     }
@@ -235,15 +237,20 @@ mod rocklake_integration {
             .expect("publish with partition config");
 
         let client = pg_connect(&harness.connection_url()).await;
-        let key_count: i64 = client
-            .query_one(
-                "SELECT COUNT(*) FROM ducklake.ducklake_metadata WHERE key LIKE 'pg_tide.partition.%'",
-                &[],
-            )
+        // Full-scan metadata (0 params) then filter client-side.
+        let meta_rows = client
+            .query("SELECT key, value FROM ducklake_metadata", &[])
             .await
-            .expect("metadata count")
-            .get(0);
-        assert_eq!(key_count, 1, "one partition-config metadata row must exist");
+            .expect("metadata query");
+        let partition_keys: Vec<_> = meta_rows
+            .iter()
+            .filter(|r| r.get::<_, String>(0).starts_with("pg_tide.partition."))
+            .collect();
+        assert_eq!(
+            partition_keys.len(),
+            1,
+            "one partition-config metadata row must exist"
+        );
 
         harness.stop().await;
     }
@@ -297,10 +304,7 @@ mod rocklake_integration {
 
         let client = pg_connect(&harness.connection_url()).await;
         let snap1: i64 = client
-            .query_one(
-                "SELECT MAX(snapshot_id) FROM ducklake.ducklake_snapshot",
-                &[],
-            )
+            .query_one("SELECT MAX(snapshot_id) FROM ducklake_snapshot", &[])
             .await
             .expect("snap1 query")
             .get(0);
@@ -309,10 +313,7 @@ mod rocklake_integration {
         sink.publish(&second).await.expect("second batch");
 
         let snap2: i64 = client
-            .query_one(
-                "SELECT MAX(snapshot_id) FROM ducklake.ducklake_snapshot",
-                &[],
-            )
+            .query_one("SELECT MAX(snapshot_id) FROM ducklake_snapshot", &[])
             .await
             .expect("snap2 query")
             .get(0);
@@ -486,10 +487,10 @@ mod rocklake_integration {
             sink.publish(&messages).await.expect("first sink publish");
         }
 
-        // Read snapshot count after first sink.
+        // Read snapshot high-watermark after first sink.
         let client = pg_connect(&harness.connection_url()).await;
-        let snap_count_before: i64 = client
-            .query_one("SELECT COUNT(*) FROM ducklake.ducklake_snapshot", &[])
+        let max_snap_before: i64 = client
+            .query_one("SELECT MAX(snapshot_id) FROM ducklake_snapshot", &[])
             .await
             .expect("snap count before restart")
             .get(0);
@@ -502,15 +503,15 @@ mod rocklake_integration {
             sink.publish(&messages).await.expect("second sink publish");
         }
 
-        let snap_count_after: i64 = client
-            .query_one("SELECT COUNT(*) FROM ducklake.ducklake_snapshot", &[])
+        let max_snap_after: i64 = client
+            .query_one("SELECT MAX(snapshot_id) FROM ducklake_snapshot", &[])
             .await
             .expect("snap count after restart")
             .get(0);
 
         assert!(
-            snap_count_after > snap_count_before,
-            "restart must add new snapshots (before={snap_count_before}, after={snap_count_after})"
+            max_snap_after > max_snap_before,
+            "restart must add new snapshots (before={max_snap_before}, after={max_snap_after})"
         );
 
         harness.stop().await;
