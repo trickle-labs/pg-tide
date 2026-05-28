@@ -273,11 +273,10 @@ impl RockLakeSink {
         if self.catalog_ready {
             return Ok(());
         }
-        let schema = &self.config.catalog_schema;
         let row = self
             .db
             .query_opt(
-                &format!("SELECT value FROM \"{schema}\".ducklake_metadata WHERE key = 'version'"),
+                "SELECT value FROM ducklake_metadata WHERE key = 'version'",
                 &[],
             )
             .await
@@ -286,7 +285,7 @@ impl RockLakeSink {
         match row {
             Some(r) => {
                 let version: String = r.get(0);
-                tracing::info!(catalog_schema = %schema, version = %version, "RockLake catalog ready");
+                tracing::info!(catalog_schema = %self.config.catalog_schema, version = %version, "RockLake catalog ready");
                 self.catalog_ready = true;
                 Ok(())
             }
@@ -306,16 +305,14 @@ impl RockLakeSink {
     /// Returns `(snapshot_id, catalog_id_start, file_id_start)`.
     ///
     /// This replaces `nextval()` — RockLake requires explicit ID allocation.
-    async fn allocate_ids(&self, schema: &str) -> Result<(i64, i64, i64), RelayError> {
+    async fn allocate_ids(&self) -> Result<(i64, i64, i64), RelayError> {
         let row = self
             .db
             .query_opt(
-                &format!(
-                    "SELECT snapshot_id, next_catalog_id, next_file_id \
-                     FROM \"{schema}\".ducklake_snapshot \
-                     ORDER BY snapshot_id DESC \
-                     LIMIT 1"
-                ),
+                "SELECT snapshot_id, next_catalog_id, next_file_id \
+                 FROM ducklake_snapshot \
+                 ORDER BY snapshot_id DESC \
+                 LIMIT 1",
                 &[],
             )
             .await
@@ -350,7 +347,6 @@ impl RockLakeSink {
         if self.inlined_tables_ready.contains(&key) {
             return Ok(());
         }
-        let schema = &self.config.catalog_schema;
         let table_name = format!("ducklake_inlined_data_{table_id}_{schema_version}");
 
         let mut col_defs = String::from(
@@ -369,7 +365,7 @@ impl RockLakeSink {
 
         self.db
             .batch_execute(&format!(
-                "CREATE TABLE IF NOT EXISTS \"{schema}\".\"{table_name}\" ({col_defs})"
+                "CREATE TABLE IF NOT EXISTS \"{table_name}\" ({col_defs})"
             ))
             .await
             .map_err(|e| {
@@ -395,11 +391,10 @@ impl RockLakeSink {
         snapshot_id: i64,
     ) -> Result<(), RelayError> {
         let inlined_table = format!("ducklake_inlined_data_{table_id}_{schema_version}");
-        let schema = &self.config.catalog_schema;
 
         // Pre-allocate a `row_id` range from `next_catalog_id`.
         // We read the current catalog state and use the next N IDs.
-        let (_, catalog_id_start, _) = self.allocate_ids(schema).await?;
+        let (_, catalog_id_start, _) = self.allocate_ids().await?;
 
         let tx = self.db.transaction().await.map_err(RelayError::Postgres)?;
 
@@ -411,7 +406,7 @@ impl RockLakeSink {
 
             tx.execute(
                 &format!(
-                    "INSERT INTO \"{schema}\".\"{inlined_table}\" \
+                    "INSERT INTO \"{inlined_table}\" \
                      (row_id, begin_snapshot, end_snapshot, \
                       _dedup_key, _subject, _op, _outbox_id, data) \
                      VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)"
@@ -452,16 +447,11 @@ impl RockLakeSink {
             return Ok(ids);
         }
 
-        let schema = self.config.catalog_schema.clone();
-
         // Look up or insert schema (namespace).
         let schema_row = self
             .db
             .query_opt(
-                &format!(
-                    "SELECT schema_id FROM \"{schema}\".ducklake_schema \
-                     WHERE schema_name = $1"
-                ),
+                "SELECT schema_id FROM ducklake_schema WHERE schema_name = $1",
                 &[&namespace],
             )
             .await
@@ -473,11 +463,9 @@ impl RockLakeSink {
                 let id = catalog_id_start;
                 self.db
                     .execute(
-                        &format!(
-                            "INSERT INTO \"{schema}\".ducklake_schema \
-                             (schema_id, schema_name, begin_snapshot, end_snapshot) \
-                             VALUES ($1, $2, 1, NULL)"
-                        ),
+                        "INSERT INTO ducklake_schema \
+                         (schema_id, schema_name, begin_snapshot, end_snapshot) \
+                         VALUES ($1, $2, 1, NULL)",
                         &[&id, &namespace],
                     )
                     .await
@@ -492,10 +480,8 @@ impl RockLakeSink {
         let table_row = self
             .db
             .query_opt(
-                &format!(
-                    "SELECT table_id FROM \"{schema}\".ducklake_table \
-                     WHERE schema_id = $1 AND table_name = $2"
-                ),
+                "SELECT table_id FROM ducklake_table \
+                 WHERE schema_id = $1 AND table_name = $2",
                 &[&schema_id, &table_name],
             )
             .await
@@ -507,11 +493,9 @@ impl RockLakeSink {
                 let id = catalog_id_start + 1;
                 self.db
                     .execute(
-                        &format!(
-                            "INSERT INTO \"{schema}\".ducklake_table \
-                             (table_id, schema_id, table_name, begin_snapshot, end_snapshot) \
-                             VALUES ($1, $2, $3, 1, NULL)"
-                        ),
+                        "INSERT INTO ducklake_table \
+                         (table_id, schema_id, table_name, begin_snapshot, end_snapshot) \
+                         VALUES ($1, $2, $3, 1, NULL)",
                         &[&id, &schema_id, &table_name],
                     )
                     .await
@@ -542,15 +526,11 @@ impl RockLakeSink {
             return Ok(id);
         }
 
-        let schema = self.config.catalog_schema.clone();
-
         let existing = self
             .db
             .query_opt(
-                &format!(
-                    "SELECT column_id FROM \"{schema}\".ducklake_column \
-                     WHERE table_id = $1 AND column_name = $2 AND end_snapshot IS NULL"
-                ),
+                "SELECT column_id FROM ducklake_column \
+                 WHERE table_id = $1 AND column_name = $2 AND end_snapshot IS NULL",
                 &[&table_id, &column_name],
             )
             .await
@@ -561,12 +541,10 @@ impl RockLakeSink {
             None => {
                 self.db
                     .execute(
-                        &format!(
-                            "INSERT INTO \"{schema}\".ducklake_column \
-                             (column_id, table_id, column_name, column_type, \
-                              position, nulls_allowed, begin_snapshot, end_snapshot) \
-                             VALUES ($1, $2, $3, 'VARCHAR', 0, true, $4, NULL)"
-                        ),
+                        "INSERT INTO ducklake_column \
+                         (column_id, table_id, column_name, column_type, \
+                          position, nulls_allowed, begin_snapshot, end_snapshot) \
+                         VALUES ($1, $2, $3, 'VARCHAR', 0, true, $4, NULL)",
                         &[&catalog_id, &table_id, &column_name, &snapshot_id],
                     )
                     .await
@@ -615,7 +593,6 @@ impl RockLakeSink {
             return Ok(());
         }
 
-        let schema = &self.config.catalog_schema;
         let meta_key = format!("pg_tide.partition.{namespace}.{table_name}.{pipeline}");
         let meta_value = partition_str;
 
@@ -623,7 +600,7 @@ impl RockLakeSink {
         let existing = self
             .db
             .query_opt(
-                &format!("SELECT value FROM \"{schema}\".ducklake_metadata WHERE key = $1"),
+                "SELECT value FROM ducklake_metadata WHERE key = $1",
                 &[&meta_key],
             )
             .await
@@ -632,10 +609,7 @@ impl RockLakeSink {
         if existing.is_none() {
             self.db
                 .execute(
-                    &format!(
-                        "INSERT INTO \"{schema}\".ducklake_metadata (key, value) \
-                         VALUES ($1, $2)"
-                    ),
+                    "INSERT INTO ducklake_metadata (key, value) VALUES ($1, $2)",
                     &[&meta_key, &meta_value],
                 )
                 .await
@@ -659,8 +633,7 @@ impl RockLakeSink {
         batch: &[&RelayMessage],
     ) -> Result<(), RelayError> {
         // Phase 2: allocate IDs from last snapshot (no nextval).
-        let schema = self.config.catalog_schema.clone();
-        let (snapshot_id, catalog_id_start, file_id_start) = self.allocate_ids(&schema).await?;
+        let (snapshot_id, catalog_id_start, file_id_start) = self.allocate_ids().await?;
 
         // Phase 4: Bootstrap table using SELECT → INSERT (no ON CONFLICT).
         let (_schema_id, table_id) = self
@@ -712,7 +685,6 @@ impl RockLakeSink {
     ) -> Result<(), RelayError> {
         use crate::ducklake_common::build_parquet_bytes;
 
-        let schema = self.config.catalog_schema.clone();
         let table_name = self.config.table_for(messages[0].subject.as_str());
 
         // Build Parquet bytes.
@@ -736,12 +708,10 @@ impl RockLakeSink {
 
         // Phase 2: Insert snapshot with explicit IDs (no nextval).
         tx.execute(
-            &format!(
-                "INSERT INTO \"{schema}\".ducklake_snapshot \
-                 (snapshot_id, snapshot_time, schema_version, \
-                  next_catalog_id, next_file_id) \
-                 VALUES ($1, $2, 1, $3, $4)"
-            ),
+            "INSERT INTO ducklake_snapshot \
+             (snapshot_id, snapshot_time, schema_version, \
+              next_catalog_id, next_file_id) \
+             VALUES ($1, $2, 1, $3, $4)",
             &[
                 &snapshot_id,
                 &now_ts,
@@ -754,12 +724,10 @@ impl RockLakeSink {
 
         // Insert data file record.
         tx.execute(
-            &format!(
-                "INSERT INTO \"{schema}\".ducklake_data_file \
-                 (data_file_id, table_id, begin_snapshot, path, \
-                  record_count, file_size_bytes, footer_size) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)"
-            ),
+            "INSERT INTO ducklake_data_file \
+             (data_file_id, table_id, begin_snapshot, path, \
+              record_count, file_size_bytes, footer_size) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
             &[
                 &file_id,
                 &table_id,
@@ -776,10 +744,7 @@ impl RockLakeSink {
         // Update table stats (additive — no ON CONFLICT).
         let existing_stats = tx
             .query_opt(
-                &format!(
-                    "SELECT record_count FROM \"{schema}\".ducklake_table_stats \
-                     WHERE table_id = $1"
-                ),
+                "SELECT record_count FROM ducklake_table_stats WHERE table_id = $1",
                 &[&table_id],
             )
             .await
@@ -787,21 +752,16 @@ impl RockLakeSink {
 
         if existing_stats.is_some() {
             tx.execute(
-                &format!(
-                    "UPDATE \"{schema}\".ducklake_table_stats \
-                     SET record_count = record_count + $1 \
-                     WHERE table_id = $2"
-                ),
+                "UPDATE ducklake_table_stats \
+                 SET record_count = record_count + $1 \
+                 WHERE table_id = $2",
                 &[&record_count, &table_id],
             )
             .await
             .map_err(|e| RelayError::other(format!("rocklake: table stats update failed: {e}")))?;
         } else {
             tx.execute(
-                &format!(
-                    "INSERT INTO \"{schema}\".ducklake_table_stats \
-                     (table_id, record_count) VALUES ($1, $2)"
-                ),
+                "INSERT INTO ducklake_table_stats (table_id, record_count) VALUES ($1, $2)",
                 &[&table_id, &record_count],
             )
             .await
@@ -900,13 +860,9 @@ impl super::Sink for RockLakeSink {
         if !self.catalog_ready {
             return self.verify_catalog_ready().await.is_ok();
         }
-        let schema = &self.config.catalog_schema;
         self.db
             .query_opt(
-                &format!(
-                    "SELECT 1 FROM \"{schema}\".ducklake_metadata \
-                     WHERE key = 'version' LIMIT 1"
-                ),
+                "SELECT 1 FROM ducklake_metadata WHERE key = 'version' LIMIT 1",
                 &[],
             )
             .await

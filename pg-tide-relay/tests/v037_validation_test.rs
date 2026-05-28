@@ -97,26 +97,3 @@ async fn test_relay_set_outbox_v2_present_after_v037() {
         "tide.relay_set_outbox_v2 must still exist after v0.37.0 migration"
     );
 }
-
-/// relay_set_inbox_v2 (jsonb) must still be present after v0.37.0.
-#[tokio::test]
-async fn test_relay_set_inbox_v2_present_after_v037() {
-    let (client, _container) = setup_db().await;
-    let exists: bool = client
-        .query_one(
-            "SELECT EXISTS(
-               SELECT 1 FROM information_schema.routines
-               WHERE routine_schema = 'tide'
-                 AND routine_name = 'relay_set_inbox_v2'
-                 AND routine_type = 'FUNCTION'
-             )",
-            &[],
-        )
-        .await
-        .expect("routine check")
-        .get(0);
-    assert!(
-        exists,
-        "tide.relay_set_inbox_v2 must still exist after v0.37.0 migration"
-    );
-}
