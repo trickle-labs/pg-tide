@@ -537,6 +537,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # v0.38.0: rocklake-testkit dev-dep path dep requires rocklake2 sibling.
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        shell: bash
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
