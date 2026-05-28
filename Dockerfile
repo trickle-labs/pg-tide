@@ -6,7 +6,7 @@ FROM --platform=$BUILDPLATFORM rust:1.88-alpine AS builder
 
 ARG TARGETARCH
 
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static git
 
 # Map Docker's TARGETARCH to the Rust musl target triple.
 RUN case "$TARGETARCH" in \
@@ -16,6 +16,13 @@ RUN case "$TARGETARCH" in \
     esac
 
 RUN rustup target add "$(cat /rust_target)"
+
+# v0.38.0: rocklake-testkit is a dev-dependency with a path dep (../../rocklake2)
+# relative to pg-tide-relay/Cargo.toml → resolves to /rocklake2 inside the container.
+# Cargo resolves all workspace deps (including dev-deps) even for release builds,
+# so rocklake2 must be present before `cargo build`.
+RUN git clone --depth=1 --branch v0.27.14 \
+    https://github.com/trickle-labs/rocklake.git /rocklake2
 
 WORKDIR /src
 COPY . .
