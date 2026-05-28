@@ -156,4 +156,13 @@ impl RelayError {
             inner: Box::new(inner),
         }
     }
+
+    /// If this error wraps a `tokio_postgres::Error` directly, return a
+    /// reference to it.  Useful for inspecting `SQLSTATE` codes.
+    pub fn as_postgres_error(&self) -> Option<&tokio_postgres::Error> {
+        match self {
+            Self::Postgres(e) => Some(e),
+            _ => None,
+        }
+    }
 }

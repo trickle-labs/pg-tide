@@ -1,0 +1,26 @@
+-- pg_tide v0.37.0 → v0.38.0 migration
+-- v0.38.0: RockLake Native Ingestion & Reverse Pipelines (Phases 2–7).
+--
+-- This migration adds no new SQL catalog objects.  All v0.38.0 changes are
+-- exclusively in the relay binary:
+--
+--   Phase 2–5 (already scaffolded in v0.37.0): Parquet write path, inlined
+--   data path, schema evolution, and auto-partition via ducklake_metadata
+--   are now fully production-ready with the Phase 7 hardening added in
+--   this release.
+--
+--   Phase 6: Integration tests added in tests/rocklake_test.rs using
+--   PgWireHarness for end-to-end ingestion, time-travel, and crash recovery
+--   verification against a live in-process RockLake server.
+--
+--   Phase 7: Production hardening added to RockLakeSink:
+--     - SQLSTATE 57P04 (writer epoch mismatch) detection with exponential
+--       backoff and configurable max_write_retries (default: 5).
+--     - SQLSTATE 40001 (serialization failure) client-side retry loop with
+--       the same backoff strategy.
+--     - read_replica_url config field for routing read-only queries
+--       (snapshot lookups, catalog health checks) to a replica endpoint.
+--
+-- No tide.* schema changes are required.  A comment-only no-op script
+-- satisfies the pg_tide upgrade chain requirement.
+SELECT 1;

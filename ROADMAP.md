@@ -1029,8 +1029,8 @@ RockLake must be released before the RockLake integration work can begin. v0.35.
 
 | Version | Theme | Status | Scope | Full details |
 |---------|-------|--------|-------|--------------|
-| v0.37.0 | CloudNativePG Image Volume Extensions support + RockLake Phase 0–1 Integration Scaffold: (1) OCI-compliant extension image, Dockerfile, and docs for CloudNativePG 1.28+ Image Volume Extensions; (2) extract `ducklake_common` library; (3) build `RockLakeSink` / `RockLakeSource` skeletons and wire up coordinator configurations; (4) contribute Phase 0 wire corpus | 🔜 Planned | Medium | [examples/cnpg/IMAGE-VOLUMES.md](examples/cnpg/IMAGE-VOLUMES.md) · [plans/ecosystem/rocklake.md](plans/ecosystem/rocklake.md) |
-| v0.38.0 | Native RockLake Ingestion & Reverse Pipelines (Phases 2–7): complete, spec-compliant `RockLakeSink` / `RockLakeSource` pair speaking RockLake's bounded SQL subset, enabling zero-infrastructure path from a PostgreSQL transaction to a queryable S3 data lake once RockLake v0.27.14 is released | 🔜 Planned | Large | [plans/ecosystem/rocklake.md](plans/ecosystem/rocklake.md) |
+| v0.37.0 | CloudNativePG Image Volume Extensions support + RockLake Phase 0–1 Integration Scaffold: (1) OCI-compliant extension image, Dockerfile, and docs for CloudNativePG 1.28+ Image Volume Extensions; (2) extract `ducklake_common` library; (3) build `RockLakeSink` / `RockLakeSource` skeletons and wire up coordinator configurations; (4) contribute Phase 0 wire corpus | ✅ Released | Medium | [examples/cnpg/IMAGE-VOLUMES.md](examples/cnpg/IMAGE-VOLUMES.md) · [plans/ecosystem/rocklake.md](plans/ecosystem/rocklake.md) |
+| v0.38.0 | Native RockLake Ingestion & Reverse Pipelines (Phases 2–7): complete, spec-compliant `RockLakeSink` / `RockLakeSource` pair speaking RockLake's bounded SQL subset, enabling zero-infrastructure path from a PostgreSQL transaction to a queryable S3 data lake once RockLake v0.27.14 is released | ✅ Released | Large | [plans/ecosystem/rocklake.md](plans/ecosystem/rocklake.md) |
 
 #### v0.37.0 — CloudNativePG Image Volume Extensions (detail)
 

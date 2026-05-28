@@ -14,6 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # v0.38.0: Checkout rocklake at the sibling path expected by the path
+      # dependency in pg-tide-relay/Cargo.toml (../../rocklake2).
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: ../rocklake2
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -113,6 +121,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # v0.38.0: Checkout rocklake at the sibling path expected by the path
+      # dependency in pg-tide-relay/Cargo.toml (../../rocklake2).
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: ../rocklake2
+
       - name: Free disk space for integration tests
         run: |
           echo "Disk usage before cleanup:"
@@ -165,6 +181,40 @@ jobs:
           cargo test --package pg-tide-relay --test wire_format_test -- --test-threads=1
           cargo test --package pg-tide-relay --test wire_format_proptest -- --test-threads=1
           cargo test --package pg-tide-relay --test dag_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test v037_validation_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test v038_validation_test -- --test-threads=1
+
+  # v0.38.0: RockLake Phase 6 integration tests.
+  # Uses PgWireHarness (in-process RockLake PG-wire server) — no Docker required.
+  test-integration-rocklake:
+    name: Integration Tests — RockLake Phase 6 & 7 (v0.38.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Checkout rocklake at the sibling path expected by the path dependency.
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: ../rocklake2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-rocklake-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run RockLake integration tests
+        run: |
+          cargo test --package pg-tide-relay --test rocklake_test \
+            --features rocklake -- --test-threads=1
 
   # v0.30.0: DAG and HA failover integration tests.
   test-integration-dag:
