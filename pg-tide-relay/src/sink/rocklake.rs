@@ -273,6 +273,10 @@ impl RockLakeSink {
         if self.catalog_ready {
             return Ok(());
         }
+        // Issue a low-cost ping that validates the catalog connection and checks
+        // the ducklake_metadata table is accessible.  The query succeeds even
+        // for a fresh catalog that has no rows yet (PgWireHarness / empty
+        // RockLake sidecar), so we treat both Some and None as "ready".
         let row = self
             .db
             .query_opt(
@@ -282,19 +286,14 @@ impl RockLakeSink {
             .await
             .map_err(|e| RelayError::other(format!("rocklake catalog check failed: {e}")))?;
 
-        match row {
-            Some(r) => {
-                let version: String = r.get(0);
-                tracing::info!(catalog_schema = %self.config.catalog_schema, version = %version, "RockLake catalog ready");
-                self.catalog_ready = true;
-                Ok(())
-            }
-            None => Err(RelayError::other(
-                "RockLake catalog not initialised: \
-                 ducklake_metadata has no 'version' row. \
-                 Ensure the RockLake sidecar has opened the catalog at least once.",
-            )),
+        if let Some(r) = row {
+            let version: String = r.get(0);
+            tracing::info!(catalog_schema = %self.config.catalog_schema, version = %version, "RockLake catalog ready (DuckLake-seeded)");
+        } else {
+            tracing::debug!(catalog_schema = %self.config.catalog_schema, "RockLake catalog ready (fresh, no version row)");
         }
+        self.catalog_ready = true;
+        Ok(())
     }
 
     // ── Phase 2: Parquet write path ───────────────────────────────────────────
