@@ -113,18 +113,17 @@ impl super::Source for DuckLakeSource {
         let dl_schema = &self.config.schema;
         let dl_table = &self.config.table;
 
-        // Check for new snapshots beyond the last seen.
+        // Check for new catalog-wide snapshots beyond the last seen.
+        // v0.39.0: ducklake_snapshot is catalog-wide (no table_id column).
+        // We check for new snapshots globally, then filter data files by table_id below.
         let max_snap: Option<i64> = client
             .query_opt(
                 &format!(
-                    "SELECT max(s.snapshot_id) \
-                     FROM {schema}.ducklake_snapshot s \
-                     JOIN {schema}.ducklake_table t ON t.table_id = s.table_id \
-                     JOIN {schema}.ducklake_schema sc ON sc.schema_id = t.schema_id \
-                     WHERE sc.schema_name = $1 AND t.table_name = $2 \
-                       AND s.snapshot_id > $3"
+                    "SELECT max(snapshot_id) \
+                     FROM {schema}.ducklake_snapshot \
+                     WHERE snapshot_id > $1"
                 ),
-                &[dl_schema, dl_table, &last],
+                &[&last],
             )
             .await
             .map_err(|e| RelayError::source_poll("ducklake", e))?

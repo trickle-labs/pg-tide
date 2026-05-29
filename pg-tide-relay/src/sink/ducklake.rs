@@ -159,6 +159,8 @@ pub struct DuckLakeSink {
     db: tokio_postgres::Client,
     config: DuckLakeConfig,
     catalog_ready: bool,
+    /// In-process snapshot ID allocator (DuckLake v1.0 spec — no sequence).
+    id_state: crate::ducklake_common::IdState,
     /// Cached (schema_id, table_id) for already-bootstrapped (namespace, table_name) pairs.
     bootstrapped_tables: HashMap<(String, String), (i64, i64)>,
     /// Cached column_id for each (table_id, column_name) pair.
@@ -183,6 +185,7 @@ impl DuckLakeSink {
             db,
             config,
             catalog_ready: false,
+            id_state: crate::ducklake_common::IdState::default(),
             bootstrapped_tables: HashMap::new(),
             column_ids: HashMap::new(),
             inlined_tables_ready: HashSet::new(),
@@ -193,6 +196,11 @@ impl DuckLakeSink {
 
     /// Create the DuckLake v1.0 catalog tables and sequences in `catalog_schema` if they
     /// don't already exist.  Idempotent — safe to call on every sink start.
+    ///
+    /// v0.39.0: Implements the full 28-table DuckLake v1.0 spec.
+    /// On startup, if an existing catalog is detected that pre-dates v0.39.0
+    /// (missing `ducklake_snapshot.next_catalog_id`), returns an error
+    /// pointing the operator to `tide.ducklake_migrate_catalog()`.
     async fn ensure_catalog(&mut self) -> Result<(), RelayError> {
         if self.catalog_ready {
             return Ok(());
@@ -200,17 +208,20 @@ impl DuckLakeSink {
 
         // Validate catalog_schema as a safe identifier before embedding it in SQL.
         crate::config::validate_relay_identifier(&self.config.catalog_schema)?;
-        let cs = &self.config.catalog_schema;
+        let cs = self.config.catalog_schema.clone();
 
         let ddl = format!(
             r#"
 CREATE SCHEMA IF NOT EXISTS "{cs}";
 
-CREATE SEQUENCE IF NOT EXISTS "{cs}".ducklake_snapshot_id_seq START WITH 1;
+-- Sequences (no ducklake_snapshot_id_seq in v1.0 — snapshot IDs are allocated
+-- in-process from max(snapshot_id)+1 as per the DuckLake v1.0 specification).
 CREATE SEQUENCE IF NOT EXISTS "{cs}".ducklake_table_id_seq    START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS "{cs}".ducklake_schema_id_seq   START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS "{cs}".ducklake_column_id_seq   START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS "{cs}".ducklake_file_id_seq     START WITH 1;
+
+-- ── Core catalog tables ─────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS "{cs}".ducklake_metadata (
     key   TEXT NOT NULL PRIMARY KEY,
@@ -241,19 +252,20 @@ CREATE TABLE IF NOT EXISTS "{cs}".ducklake_column (
     UNIQUE (table_id, column_name)
 );
 
+-- DuckLake v1.0 snapshot: catalog-wide (no table_id), carries high-water marks.
 CREATE TABLE IF NOT EXISTS "{cs}".ducklake_snapshot (
     snapshot_id     BIGINT      NOT NULL PRIMARY KEY,
-    table_id        BIGINT      NOT NULL REFERENCES "{cs}".ducklake_table(table_id),
+    snapshot_time   TIMESTAMPTZ NOT NULL DEFAULT now(),
     schema_version  BIGINT      NOT NULL DEFAULT 0,
-    sequence_number BIGINT      NOT NULL DEFAULT 0,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    next_catalog_id BIGINT      NOT NULL DEFAULT 0,
+    next_file_id    BIGINT      NOT NULL DEFAULT 0,
     author          TEXT
 );
 
+-- DuckLake v1.0 snapshot_changes: no table_id column.
 CREATE TABLE IF NOT EXISTS "{cs}".ducklake_snapshot_changes (
     snapshot_id BIGINT NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
     change_type TEXT   NOT NULL,
-    table_id    BIGINT REFERENCES "{cs}".ducklake_table(table_id),
     schema_id   BIGINT REFERENCES "{cs}".ducklake_schema(schema_id),
     file_id     BIGINT
 );
@@ -296,15 +308,248 @@ CREATE TABLE IF NOT EXISTS "{cs}".ducklake_file_column_stats (
     PRIMARY KEY (file_id, column_id)
 );
 
+-- ── v1.0 extended catalog tables (tables 11-28) ─────────────────────────────
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_delete_file (
+    delete_file_id  BIGINT      NOT NULL PRIMARY KEY,
+    table_id        BIGINT      NOT NULL REFERENCES "{cs}".ducklake_table(table_id),
+    begin_snapshot  BIGINT      NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    end_snapshot    BIGINT,
+    file_path       TEXT        NOT NULL,
+    file_format     TEXT        NOT NULL DEFAULT 'parquet',
+    delete_type     TEXT        NOT NULL DEFAULT 'positional',
+    record_count    BIGINT      NOT NULL DEFAULT 0,
+    file_size_bytes BIGINT      NOT NULL DEFAULT 0,
+    footer_size     BIGINT      NOT NULL DEFAULT 0,
+    added_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_partition_info (
+    partition_id     BIGINT NOT NULL PRIMARY KEY,
+    table_id         BIGINT NOT NULL REFERENCES "{cs}".ducklake_table(table_id),
+    partition_scheme TEXT   NOT NULL DEFAULT 'identity',
+    begin_snapshot   BIGINT NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    end_snapshot     BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_partition_column (
+    partition_id BIGINT NOT NULL REFERENCES "{cs}".ducklake_partition_info(partition_id),
+    column_id    BIGINT NOT NULL REFERENCES "{cs}".ducklake_column(column_id),
+    transform    TEXT   NOT NULL DEFAULT 'identity',
+    bucket_count INT,
+    PRIMARY KEY (partition_id, column_id)
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_tag (
+    tag_name    TEXT        NOT NULL PRIMARY KEY,
+    snapshot_id BIGINT      NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_view (
+    view_id         BIGINT NOT NULL PRIMARY KEY,
+    schema_id       BIGINT NOT NULL REFERENCES "{cs}".ducklake_schema(schema_id),
+    view_name       TEXT   NOT NULL,
+    view_definition TEXT   NOT NULL,
+    begin_snapshot  BIGINT NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    end_snapshot    BIGINT,
+    UNIQUE (schema_id, view_name)
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_macro (
+    macro_id       BIGINT NOT NULL PRIMARY KEY,
+    schema_id      BIGINT NOT NULL REFERENCES "{cs}".ducklake_schema(schema_id),
+    macro_name     TEXT   NOT NULL,
+    macro_body     TEXT   NOT NULL,
+    begin_snapshot BIGINT NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    end_snapshot   BIGINT,
+    UNIQUE (schema_id, macro_name)
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_secret (
+    secret_id      BIGINT NOT NULL PRIMARY KEY,
+    secret_name    TEXT   NOT NULL UNIQUE,
+    secret_type    TEXT   NOT NULL,
+    secret_scope   TEXT,
+    begin_snapshot BIGINT NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    end_snapshot   BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_cached_secret (
+    secret_id    BIGINT      NOT NULL PRIMARY KEY,
+    resolved_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    secret_value TEXT        NOT NULL,
+    expires_at   TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_database_configuration (
+    config_key   TEXT        NOT NULL PRIMARY KEY,
+    config_value TEXT        NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Registry of per-table-version inlined data tables (ducklake_inlined_data_{{id}}_{{sv}}).
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_inlined_data_tables (
+    table_id       BIGINT      NOT NULL,
+    schema_version BIGINT      NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (table_id, schema_version)
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_snapshot_tag (
+    tag_name    TEXT        NOT NULL,
+    snapshot_id BIGINT      NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tag_name, snapshot_id)
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_schema_binding (
+    table_id       BIGINT      NOT NULL REFERENCES "{cs}".ducklake_table(table_id),
+    schema_version BIGINT      NOT NULL,
+    bound_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (table_id, schema_version)
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_encryption_info (
+    table_id     BIGINT      NOT NULL PRIMARY KEY REFERENCES "{cs}".ducklake_table(table_id),
+    algorithm    TEXT        NOT NULL DEFAULT 'AES256GCM',
+    kms_provider TEXT,
+    key_id       TEXT,
+    enabled_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_file_encryption_info (
+    file_id      BIGINT NOT NULL PRIMARY KEY,
+    key_metadata TEXT   NOT NULL,
+    iv           BYTEA  NOT NULL,
+    tag          BYTEA
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_column_encryption_info (
+    column_id BIGINT NOT NULL PRIMARY KEY REFERENCES "{cs}".ducklake_column(column_id),
+    algorithm TEXT   NOT NULL DEFAULT 'AES256GCM',
+    key_id    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_transaction_log (
+    log_id      BIGSERIAL   NOT NULL PRIMARY KEY,
+    snapshot_id BIGINT      REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    operation   TEXT        NOT NULL,
+    actor       TEXT,
+    logged_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    details     JSONB
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_statistics (
+    stats_id    BIGINT      NOT NULL PRIMARY KEY,
+    table_id    BIGINT      NOT NULL REFERENCES "{cs}".ducklake_table(table_id),
+    column_id   BIGINT      REFERENCES "{cs}".ducklake_column(column_id),
+    stats_type  TEXT        NOT NULL,
+    stats_value JSONB       NOT NULL,
+    snapshot_id BIGINT      NOT NULL REFERENCES "{cs}".ducklake_snapshot(snapshot_id),
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS "{cs}".ducklake_catalog_version (
+    version_key TEXT        NOT NULL PRIMARY KEY,
+    version     TEXT        NOT NULL,
+    upgraded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 INSERT INTO "{cs}".ducklake_metadata (key, value)
-VALUES ('catalog_version', '1.0'), ('created_by', 'pg-tide-relay')
+VALUES ('catalog_version', '1.0'), ('created_by', 'pg-tide-relay'),
+       ('ducklake_spec_version', '1.0')
 ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO "{cs}".ducklake_catalog_version (version_key, version)
+VALUES ('spec_version', '1.0')
+ON CONFLICT (version_key) DO NOTHING;
 "#,
             cs = cs
         );
 
         self.db.batch_execute(&ddl).await?;
+
+        // ── Startup guard: detect pre-v0.39.0 catalog schema ────────────────
+        // If the ducklake_snapshot table already existed before our DDL ran
+        // (CREATE TABLE IF NOT EXISTS is a no-op on existing tables), it may
+        // be missing the `next_catalog_id` column introduced in v0.39.0.
+        // Refuse to publish until the operator runs tide.ducklake_migrate_catalog().
+        let has_v1_col: bool = self
+            .db
+            .query_one(
+                "SELECT EXISTS(\
+                    SELECT 1 FROM information_schema.columns \
+                    WHERE table_schema = $1 \
+                      AND table_name = 'ducklake_snapshot' \
+                      AND column_name = 'next_catalog_id'\
+                )",
+                &[&cs],
+            )
+            .await
+            .map_err(RelayError::Postgres)?
+            .get(0);
+
+        if !has_v1_col {
+            return Err(RelayError::Config(format!(
+                "DuckLake catalog at schema '{}' uses a pre-v0.39.0 schema. \
+                 Upgrade it by running: \
+                 SELECT tide.ducklake_migrate_catalog('{}'); \
+                 then restart the relay.",
+                cs, cs
+            )));
+        }
+
+        // Initialise the in-process ID state from the current catalog snapshot table.
+        self.refresh_id_state().await?;
+
         self.catalog_ready = true;
+        Ok(())
+    }
+
+    /// Refresh the in-process `IdState` from the current catalog.
+    ///
+    /// Called once after `ensure_catalog()` and may be called again after any
+    /// external snapshot write (e.g., during integration tests with a live catalog).
+    async fn refresh_id_state(&mut self) -> Result<(), RelayError> {
+        let cs = &self.config.catalog_schema;
+
+        // Max committed snapshot ID → last_snapshot_id.
+        let last_snap: i64 = self
+            .db
+            .query_one(
+                &format!(
+                    r#"SELECT COALESCE(MAX(snapshot_id), 0) FROM "{cs}".ducklake_snapshot"#,
+                    cs = cs
+                ),
+                &[],
+            )
+            .await
+            .map_err(RelayError::Postgres)?
+            .get(0);
+
+        // next_catalog_id and next_file_id from the most-recent snapshot row.
+        let row = self
+            .db
+            .query_opt(
+                &format!(
+                    r#"SELECT next_catalog_id, next_file_id
+                       FROM "{cs}".ducklake_snapshot
+                       ORDER BY snapshot_id DESC LIMIT 1"#,
+                    cs = cs
+                ),
+                &[],
+            )
+            .await
+            .map_err(RelayError::Postgres)?;
+
+        let (max_cat, max_file) = row
+            .map(|r| (r.get::<_, i64>(0), r.get::<_, i64>(1)))
+            .unwrap_or((0, 0));
+
+        self.id_state.last_snapshot_id = last_snap;
+        self.id_state.max_catalog_id = max_cat;
+        self.id_state.max_file_id = max_file;
         Ok(())
     }
 
@@ -340,6 +585,7 @@ RETURNING schema_id
             .await
             .map_err(RelayError::Postgres)?
             .get(0);
+        self.id_state.observe_catalog_id(schema_id);
 
         // Upsert ducklake_table row.
         let table_id: i64 = self
@@ -359,6 +605,7 @@ RETURNING table_id
             .await
             .map_err(RelayError::Postgres)?
             .get(0);
+        self.id_state.observe_catalog_id(table_id);
 
         // Ensure ducklake_table_stats row exists.
         self.db
@@ -404,6 +651,7 @@ RETURNING column_id
                 .get(0);
             self.column_ids
                 .insert((table_id, col_name.to_string()), col_id);
+            self.id_state.observe_catalog_id(col_id);
         }
 
         self.bootstrapped_tables
@@ -446,6 +694,38 @@ CREATE TABLE IF NOT EXISTS "{cs}"."{tname}" (
             tname = tname
         );
         self.db.batch_execute(&ddl).await?;
+
+        // Register in ducklake_inlined_data_tables (explicit SELECT + conditional INSERT
+        // to avoid ON CONFLICT ambiguity on composite PK).
+        let exists: bool = self
+            .db
+            .query_one(
+                &format!(
+                    r#"SELECT EXISTS(
+                        SELECT 1 FROM "{cs}".ducklake_inlined_data_tables
+                        WHERE table_id = $1 AND schema_version = $2
+                    )"#,
+                    cs = cs
+                ),
+                &[&table_id, &schema_version],
+            )
+            .await
+            .map_err(RelayError::Postgres)?
+            .get(0);
+        if !exists {
+            self.db
+                .execute(
+                    &format!(
+                        r#"INSERT INTO "{cs}".ducklake_inlined_data_tables
+                           (table_id, schema_version) VALUES ($1, $2)"#,
+                        cs = cs
+                    ),
+                    &[&table_id, &schema_version],
+                )
+                .await
+                .map_err(RelayError::Postgres)?;
+        }
+
         self.inlined_tables_ready.insert(key);
         Ok(())
     }
@@ -473,21 +753,19 @@ CREATE TABLE IF NOT EXISTS "{cs}"."{tname}" (
             .await
             .map_err(RelayError::Postgres)?;
 
-        // 1. Insert ducklake_snapshot.
+        // 1. Insert ducklake_snapshot (v1.0 spec: no table_id, no sequence_number).
+        let next_cat = self.id_state.max_catalog_id;
+        let next_file = self.id_state.max_file_id;
         txn.execute(
             &format!(
                 r#"
 INSERT INTO "{cs}".ducklake_snapshot
-    (snapshot_id, table_id, schema_version, sequence_number, author)
-VALUES ($1, $2, $3,
-    COALESCE((SELECT MAX(sequence_number) + 1
-              FROM "{cs}".ducklake_snapshot
-              WHERE table_id = $2), 0),
-    'pg-tide-relay')
+    (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id, author)
+VALUES ($1, now(), $2, $3, $4, 'pg-tide-relay')
 "#,
                 cs = cs
             ),
-            &[&snapshot_id, &table_id, &schema_version],
+            &[&snapshot_id, &schema_version, &next_cat, &next_file],
         )
         .await
         .map_err(RelayError::Postgres)?;
@@ -547,17 +825,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
         .await
         .map_err(RelayError::Postgres)?;
 
-        // 5. Record snapshot change (inlined, no file_id).
+        // 5. Record snapshot change (inlined, no file_id; v1.0: no table_id in changes).
         txn.execute(
             &format!(
                 r#"
 INSERT INTO "{cs}".ducklake_snapshot_changes
-    (snapshot_id, change_type, table_id, schema_id)
-VALUES ($1, 'add_inlined_rows', $2, $3)
+    (snapshot_id, change_type, schema_id)
+VALUES ($1, 'add_inlined_rows', $2)
 "#,
                 cs = cs
             ),
-            &[&snapshot_id, &table_id, &schema_id],
+            &[&snapshot_id, &schema_id],
         )
         .await
         .map_err(RelayError::Postgres)?;
@@ -654,6 +932,7 @@ RETURNING column_id
 
         self.column_ids
             .insert((table_id, col_name.to_string()), col_id);
+        self.id_state.observe_catalog_id(col_id);
 
         // Increment schema version counter.
         let sv = self.schema_version.entry(table_id).or_insert(0);
@@ -1125,19 +1404,9 @@ impl super::Sink for DuckLakeSink {
             // v0.21.0: Register partition config on first use.
             self.register_partition_config(&namespace, table).await?;
 
-            // v0.21.0: Allocate a snapshot ID first (needed for schema evolution logging).
-            let snapshot_id: i64 = self
-                .db
-                .query_one(
-                    &format!(
-                        r#"SELECT nextval('"{cs}".ducklake_snapshot_id_seq')"#,
-                        cs = cs
-                    ),
-                    &[],
-                )
-                .await
-                .map_err(RelayError::Postgres)?
-                .get(0);
+            // v0.39.0: Allocate snapshot ID from the in-process counter
+            // (DuckLake v1.0 spec — no ducklake_snapshot_id_seq).
+            let snapshot_id: i64 = self.id_state.alloc_snapshot_id();
 
             // v0.21.0: Schema evolution bridge — detect new JSON keys.
             let proceed = self
@@ -1201,7 +1470,7 @@ impl super::Sink for DuckLakeSink {
                 .await
                 .map_err(RelayError::Postgres)?;
 
-            // Allocate a file ID.
+            // Allocate a file ID and track its high-water mark.
             let file_id: i64 = txn
                 .query_one(
                     &format!(r#"SELECT nextval('"{cs}".ducklake_file_id_seq')"#, cs = cs),
@@ -1210,22 +1479,26 @@ impl super::Sink for DuckLakeSink {
                 .await
                 .map_err(RelayError::Postgres)?
                 .get(0);
+            self.id_state.observe_file_id(file_id);
 
-            // Insert ducklake_snapshot (uses pre-allocated snapshot_id from above).
+            // Insert ducklake_snapshot (v1.0 spec: catalog-wide, no table_id/sequence_number).
+            let snap_next_cat = self.id_state.max_catalog_id;
+            let snap_next_file = self.id_state.max_file_id;
             txn.execute(
                 &format!(
                     r#"
 INSERT INTO "{cs}".ducklake_snapshot
-    (snapshot_id, table_id, schema_version, sequence_number, author)
-VALUES ($1, $2, $3,
-    COALESCE((SELECT MAX(sequence_number) + 1
-              FROM "{cs}".ducklake_snapshot
-              WHERE table_id = $2), 0),
-    'pg-tide-relay')
+    (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id, author)
+VALUES ($1, now(), $2, $3, $4, 'pg-tide-relay')
 "#,
                     cs = cs
                 ),
-                &[&snapshot_id, &table_id, &schema_version],
+                &[
+                    &snapshot_id,
+                    &schema_version,
+                    &snap_next_cat,
+                    &snap_next_file,
+                ],
             )
             .await
             .map_err(RelayError::Postgres)?;
@@ -1339,17 +1612,17 @@ ON CONFLICT (table_id, column_id) DO UPDATE
                 }
             }
 
-            // Record snapshot change.
+            // Record snapshot change (v1.0: no table_id in ducklake_snapshot_changes).
             txn.execute(
                 &format!(
                     r#"
 INSERT INTO "{cs}".ducklake_snapshot_changes
-    (snapshot_id, change_type, table_id, schema_id, file_id)
-VALUES ($1, 'add_data_file', $2, $3, $4)
+    (snapshot_id, change_type, schema_id, file_id)
+VALUES ($1, 'add_data_file', $2, $3)
 "#,
                     cs = cs
                 ),
-                &[&snapshot_id, &table_id, &schema_id, &file_id],
+                &[&snapshot_id, &schema_id, &file_id],
             )
             .await
             .map_err(RelayError::Postgres)?;
