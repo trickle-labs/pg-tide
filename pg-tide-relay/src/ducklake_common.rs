@@ -5,6 +5,10 @@
 /// Extracted in v0.37.0 as part of the RockLake Integration Phases 0–1
 /// scaffold described in [plans/ecosystem/rocklake.md].
 ///
+/// v0.39.0: Added `IdState` struct for DuckLake v1.0 spec-compliant
+/// snapshot ID allocation (in-process counter replacing
+/// `ducklake_snapshot_id_seq`).
+///
 /// # Feature gating
 ///
 /// The Parquet-building helpers (`build_parquet_bytes`, `ColStats`,
@@ -17,6 +21,56 @@
 /// require the full Parquet dependency.
 #[cfg(any(feature = "ducklake", feature = "rocklake"))]
 use crate::error::RelayError;
+
+// ── ID state (v0.39.0) ───────────────────────────────────────────────────────
+
+/// In-process ID state for DuckLake v1.0 spec-compliant snapshot allocation.
+///
+/// The DuckLake v1.0 spec requires catalog-wide snapshots whose IDs are
+/// derived from `max(snapshot_id) + 1` read at startup and maintained
+/// in-process thereafter.  This eliminates the `ducklake_snapshot_id_seq`
+/// PostgreSQL sequence.
+///
+/// `next_catalog_id` and `next_file_id` record the high-water marks
+/// written into each snapshot row so that downstream readers (DuckDB,
+/// DataFusion, etc.) can discover the maximum IDs without scanning all
+/// catalog tables.
+#[derive(Debug, Clone, Default)]
+pub struct IdState {
+    /// The last committed snapshot ID.  The next snapshot uses `last_snapshot_id + 1`.
+    pub last_snapshot_id: i64,
+    /// High-water mark of catalog entity IDs (schema, table, column) written
+    /// into the last committed snapshot row as `next_catalog_id`.
+    pub max_catalog_id: i64,
+    /// High-water mark of file IDs (data files, delete files) written
+    /// into the last committed snapshot row as `next_file_id`.
+    pub max_file_id: i64,
+}
+
+impl IdState {
+    /// Allocate the next snapshot ID.  Must be called exactly once per
+    /// `publish()` invocation before any catalog writes.
+    pub fn alloc_snapshot_id(&mut self) -> i64 {
+        self.last_snapshot_id += 1;
+        self.last_snapshot_id
+    }
+
+    /// Record that a catalog entity ID (schema/table/column) was just allocated.
+    /// Updates the high-water mark that will be written into the next snapshot.
+    pub fn observe_catalog_id(&mut self, id: i64) {
+        if id > self.max_catalog_id {
+            self.max_catalog_id = id;
+        }
+    }
+
+    /// Record that a file ID was just allocated.
+    /// Updates the high-water mark that will be written into the next snapshot.
+    pub fn observe_file_id(&mut self, id: i64) {
+        if id > self.max_file_id {
+            self.max_file_id = id;
+        }
+    }
+}
 
 // ── Configuration enums ──────────────────────────────────────────────────────
 

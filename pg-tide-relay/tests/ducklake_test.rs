@@ -68,7 +68,7 @@ async fn test_ducklake_v1_catalog_table_creation() {
         .batch_execute(
             r#"
 CREATE SCHEMA IF NOT EXISTS ducklake_test;
-CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_snapshot_id_seq START WITH 1;
+-- v1.0: No ducklake_snapshot_id_seq; snapshot IDs are allocated in-process.
 CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_table_id_seq    START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_schema_id_seq   START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS ducklake_test.ducklake_column_id_seq   START WITH 1;
@@ -98,18 +98,19 @@ CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_column (
     nullable     BOOLEAN NOT NULL DEFAULT true,
     UNIQUE (table_id, column_name));
 
+-- DuckLake v1.0 snapshot: catalog-wide, no table_id, no sequence_number.
 CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_snapshot (
     snapshot_id     BIGINT      NOT NULL PRIMARY KEY,
-    table_id        BIGINT      NOT NULL REFERENCES ducklake_test.ducklake_table(table_id),
+    snapshot_time   TIMESTAMPTZ NOT NULL DEFAULT now(),
     schema_version  BIGINT      NOT NULL DEFAULT 0,
-    sequence_number BIGINT      NOT NULL DEFAULT 0,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    next_catalog_id BIGINT      NOT NULL DEFAULT 0,
+    next_file_id    BIGINT      NOT NULL DEFAULT 0,
     author          TEXT);
 
+-- DuckLake v1.0 snapshot_changes: no table_id.
 CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_snapshot_changes (
     snapshot_id BIGINT NOT NULL REFERENCES ducklake_test.ducklake_snapshot(snapshot_id),
     change_type TEXT   NOT NULL,
-    table_id    BIGINT REFERENCES ducklake_test.ducklake_table(table_id),
     schema_id   BIGINT REFERENCES ducklake_test.ducklake_schema(schema_id),
     file_id     BIGINT);
 
@@ -148,7 +149,8 @@ CREATE TABLE IF NOT EXISTS ducklake_test.ducklake_file_column_stats (
     PRIMARY KEY (file_id, column_id));
 
 INSERT INTO ducklake_test.ducklake_metadata (key, value)
-VALUES ('catalog_version', '1.0'), ('created_by', 'pg-tide-relay')
+VALUES ('catalog_version', '1.0'), ('created_by', 'pg-tide-relay'),
+       ('ducklake_spec_version', '1.0')
 ON CONFLICT (key) DO NOTHING;
 "#,
         )
@@ -191,13 +193,13 @@ ON CONFLICT (key) DO NOTHING;
         .await
         .expect("init table_stats");
 
-    // Insert snapshot + data file + column stats.
+    // Insert snapshot (v1.0: catalog-wide, in-process ID allocation — use 1).
     let snapshot_id: i64 = db
         .client
         .query_one(
             "INSERT INTO ducklake_test.ducklake_snapshot
-             (snapshot_id, table_id, author)
-             VALUES (nextval('ducklake_test.ducklake_snapshot_id_seq'), $1, 'pg-tide-relay')
+             (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id, author)
+             VALUES (1, now(), 0, $1, 0, 'pg-tide-relay')
              RETURNING snapshot_id",
             &[&table_id],
         )
@@ -244,12 +246,12 @@ ON CONFLICT (key) DO NOTHING;
 async fn test_ducklake_multiple_snapshots_accumulate() {
     let db = PgTideTestDb::start().await;
 
-    // Create minimal catalog tables for this test.
+    // Create minimal catalog tables for this test (v1.0 spec).
     db.client
         .batch_execute(
             r#"
 CREATE SCHEMA IF NOT EXISTS ducklake_multi;
-CREATE SEQUENCE IF NOT EXISTS ducklake_multi.ducklake_snapshot_id_seq START WITH 1;
+-- v1.0: No ducklake_snapshot_id_seq.
 CREATE SEQUENCE IF NOT EXISTS ducklake_multi.ducklake_table_id_seq START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS ducklake_multi.ducklake_schema_id_seq START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS ducklake_multi.ducklake_file_id_seq START WITH 1;
@@ -263,13 +265,14 @@ CREATE TABLE IF NOT EXISTS ducklake_multi.ducklake_table (
     table_name TEXT NOT NULL,
     table_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
     UNIQUE (schema_id, table_name));
+-- DuckLake v1.0: catalog-wide snapshot (no table_id, no sequence_number).
 CREATE TABLE IF NOT EXISTS ducklake_multi.ducklake_snapshot (
-    snapshot_id BIGINT NOT NULL PRIMARY KEY,
-    table_id BIGINT NOT NULL REFERENCES ducklake_multi.ducklake_table(table_id),
-    schema_version BIGINT NOT NULL DEFAULT 0,
-    sequence_number BIGINT NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    author TEXT);
+    snapshot_id     BIGINT      NOT NULL PRIMARY KEY,
+    snapshot_time   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    schema_version  BIGINT      NOT NULL DEFAULT 0,
+    next_catalog_id BIGINT      NOT NULL DEFAULT 0,
+    next_file_id    BIGINT      NOT NULL DEFAULT 0,
+    author          TEXT);
 CREATE TABLE IF NOT EXISTS ducklake_multi.ducklake_data_file (
     file_id BIGINT NOT NULL PRIMARY KEY,
     table_id BIGINT NOT NULL REFERENCES ducklake_multi.ducklake_table(table_id),
@@ -311,14 +314,15 @@ CREATE TABLE IF NOT EXISTS ducklake_multi.ducklake_data_file (
         .get(0);
 
     for i in 1i64..=3 {
+        // v1.0: use sequential integer IDs (no sequence needed).
         let snap_id: i64 = db
             .client
             .query_one(
                 "INSERT INTO ducklake_multi.ducklake_snapshot
-                 (snapshot_id, table_id, sequence_number, author)
-                 VALUES (nextval('ducklake_multi.ducklake_snapshot_id_seq'), $1, $2, 'pg-tide-relay')
+                 (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id, author)
+                 VALUES ($1, now(), 0, 0, $2, 'pg-tide-relay')
                  RETURNING snapshot_id",
-                &[&table_id, &(i - 1)],
+                &[&i, &i],
             )
             .await
             .expect("insert snapshot")
@@ -513,8 +517,8 @@ async fn test_ducklake_inline_table_creation() {
 CREATE SCHEMA IF NOT EXISTS ducklake_inline;
 CREATE SEQUENCE IF NOT EXISTS ducklake_inline.ducklake_table_id_seq    START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS ducklake_inline.ducklake_schema_id_seq   START WITH 1;
-CREATE SEQUENCE IF NOT EXISTS ducklake_inline.ducklake_snapshot_id_seq START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS ducklake_inline.ducklake_column_id_seq   START WITH 1;
+-- v1.0: No ducklake_snapshot_id_seq.
 
 CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_schema (
     schema_id   BIGINT NOT NULL PRIMARY KEY,
@@ -528,12 +532,13 @@ CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_table (
     table_uuid  UUID   NOT NULL DEFAULT gen_random_uuid(),
     UNIQUE (schema_id, table_name));
 
+-- DuckLake v1.0 snapshot: catalog-wide (no table_id, no sequence_number).
 CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_snapshot (
-    snapshot_id     BIGINT NOT NULL PRIMARY KEY,
-    table_id        BIGINT NOT NULL REFERENCES ducklake_inline.ducklake_table(table_id),
-    schema_version  BIGINT NOT NULL DEFAULT 0,
-    sequence_number BIGINT NOT NULL DEFAULT 0,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    snapshot_id     BIGINT      NOT NULL PRIMARY KEY,
+    snapshot_time   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    schema_version  BIGINT      NOT NULL DEFAULT 0,
+    next_catalog_id BIGINT      NOT NULL DEFAULT 0,
+    next_file_id    BIGINT      NOT NULL DEFAULT 0,
     author          TEXT);
 
 CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_table_stats (
@@ -541,10 +546,10 @@ CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_table_stats (
     next_row_id BIGINT NOT NULL DEFAULT 0,
     row_count   BIGINT NOT NULL DEFAULT 0);
 
+-- v1.0 snapshot_changes: no table_id.
 CREATE TABLE IF NOT EXISTS ducklake_inline.ducklake_snapshot_changes (
     snapshot_id BIGINT NOT NULL REFERENCES ducklake_inline.ducklake_snapshot(snapshot_id),
     change_type TEXT   NOT NULL,
-    table_id    BIGINT REFERENCES ducklake_inline.ducklake_table(table_id),
     schema_id   BIGINT REFERENCES ducklake_inline.ducklake_schema(schema_id),
     file_id     BIGINT);
 "#,
@@ -622,13 +627,15 @@ CREATE TABLE IF NOT EXISTS ducklake_inline."{tname}" (
     assert_eq!(count, 1, "inlined data table must exist");
 
     // Insert a row as the relay would for an inline batch.
+    // v1.0: snapshot is catalog-wide, use literal ID 1.
     let snapshot_id: i64 = db
         .client
         .query_one(
-            "INSERT INTO ducklake_inline.ducklake_snapshot (snapshot_id, table_id, schema_version, author)
-             VALUES (nextval('ducklake_inline.ducklake_snapshot_id_seq'), $1, $2, 'pg-tide-relay')
+            "INSERT INTO ducklake_inline.ducklake_snapshot
+             (snapshot_id, snapshot_time, schema_version, next_catalog_id, next_file_id, author)
+             VALUES (1, now(), $1, $2, 0, 'pg-tide-relay')
              RETURNING snapshot_id",
-            &[&table_id, &schema_version],
+            &[&schema_version, &table_id],
         )
         .await
         .expect("insert snapshot")
