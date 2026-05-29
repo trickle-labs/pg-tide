@@ -37,6 +37,11 @@
 
 BEGIN;
 
+-- Drop the v0.19.0–v0.20.0 void-returning version of ducklake_migrate_catalog
+-- so we can recreate it with RETURNS TABLE (PostgreSQL does not allow OR REPLACE
+-- to change the return type of an existing function).
+DROP FUNCTION IF EXISTS tide.ducklake_migrate_catalog(text);
+
 -- ── tide.ducklake_migrate_catalog() ──────────────────────────────────────────
 --
 -- Idempotent DDL migration helper.  Safe to run on a live database with the
