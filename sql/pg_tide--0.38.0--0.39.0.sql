@@ -37,8 +37,6 @@
 
 BEGIN;
 
-RAISE NOTICE 'pg_tide v0.38.0 → v0.39.0: adding tide.ducklake_migrate_catalog()';
-
 -- ── tide.ducklake_migrate_catalog() ──────────────────────────────────────────
 --
 -- Idempotent DDL migration helper.  Safe to run on a live database with the
