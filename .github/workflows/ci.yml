@@ -625,6 +625,8 @@ jobs:
             /usr/share/postgresql/18/extension \
             /usr/lib/postgresql/18/lib
           cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
+          sudo cp sql/pg_tide--0.39.0--0.40.0.sql \
+            /usr/share/postgresql/18/extension/pg_tide--0.39.0--0.40.0.sql
 
       - name: Verify upgrade path exists (chain completeness through workspace version)
         run: bash scripts/check_upgrade_completeness.sh

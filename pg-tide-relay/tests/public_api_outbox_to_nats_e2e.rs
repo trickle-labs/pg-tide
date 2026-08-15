@@ -198,7 +198,7 @@ async fn public_api_outbox_to_nats_e2e() {
     // deduplicated within the test lifetime.
     js.create_stream(async_nats::jetstream::stream::Config {
         name: STREAM.to_string(),
-        subjects: vec!["orders.>".to_string(), SUBJECT.to_string()],
+        subjects: vec!["orders.>".to_string()],
         duplicate_window: Duration::from_secs(120),
         ..Default::default()
     })
@@ -391,7 +391,7 @@ async fn public_api_orders_only_ignores_other_outbox() {
     let js = async_nats::jetstream::new(async_nats::connect(&nats_url).await.expect("nats"));
     js.create_stream(async_nats::jetstream::stream::Config {
         name: STREAM.to_string(),
-        subjects: vec!["orders.>".to_string(), SUBJECT.to_string()],
+        subjects: vec!["orders.>".to_string()],
         duplicate_window: Duration::from_secs(120),
         ..Default::default()
     })
