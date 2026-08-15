@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.40.0 — One Real Pipeline: Native Outbox → NATS JetStream](#0400--one-real-pipeline-native-outbox--nats-jetstream)
 - [0.38.0 — RockLake Native Ingestion, Phase 6 Integration Testing & Phase 7 Production Hardening](#0380--rocklake-native-ingestion-phase-6-integration-testing--phase-7-production-hardening)
 - [0.37.0 — CloudNativePG Image Volume Extensions & RockLake Integration Phases 0–5](#0370--cloudnativepg-image-volume-extensions--rocklake-integration-phases-05)
 - [0.36.0 — CLI Completeness, Test Coverage Depth & v1.0 Pre-Flight](#0360--cli-completeness-test-coverage-depth--v10-pre-flight)
@@ -46,6 +47,83 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.40.0] — One Real Pipeline: Native Outbox → NATS JetStream
+
+This release makes the native PostgreSQL outbox → NATS JetStream path correct and
+provable end to end through the public API, and it aligns the relay, offsets,
+migration chain, and documentation with [ADR-011](docs/adr/adr-011-canonical-outbox-storage-and-relay-polling.md).
+
+### Highlights
+
+- **Canonical native polling (ADR-011).** The native relay now polls the shared
+  `tide.tide_outbox_messages` table with one static, parameterized query
+  (`WHERE outbox_name = $1 AND id > $2 ORDER BY id LIMIT $3`) backed by a new
+  unconditional `(outbox_name, id)` index. It no longer looks for a per-outbox
+  relation.
+- **Outbox-scoped, monotonic offsets.** Relay offsets are keyed by
+  `(relay_group_id, pipeline_id, outbox_name)`. Writes are monotonic
+  (`GREATEST`), a reused pipeline name never inherits another outbox's offset,
+  and a failed offset commit after a successful sink publish is now a visible,
+  retried worker error — never a silent success.
+- **Native payload/envelope + metadata.** Public v2 pipelines decode native
+  payloads by default; the relay envelope now carries the logical outbox name,
+  headers, and creation timestamp, with serde defaults so older recorded
+  messages remain readable.
+- **Authoritative NATS subjects.** The NATS sink renders the configured `subject`
+  (fixed) or `subject_template` (`{outbox}`, `{op}`, `{outbox_id}`,
+  `{event_type}` from a header, legacy `{stream_table}`), publishes the stable
+  `Nats-Msg-Id`, and waits for the JetStream acknowledgment before reporting
+  success.
+- **Fail-closed publisher authorization.** `tide.outbox_publish()` now aborts on
+  any ACL/role lookup error instead of defaulting to allow; only explicit
+  `no_acl`, `superuser`, or `allowed` verdicts permit the insert.
+- **`relay_set_outbox_v2` native defaults.** Defaults to the native source,
+  validates that the named outbox exists before writing config, and exposes
+  pg_trickle compatibility only through the explicit `source_mode = 'pg_trickle'`.
+- **Fan-in quarantined.** Fan-in is experimental and disabled: the migration
+  disables all fan-in configs, `tide.relay_fanin_enable()` returns an
+  experimental error, and the coordinator refuses to start fan-in workers.
+  Catalog rows and offsets are retained for a future release.
+- **Fresh-install parity.** `CREATE EXTENSION pg_tide` now applies the
+  v0.37→0.38, v0.38→0.39, and v0.39→0.40 migrations (the fresh chain previously
+  stopped at v0.37.0). The v0.38.0→v0.39.0 script's forbidden top-level
+  `BEGIN;`/`COMMIT;` were removed so it is valid inside an extension script.
+- **Authoritative tests.** A public-API `public_api_outbox_to_nats_e2e` test
+  proves outbox → real coordinator → NATS JetStream (transaction visibility,
+  delivery, offset scoping, restart, and dedup). The false file-sink E2E was
+  removed and the direct-NATS test was renamed to an honest transport contract.
+
+### Upgrade (coordinated stop-upgrade-start)
+
+Mixed v0.39.0/v0.40.0 relay operation is **not supported** during the offset-key
+migration. Upgrade in this order:
+
+1. Stop v0.39.0 relays.
+2. Back up the database.
+3. `ALTER EXTENSION pg_tide UPDATE TO '0.40.0';`
+4. Deploy v0.40.0 relays.
+5. Verify pipeline offsets and NATS delivery.
+
+No automatic destructive downgrade is provided.
+
+### Migration notes
+
+- The offset primary key changes from `(relay_group_id, pipeline_id)` to
+  `(relay_group_id, pipeline_id, outbox_name)`. The migration backfills
+  `outbox_name` from each pipeline's `source.outbox` (and from `fanin_member` for
+  fan-in rows), removes only confirmed orphan offset rows (with a notice), and
+  **fails explicitly** on an ambiguous backfill rather than guessing.
+- **Native vs pg_trickle:** `source_type = "outbox"` is the native shared-table
+  path; pg_trickle compatibility is the explicit `source_type = "pg_trickle_outbox"`
+  path (`source_mode = 'pg_trickle'` in `relay_set_outbox_v2`).
+- **Delivery status:** the native relay does not use the global `consumed_at`
+  timestamp as authoritative state; delivery is proven per pipeline via offsets.
+- **Cleanup:** pipeline-aware retention remains deferred (targeted for v0.43.0);
+  cleanup stays conservative and does not treat one pipeline's offset as safe for
+  all pipelines.
 
 ---
 

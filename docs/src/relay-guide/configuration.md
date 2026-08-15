@@ -116,29 +116,33 @@ Pipelines are configured via SQL, not via the relay's TOML/CLI config. The relay
 ### Forward Pipelines (Outbox → Sink)
 
 ```sql
-SELECT tide.relay_set_outbox(
-  p_name     := 'orders-nats',       -- Pipeline name (unique)
-  p_outbox   := 'orders',            -- Source outbox name
-  p_sink     := 'nats',              -- Sink type
-  p_config   := '{
-    "url": "nats://localhost:4222",
-    "subject": "orders.{event_type}"
-  }'::jsonb
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-nats',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', '{
+      "url": "nats://localhost:4222",
+      "subject": "orders.{event_type}"
+    }'::jsonb
+  )
 );
 ```
 
 ### Reverse Pipelines (Source → Inbox)
 
 ```sql
-SELECT tide.relay_set_inbox(
-  p_name     := 'nats-orders-inbox',   -- Pipeline name (unique)
-  p_inbox    := 'order_events',        -- Target inbox name
-  p_source   := 'nats',               -- Source type
-  p_config   := '{
-    "url": "nats://localhost:4222",
-    "subject": "orders.>",
-    "consumer_name": "pg-tide-inbox"
-  }'::jsonb
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'nats-orders-inbox',
+    'inbox', 'order_events',
+    'source', 'nats',
+    'config', '{
+      "url": "nats://localhost:4222",
+      "subject": "orders.>",
+      "consumer_name": "pg-tide-inbox"
+    }'::jsonb
+  )
 );
 ```
 
@@ -160,7 +164,7 @@ Pipeline changes are picked up via:
 
 ## Hot Reload
 
-The relay watches for `NOTIFY` signals on the `tide_relay_config_changed` channel. When you modify a pipeline via `tide.relay_set_outbox()` or `tide.relay_set_inbox()`, the trigger fires a notification and the relay reloads within seconds — no restart required.
+The relay watches for `NOTIFY` signals on the `tide_relay_config_changed` channel. When you modify a pipeline via `tide.relay_set_outbox_v2()` or `tide.relay_set_inbox_v2()`, the trigger fires a notification and the relay reloads within seconds — no restart required.
 
 If `LISTEN` is interrupted (connection blip), the periodic discovery poll acts as a safety net.
 

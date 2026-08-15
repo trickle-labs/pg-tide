@@ -5,11 +5,12 @@ The Singer source runs a Singer "tap" (data extractor) and delivers its output r
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'hubspot-contacts',
-    'crm_events',
-    '{
-        "source_type": "singer",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'hubspot-contacts',
+    'inbox', 'crm_events',
+    'source', 'singer',
+    'config', '{
         "tap_command": "tap-hubspot",
         "tap_config": {
             "api_key": "${env:HUBSPOT_API_KEY}",
@@ -17,6 +18,7 @@ SELECT tide.relay_set_inbox(
         },
         "on_schema_change": "log"
     }'::jsonb
+  )
 );
 ```
 

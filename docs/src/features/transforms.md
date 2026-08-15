@@ -15,11 +15,12 @@ You can use filter alone, projection alone, or both together (filter is applied 
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'high-value-orders',
-    'order_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'high-value-orders',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "high-value-orders",
         "transform": {
@@ -27,6 +28,7 @@ SELECT tide.relay_set_outbox(
             "payload": "{ order_id: payload.id, amount: payload.total, customer: payload.customer_email }"
         }
     }'::jsonb
+  )
 );
 ```
 

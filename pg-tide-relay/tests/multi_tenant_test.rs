@@ -22,7 +22,7 @@ use testcontainers::{runners::AsyncRunner, ImageExt};
 use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::NoTls;
 
-// Migration chain — same as sql_to_sink_e2e.rs.
+// Migration chain — same as the migration harness.
 const V0_1_0: &str = include_str!("../../sql/pg_tide--0.1.0.sql");
 const V0_1_0_TO_0_2_0: &str = include_str!("../../sql/pg_tide--0.1.0--0.2.0.sql");
 const V0_2_0_TO_0_3_0: &str = include_str!("../../sql/pg_tide--0.2.0--0.3.0.sql");
@@ -290,7 +290,7 @@ async fn test_two_tenant_isolation() {
         .expect("release b");
 
     // The full per-tenant message delivery path (publish → coordinator poll →
-    // file sink) is covered by sql_to_sink_e2e.rs.  This test validates the
+    // file sink) is covered by public_api_outbox_to_nats_e2e.rs.  This test validates the
     // isolation contract: tenant-scoped pipeline discovery and lock namespacing.
 }
 

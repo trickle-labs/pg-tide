@@ -5,16 +5,18 @@ The Pub/Sub source subscribes to a Google Cloud Pub/Sub subscription and deliver
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'events-from-pubsub',
-    'incoming_events',
-    '{
-        "source_type": "pubsub",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'events-from-pubsub',
+    'inbox', 'incoming_events',
+    'source', 'pubsub',
+    'config', '{
         "project_id": "${env:GCP_PROJECT_ID}",
         "subscription": "pg-tide-sub",
         "credentials_json": "${file:/etc/gcp/sa.json}",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

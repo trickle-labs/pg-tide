@@ -94,11 +94,13 @@ WHERE consumed_at IS NULL;
 Update your `pg-tide` relay configuration:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'my-pipeline',
-    'orders',
-    'nats',
-    '{"url":"nats://broker:4222"}'::jsonb
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'my-pipeline',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', '{"url":"nats://broker:4222"}'::jsonb
+  )
 );
 ```
 

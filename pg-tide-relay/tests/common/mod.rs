@@ -41,7 +41,7 @@ use tokio_postgres::{Client, NoTls};
 /// SQL schema for pg_tide — loaded from the extension's migration file.
 const SCHEMA_SQL: &str = include_str!("../../../sql/pg_tide--0.1.0.sql");
 
-/// All upgrade migration scripts from v0.1.0 through v0.31.0.
+/// All upgrade migration scripts from v0.1.0 through the current workspace version.
 pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0.1.0 -> 0.2.0",
@@ -195,9 +195,15 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0.38.0 -> 0.39.0",
         include_str!("../../../sql/pg_tide--0.38.0--0.39.0.sql"),
     ),
+    (
+        "0.39.0 -> 0.40.0",
+        include_str!("../../../sql/pg_tide--0.39.0--0.40.0.sql"),
+    ),
 ];
 
-/// Install the v0.1.0 base schema then apply all migrations through v0.39.0.
+/// Install the v0.1.0 base schema then apply all migrations through the current
+/// version. This is the truthful "current schema" installer used by
+/// [`PgTideTestDb::start`].
 pub async fn install_full_schema(client: &tokio_postgres::Client) {
     client
         .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
@@ -216,6 +222,22 @@ pub async fn install_full_schema(client: &tokio_postgres::Client) {
     }
 }
 
+/// Install only the v0.1.0 base schema (no migrations).
+///
+/// This is intentionally the *base* schema and exists for migration tests that
+/// exercise the upgrade chain explicitly. Most tests want
+/// [`PgTideTestDb::start`], which installs the complete current schema.
+pub async fn install_base_v0_1(client: &tokio_postgres::Client) {
+    client
+        .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
+        .await
+        .expect("create tide schema");
+    client
+        .batch_execute(SCHEMA_SQL)
+        .await
+        .expect("install v0.1.0 base schema");
+}
+
 /// A test database with the pg_tide schema pre-installed.
 pub struct PgTideTestDb {
     pub client: Client,
@@ -225,8 +247,32 @@ pub struct PgTideTestDb {
 }
 
 impl PgTideTestDb {
-    /// Spin up a fresh PostgreSQL container and install the pg_tide schema.
+    /// Spin up a fresh PostgreSQL container and install the **complete current**
+    /// pg_tide schema (v0.1.0 base + every migration through the current
+    /// version). Use [`Self::start_base_v0_1`] for base-only migration tests.
     pub async fn start() -> Self {
+        let (client, host_port, container) = Self::start_container().await;
+        install_full_schema(&client).await;
+        Self {
+            client,
+            host_port,
+            _container: container,
+        }
+    }
+
+    /// Spin up a fresh PostgreSQL container with only the v0.1.0 base schema.
+    /// For migration tests that apply the upgrade chain explicitly.
+    pub async fn start_base_v0_1() -> Self {
+        let (client, host_port, container) = Self::start_container().await;
+        install_base_v0_1(&client).await;
+        Self {
+            client,
+            host_port,
+            _container: container,
+        }
+    }
+
+    async fn start_container() -> (Client, u16, ContainerAsync<Postgres>) {
         let container = Postgres::default()
             .with_tag("18")
             .start()
@@ -244,23 +290,7 @@ impl PgTideTestDb {
 
         // Retry connection with short backoff (container may not be ready instantly).
         let client = Self::connect_with_retry(&connection_string, 10).await;
-
-        // Create the tide schema and install all catalog tables.
-        client
-            .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
-            .await
-            .expect("failed to create tide schema");
-
-        client
-            .batch_execute(SCHEMA_SQL)
-            .await
-            .expect("failed to install pg_tide schema");
-
-        Self {
-            client,
-            host_port,
-            _container: container,
-        }
+        (client, host_port, container)
     }
 
     async fn connect_with_retry(url: &str, max_attempts: u32) -> Client {

@@ -34,11 +34,12 @@ SELECT tide.outbox_publish('order_events', 'orders', jsonb_build_object(
 ## Step 2: Configure the Pipeline
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-kafka',
-    'order_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-kafka',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "order-events",
         "wire_format": "debezium",
@@ -46,6 +47,7 @@ SELECT tide.relay_set_outbox(
             "server_name": "production"
         }
     }'::jsonb
+  )
 );
 ```
 
@@ -119,16 +121,18 @@ Create an inbox and configure a reverse pipeline to consume Flink's output:
 SELECT tide.inbox_create('analytics_results');
 
 -- Configure pipeline to consume from the results topic
-SELECT tide.relay_set_inbox(
-    'analytics-from-flink',
-    'analytics_results',
-    '{
-        "source_type": "kafka",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'analytics-from-flink',
+    'inbox', 'analytics_results',
+    'source', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "order-analytics",
         "consumer_group": "pg-tide-analytics",
         "auto_offset_reset": "earliest"
     }'::jsonb
+  )
 );
 ```
 

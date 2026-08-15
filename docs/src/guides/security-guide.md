@@ -9,12 +9,18 @@ This guide covers security best practices for deploying pg_tide in production, i
 pg_tide supports `${env:VARIABLE_NAME}` syntax in pipeline configurations. Secrets are resolved at runtime from the relay process's environment — they never appear in the PostgreSQL catalog:
 
 ```sql
-SELECT tide.relay_set_outbox('my-pipeline', 'events', '{
-    "sink_type": "kafka",
-    "brokers": "${env:KAFKA_BROKERS}",
-    "sasl_username": "${env:KAFKA_USER}",
-    "sasl_password": "${env:KAFKA_PASS}"
-}'::jsonb);
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'my-pipeline',
+    'outbox', 'events',
+    'sink_type', 'kafka',
+    'config', '{
+        "brokers": "${env:KAFKA_BROKERS}",
+        "sasl_username": "${env:KAFKA_USER}",
+        "sasl_password": "${env:KAFKA_PASS}"
+    }'::jsonb
+  )
+);
 ```
 
 The catalog stores the `${env:...}` tokens, not the resolved values. The relay resolves them at startup.

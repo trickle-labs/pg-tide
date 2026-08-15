@@ -190,12 +190,18 @@ fn outbox_publish_impl(
     payload: pgrx::JsonB,
     headers: pgrx::JsonB,
 ) -> Result<(), PgTideError> {
-    // Fetch existence and enabled state in one query.
+    // v0.40.0 (ADR-011 §15): Authorization is fail-closed. Any SPI error while
+    // reading outbox state, ACL existence, superuser status, or role membership
+    // aborts the publish rather than defaulting to allow.
+
+    // 1. Read existence and enabled state; an SPI error aborts.
     let enabled: Option<bool> = Spi::get_one_with_args::<bool>(
         "SELECT enabled FROM tide.tide_outbox_config WHERE outbox_name = $1",
         &[name.into()],
     )
-    .unwrap_or(None);
+    .map_err(|e| {
+        PgTideError::SpiError(format!("outbox_publish existence check for '{name}': {e}"))
+    })?;
 
     match enabled {
         None => return Err(PgTideError::OutboxNotFound(name.to_string())),
@@ -208,34 +214,94 @@ fn outbox_publish_impl(
         Some(true) => {}
     }
 
-    // v0.13.0/v0.24.0: Publisher ACL enforcement.
-    // v0.32.0: Consolidated three sequential SPI calls into one CASE query,
-    // reducing SPI round-trips for ACL-checked publishes from 3 to 1 (~60%
-    // reduction in authorization overhead on the hot publish path).
+    // 2. Resolve the caller and authorization role state; every lookup is
+    // fail-closed so a missing row cannot become an implicit allow.
+    let current_role = Spi::get_one::<String>("SELECT current_user::text")
+        .map_err(|e| PgTideError::AuthorizationError {
+            outbox: name.to_string(),
+            detail: format!("current_user lookup failed: {e}"),
+        })?
+        .ok_or_else(|| PgTideError::AuthorizationError {
+            outbox: name.to_string(),
+            detail: "current_user lookup returned no row".to_string(),
+        })?;
+    let is_superuser = Spi::get_one_with_args::<bool>(
+        "SELECT rolsuper FROM pg_roles WHERE rolname = $1",
+        &[current_role.as_str().into()],
+    )
+    .map_err(|e| PgTideError::AuthorizationError {
+        outbox: name.to_string(),
+        detail: format!("superuser lookup failed: {e}"),
+    })?
+    .ok_or_else(|| PgTideError::AuthorizationError {
+        outbox: name.to_string(),
+        detail: format!("role '{current_role}' was not found"),
+    })?;
+    let is_extension_owner = Spi::get_one_with_args::<bool>(
+        "SELECT EXISTS(
+             SELECT 1
+             FROM pg_extension e
+             JOIN pg_roles r ON r.oid = e.extowner
+             WHERE e.extname = 'pg_tide' AND r.rolname = $1
+         )",
+        &[current_role.as_str().into()],
+    )
+    .map_err(|e| PgTideError::AuthorizationError {
+        outbox: name.to_string(),
+        detail: format!("extension-owner lookup failed: {e}"),
+    })?
+    .ok_or_else(|| PgTideError::AuthorizationError {
+        outbox: name.to_string(),
+        detail: "extension-owner lookup returned no row".to_string(),
+    })?;
+
+    // 3. Query the ACL verdict; an SPI error aborts (fail-closed).
+    // v0.40.0: Explicitly account for superuser, extension-owner, and
+    // inherited role membership before allowing the insert.
     let acl_verdict: Option<String> = Spi::get_one_with_args::<String>(
         "SELECT CASE
            WHEN NOT EXISTS(SELECT 1 FROM tide.outbox_publishers WHERE outbox_name = $1)
              THEN 'no_acl'
-           WHEN (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
+           WHEN $2::bool
              THEN 'superuser'
+           WHEN $3::bool
+             THEN 'extension_owner'
            WHEN EXISTS(SELECT 1 FROM tide.outbox_publishers
-                       WHERE outbox_name = $1 AND role_name = current_user::text)
+                       WHERE outbox_name = $1
+                         AND pg_has_role($4::name, role_name::name, 'member'))
              THEN 'allowed'
            ELSE 'denied'
          END",
-        &[name.into()],
+        &[
+            name.into(),
+            is_superuser.into(),
+            is_extension_owner.into(),
+            current_role.as_str().into(),
+        ],
     )
-    .unwrap_or(None);
+    .map_err(|e| PgTideError::AuthorizationError {
+        outbox: name.to_string(),
+        detail: format!("ACL verdict query failed: {e}"),
+    })?;
 
-    if let Some("denied") = acl_verdict.as_deref() {
-        let current_role = Spi::get_one::<String>("SELECT current_user")
-            .unwrap_or(None)
-            .unwrap_or_default();
-        return Err(PgTideError::InvalidArgument(format!(
-            "role '{}' is not authorized to publish to outbox '{}'",
-            current_role, name
-        )));
-        // else: no_acl, superuser, allowed — publish proceeds
+    // 3–5. Accept only explicit no_acl / superuser / allowed. Reject 'denied'
+    // and treat any unknown or null verdict as an internal authorization error.
+    match acl_verdict.as_deref() {
+        Some("no_acl") | Some("superuser") | Some("extension_owner") | Some("allowed") => {
+            /* publish proceeds */
+        }
+        Some("denied") => {
+            return Err(PgTideError::PublishDenied {
+                role: current_role,
+                outbox: name.to_string(),
+            });
+        }
+        other => {
+            return Err(PgTideError::AuthorizationError {
+                outbox: name.to_string(),
+                detail: format!("unexpected ACL verdict: {other:?}"),
+            });
+        }
     }
 
     let payload_str = serde_json::to_string(&payload.0)
@@ -683,6 +749,45 @@ mod tests {
         .unwrap()
         .unwrap_or(0);
         assert_eq!(count, 0);
+    }
+
+    #[pg_test]
+    fn test_outbox_publish_denied_for_unauthorized_role() {
+        // v0.40.0 (ADR-011 §15): with an ACL present and the current role not a
+        // publisher, authorization is denied and no message row is inserted.
+        crate::outbox::outbox_create("acl-deny-outbox", 24, 10_000, "none");
+        crate::outbox::outbox_grant_publish("acl-deny-outbox", "acl_other_role");
+        Spi::run("CREATE ROLE acl_denied_role NOLOGIN").unwrap();
+        // Grant enough read access to reach the ACL verdict cleanly (the role is
+        // simply not in the publisher list, so the verdict is 'denied').
+        Spi::run("GRANT USAGE ON SCHEMA tide TO acl_denied_role").unwrap();
+        Spi::run(
+            "GRANT SELECT ON tide.tide_outbox_config, tide.outbox_publishers TO acl_denied_role",
+        )
+        .unwrap();
+        Spi::run("GRANT INSERT ON tide.tide_outbox_messages TO acl_denied_role").unwrap();
+        Spi::run("SET LOCAL ROLE acl_denied_role").unwrap();
+
+        let result = crate::outbox::outbox_publish_impl(
+            "acl-deny-outbox",
+            pgrx::JsonB(serde_json::json!({"x": 1})),
+            pgrx::JsonB(serde_json::json!({})),
+        );
+
+        Spi::run("RESET ROLE").unwrap();
+        // Fail-closed: an unauthorized role's publish must fail (whether via an
+        // explicit denied verdict or a fail-closed lookup error under RLS) and
+        // must never insert a row.
+        assert!(
+            result.is_err(),
+            "unauthorized role must not publish, got: {result:?}"
+        );
+        let count: i64 = Spi::get_one(
+            "SELECT COUNT(*)::bigint FROM tide.tide_outbox_messages WHERE outbox_name = 'acl-deny-outbox'",
+        )
+        .unwrap()
+        .unwrap_or(-1);
+        assert_eq!(count, 0, "denied publish must not insert a row");
     }
 
     #[pg_test]

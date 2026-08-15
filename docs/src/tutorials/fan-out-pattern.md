@@ -34,18 +34,33 @@ SELECT tide.create_consumer_group('webhook-relay', 'orders');
 
 ```sql
 -- To NATS
-SELECT tide.relay_set_outbox('orders-nats', 'orders', 'nats',
-  '{"url": "nats://nats:4222", "subject": "orders.events"}'::jsonb
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-nats',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', '{"url": "nats://nats:4222", "subject": "orders.events"}'::jsonb
+  )
 );
 
 -- To Kafka
-SELECT tide.relay_set_outbox('orders-kafka', 'orders', 'kafka',
-  '{"brokers": "kafka:9092", "topic": "orders"}'::jsonb
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-kafka',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', '{"brokers": "kafka:9092", "topic": "orders"}'::jsonb
+  )
 );
 
 -- To partner webhook
-SELECT tide.relay_set_outbox('orders-webhook', 'orders', 'webhook',
-  '{"url": "https://partner.example.com/hooks/orders"}'::jsonb
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-webhook',
+    'outbox', 'orders',
+    'sink_type', 'webhook',
+    'config', '{"url": "https://partner.example.com/hooks/orders"}'::jsonb
+  )
 );
 ```
 

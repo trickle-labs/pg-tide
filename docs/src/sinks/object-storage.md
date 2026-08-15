@@ -9,12 +9,12 @@ Choose object storage when you need cost-effective long-term archival of events,
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-s3',
-    'events',
-    's3-relay',
-    '{
-        "sink_type": "object_storage",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-s3',
+    'outbox', 'events',
+    'sink_type', 'object_storage',
+    'config', '{
         "provider": "s3",
         "bucket": "my-data-lake",
         "prefix": "events/{stream_table}/year={year}/month={month}/day={day}/",
@@ -23,6 +23,7 @@ SELECT tide.relay_set_outbox(
         "batch_size": 1000,
         "file_rotation_seconds": 300
     }'::jsonb
+  )
 );
 ```
 

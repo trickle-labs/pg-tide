@@ -12,11 +12,12 @@ The schema registry integration enables Avro serialization with Confluent Schema
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-pipeline',
-    'order_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-pipeline',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "orders",
         "wire_format": "debezium",
@@ -35,6 +36,7 @@ SELECT tide.relay_set_outbox(
             "subject_name_strategy": "TopicName"
         }
     }'::jsonb
+  )
 );
 ```
 

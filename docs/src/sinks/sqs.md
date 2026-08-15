@@ -13,33 +13,35 @@ Choose SQS when your infrastructure runs on AWS and you want a zero-maintenance 
 ### Minimal Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-sqs',
-    'orders',
-    'sqs-relay',
-    '{
-        "sink_type": "sqs",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-sqs',
+    'outbox', 'orders',
+    'sink_type', 'sqs',
+    'config', '{
         "queue_url": "https://sqs.us-east-1.amazonaws.com/123456789/order-events",
         "region": "us-east-1"
     }'::jsonb
+  )
 );
 ```
 
 ### Production Configuration (FIFO Queue)
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-sqs',
-    'orders',
-    'sqs-relay',
-    '{
-        "sink_type": "sqs",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-sqs',
+    'outbox', 'orders',
+    'sink_type', 'sqs',
+    'config', '{
         "queue_url": "${env:SQS_QUEUE_URL}",
         "region": "${env:AWS_REGION}",
         "message_group_id": "{stream_table}",
         "deduplication_id": "{dedup_key}",
         "batch_size": 10
     }'::jsonb
+  )
 );
 ```
 

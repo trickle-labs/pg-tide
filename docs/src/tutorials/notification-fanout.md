@@ -44,44 +44,49 @@ COMMIT;
 ### Pipeline 1: Slack (all incidents)
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'incidents-to-slack',
-    'incident_events',
-    '{
-        "sink_type": "slack",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'incidents-to-slack',
+    'outbox', 'incident_events',
+    'sink_type', 'slack',
+    'config', '{
         "webhook_url": "${env:SLACK_ALERTS_WEBHOOK}",
         "channel": "#incidents",
         "transform": {
             "payload": "{ text: join('"'"''"'"', ['"'"'🚨 *'"'"', payload.title, '"'"'* ('"'"', payload.severity, '"'"')\\nTeam: '"'"', payload.team]) }"
         }
     }'::jsonb
+  )
 );
 ```
 
 ### Pipeline 2: PagerDuty (critical only)
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'incidents-to-pagerduty',
-    'incident_events',
-    '{
-        "sink_type": "pagerduty",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'incidents-to-pagerduty',
+    'outbox', 'incident_events',
+    'sink_type', 'pagerduty',
+    'config', '{
         "routing_key": "${env:PAGERDUTY_ROUTING_KEY}",
         "transform": {
             "filter": "payload.severity == '"'"'critical'"'"'"
         }
     }'::jsonb
+  )
 );
 ```
 
 ### Pipeline 3: Email webhook (all incidents)
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'incidents-to-email',
-    'incident_events',
-    '{
-        "sink_type": "webhook",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'incidents-to-email',
+    'outbox', 'incident_events',
+    'sink_type', 'webhook',
+    'config', '{
         "url": "https://api.sendgrid.com/v3/mail/send",
         "method": "POST",
         "headers": {
@@ -91,17 +96,19 @@ SELECT tide.relay_set_outbox(
             "payload": "{ personalizations: [{ to: [{ email: '"'"'oncall@company.com'"'"' }] }], from: { email: '"'"'alerts@company.com'"'"' }, subject: join('"'"''"'"', ['"'"'['"'"', payload.severity, '"'"'] '"'"', payload.title]), content: [{ type: '"'"'text/plain'"'"', value: payload.description }] }"
         }
     }'::jsonb
+  )
 );
 ```
 
 ### Pipeline 4: Kafka archive (all incidents)
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'incidents-to-archive',
-    'incident_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'incidents-to-archive',
+    'outbox', 'incident_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "incidents-archive",
         "routing": {
@@ -112,6 +119,7 @@ SELECT tide.relay_set_outbox(
             "default_template": "incidents.info"
         }
     }'::jsonb
+  )
 );
 ```
 
@@ -137,11 +145,12 @@ To avoid notification storms, add rate limiting to chatty channels:
 
 ```sql
 -- Limit Slack to 1 message per second
-SELECT tide.relay_set_outbox(
-    'incidents-to-slack',
-    'incident_events',
-    '{
-        "sink_type": "slack",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'incidents-to-slack',
+    'outbox', 'incident_events',
+    'sink_type', 'slack',
+    'config', '{
         "webhook_url": "${env:SLACK_ALERTS_WEBHOOK}",
         "rate_limit": {
             "enabled": true,
@@ -149,6 +158,7 @@ SELECT tide.relay_set_outbox(
             "burst_size": 5
         }
     }'::jsonb
+  )
 );
 ```
 

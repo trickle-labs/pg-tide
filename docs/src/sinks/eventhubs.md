@@ -9,17 +9,18 @@ Choose Event Hubs when you need high-throughput event ingestion on Azure, when y
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-eventhubs',
-    'events',
-    'eventhubs-relay',
-    '{
-        "sink_type": "eventhubs",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-eventhubs',
+    'outbox', 'events',
+    'sink_type', 'eventhubs',
+    'config', '{
         "connection_string": "${env:EVENTHUBS_CONNECTION_STRING}",
         "event_hub_name": "outbox-events",
         "partition_key": "{stream_table}",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

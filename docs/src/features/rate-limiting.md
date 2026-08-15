@@ -14,11 +14,12 @@ Rate limiting protects downstream systems from being overwhelmed. Common scenari
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'notifications',
-    'notification_events',
-    '{
-        "sink_type": "slack",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'notifications',
+    'outbox', 'notification_events',
+    'sink_type', 'slack',
+    'config', '{
         "webhook_url": "${env:SLACK_WEBHOOK_URL}",
         "rate_limit": {
             "enabled": true,
@@ -26,6 +27,7 @@ SELECT tide.relay_set_outbox(
             "burst_size": 5
         }
     }'::jsonb
+  )
 );
 ```
 

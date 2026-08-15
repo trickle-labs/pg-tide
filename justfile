@@ -428,3 +428,29 @@ check-no-positional-api:
     else
         exit 1
     fi
+
+# v0.40.0: Reject active positional relay API calls in documentation.
+# The positional relay_set_outbox()/relay_set_inbox() forms were removed in
+# v0.36.0; active docs must use the _v2 JSONB forms. Clearly-labeled historical
+# migration docs are allowlisted.
+check-docs-positional:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ALLOWLIST='docs/src/operations/v1-migration-guide.md|docs/src/guides/migrating-to-pg-tide.md|docs/src/integration/pg-trickle.md'
+    HITS=$(grep -rn 'SELECT tide.relay_set_outbox(\|SELECT tide.relay_set_inbox(' docs/ examples/ README.md 2>/dev/null \
+        | grep -v '_v2' | grep -vE "^($ALLOWLIST):" || true)
+    if [[ -n "$HITS" ]]; then
+        echo "ERROR: active positional relay API calls found (use relay_set_outbox_v2 / relay_set_inbox_v2):"
+        echo "$HITS"
+        exit 1
+    fi
+    echo "OK: no active positional relay API calls in documentation."
+
+# v0.40.0: Verify the migration chain is complete through the workspace version.
+check-migrations:
+    bash scripts/check_upgrade_completeness.sh
+
+# v0.40.0: Execute the marked Quick Start SQL blocks against an installed
+# pg_tide extension. Set PGURL or standard libpq env vars for the connection.
+quickstart-sql:
+    python3 scripts/run_quickstart_sql.py README.md docs/src/getting-started/first-pipeline.md

@@ -54,19 +54,21 @@ sequenceDiagram
 
 ## Configuring a Reverse Pipeline
 
-Reverse pipelines are configured using `tide.relay_set_inbox()`:
+Reverse pipelines are configured using `tide.relay_set_inbox_v2()`:
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'payments-from-stripe',      -- pipeline name
-    'payment_events',            -- inbox name
-    '{
-        "source_type": "webhook",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'payments-from-stripe',
+    'inbox', 'payment_events',
+    'source', 'webhook',
+    'config', '{
         "listen_addr": "0.0.0.0:8080",
         "path": "/webhooks/stripe",
         "signature_scheme": "stripe",
         "signature_secret": "${env:STRIPE_WEBHOOK_SECRET}"
     }'::jsonb
+  )
 );
 ```
 

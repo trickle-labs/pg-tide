@@ -11,12 +11,12 @@ Choose Snowflake when your organization uses it as the primary data warehouse fo
 ### Production Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-snowflake',
-    'events',
-    'snowflake-relay',
-    '{
-        "sink_type": "snowflake",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-snowflake',
+    'outbox', 'events',
+    'sink_type', 'snowflake',
+    'config', '{
         "account": "${env:SNOWFLAKE_ACCOUNT}",
         "database": "ANALYTICS",
         "schema": "EVENTS",
@@ -27,6 +27,7 @@ SELECT tide.relay_set_outbox(
         "batch_size": 500,
         "stage": "pg_tide_stage"
     }'::jsonb
+  )
 );
 ```
 

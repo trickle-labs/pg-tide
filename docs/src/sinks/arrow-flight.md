@@ -9,16 +9,17 @@ Choose Arrow Flight when you need maximum throughput for analytical workloads (m
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-flight',
-    'events',
-    'flight-relay',
-    '{
-        "sink_type": "arrow_flight",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-flight',
+    'outbox', 'events',
+    'sink_type', 'arrow_flight',
+    'config', '{
         "endpoint": "grpc://${env:FLIGHT_HOST}:8815",
         "batch_size": 5000,
         "tls_enabled": false
     }'::jsonb
+  )
 );
 ```
 

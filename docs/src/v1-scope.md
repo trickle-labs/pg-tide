@@ -12,7 +12,7 @@
 - HA failover via PostgreSQL advisory locks
 - Wire format support: native, Debezium JSON/Avro/Protobuf, Maxwell, Canal, CloudEvents, CDC-JSON, claim-check
 - Schema registry integration (Confluent Schema Registry, Apicurio)
-- Pipeline templates and multi-outbox fan-in
+- Pipeline templates and multi-outbox fan-in — **fan-in is experimental; disabled in v0.40.0 pending canonical shared-table runtime coverage** (see ADR-011)
 - Backfill job scheduling with chunking and progress tracking
 - Config change history and pipeline lifecycle management
 - Delivery receipts with relay integration

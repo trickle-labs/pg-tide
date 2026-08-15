@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Unified message envelope used by both forward and reverse relay.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RelayMessage {
     /// Dedup key for idempotent delivery.
     /// Forward: "{outbox_table}:{outbox_id}:{row_index}"
@@ -25,6 +25,19 @@ pub struct RelayMessage {
     /// pg-trickle outbox metadata (forward only, None in reverse).
     pub outbox_id: Option<i64>,
     pub refresh_id: Option<Uuid>,
+
+    /// v0.40.0 (ADR-011): Logical outbox name for native forward messages.
+    /// Additive; serde default keeps older recorded messages readable.
+    #[serde(default)]
+    pub outbox_name: Option<String>,
+
+    /// v0.40.0 (ADR-011): Outbox row `headers` JSONB (native forward messages).
+    #[serde(default)]
+    pub headers: Option<serde_json::Value>,
+
+    /// v0.40.0 (ADR-011): Outbox row `created_at` timestamp (native forward).
+    #[serde(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 
     /// Source-specific metadata for acknowledgement (not serialized).
     #[serde(skip)]
@@ -67,6 +80,9 @@ impl RelayMessage {
             is_full_refresh,
             outbox_id: Some(outbox_id),
             refresh_id,
+            outbox_name: None,
+            headers: None,
+            created_at: None,
             ack_token: AckToken::None,
         }
     }
@@ -84,6 +100,9 @@ impl RelayMessage {
             is_full_refresh: false,
             outbox_id: None,
             refresh_id: None,
+            outbox_name: None,
+            headers: None,
+            created_at: None,
             ack_token: AckToken::None,
         }
     }

@@ -9,12 +9,12 @@ Choose Elasticsearch when you need full-text search across your events (e.g., se
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-elastic',
-    'events',
-    'elastic-relay',
-    '{
-        "sink_type": "elasticsearch",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-elastic',
+    'outbox', 'events',
+    'sink_type', 'elasticsearch',
+    'config', '{
         "url": "https://${env:ELASTIC_HOST}:9200",
         "index": "events-{stream_table}",
         "username": "${env:ELASTIC_USER}",
@@ -22,6 +22,7 @@ SELECT tide.relay_set_outbox(
         "batch_size": 500,
         "document_id": "{dedup_key}"
     }'::jsonb
+  )
 );
 ```
 

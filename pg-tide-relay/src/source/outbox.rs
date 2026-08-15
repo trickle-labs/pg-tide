@@ -1,11 +1,37 @@
 /// Outbox poller source (RELAY-3 + RELAY-4).
-/// Polls pg-trickle outbox tables and decodes payloads.
+///
+/// v0.40.0 (ADR-011): The default native path polls the canonical shared table
+/// `tide.tide_outbox_messages` with a static query discriminated by
+/// `outbox_name`. pg_trickle compatibility (dynamic per-outbox relations and the
+/// `v:1` envelope) is an explicit, clearly separated mode.
 use std::sync::Arc;
 use tokio_postgres::Client;
 use uuid::Uuid;
 
 use crate::envelope::{AckToken, OutboxBatch, RelayMessage};
 use crate::error::RelayError;
+
+/// Poll mode for [`OutboxPollerSource`].
+///
+/// v0.40.0 (ADR-011): `Native` is the default and polls the canonical shared
+/// table. `PgTrickleCompat` retains the legacy dynamic per-outbox relation and
+/// `v:1` envelope decoding for pg_trickle producers.
+#[derive(Debug, Clone)]
+pub enum OutboxSourceMode {
+    /// Native shared-table path: static query on `tide.tide_outbox_messages`.
+    Native,
+    /// pg_trickle compatibility: dynamic per-outbox relation + `v:1` decoding.
+    PgTrickleCompat {
+        /// Physical relation name, e.g. `outbox_<name>` (validated + quoted).
+        table: String,
+    },
+}
+
+impl OutboxSourceMode {
+    fn is_native(&self) -> bool {
+        matches!(self, OutboxSourceMode::Native)
+    }
+}
 
 // ── Payload decoding (RELAY-4) ────────────────────────────────────────────
 
@@ -166,7 +192,7 @@ async fn fetch_claim_check_rows(
     let cursor_name = format!("relay_cc_{outbox_id}_{}", Uuid::new_v4().simple());
     // v0.31.0: Double-quote the identifier to handle outbox names with hyphens.
     // QUOTED: tide."outbox_delta_rows_{outbox_name}" — identifier validated at
-    // construction via validate_relay_identifier() in OutboxPollerSource::new_simple_with_mode().
+    // construction via validate_relay_identifier() in OutboxPollerSource::new_simple_pg_trickle().
     let delta_table = format!("tide.\"outbox_delta_rows_{outbox_name}\"");
 
     // Open cursor — embed outbox_id literal (it's an i64 from DB, not user input).
@@ -240,21 +266,21 @@ fn extract_array(v: &serde_json::Value, key: &str) -> Vec<serde_json::Value> {
 /// - Simple: tracks offsets in `relay_consumer_offsets` (suitable for single-relay).
 /// - Consumer group: delegates to `poll_outbox()` + `commit_offset()`.
 ///
-/// v0.15.0: Also supports `raw_payload_mode` — treats payloads as native JSONB
-/// events (no `v:1` pg_trickle envelope required).
+/// v0.40.0 (ADR-011): The default `mode` is [`OutboxSourceMode::Native`], which
+/// polls the canonical `tide.tide_outbox_messages` table. pg_trickle producers
+/// use [`OutboxSourceMode::PgTrickleCompat`].
 pub struct OutboxPollerSource {
     db: Arc<Client>,
-    stream_table_name: String,
-    outbox_table_name: String,
+    /// Logical outbox name (the `outbox_name` discriminator on the shared table).
+    outbox_name: String,
+    /// Poll mode: native shared-table (default) or pg_trickle compatibility.
+    mode: OutboxSourceMode,
     subject_template: String,
     relay_group_id: String,
     pipeline_id: String,
     worker_id: String,
     consumer_group: Option<ConsumerGroupConfig>,
     last_offset: i64,
-    /// v0.15.0: When true, payloads are treated as raw JSONB events rather than
-    /// v:1 pg_trickle envelopes.  Set via `source.payload_mode = "raw"`.
-    raw_payload_mode: bool,
     /// v0.28.0: Large-object OIDs to unlink after a confirmed ack.
     /// Populated during `poll()` for each row whose payload is a native
     /// claim-check envelope (`_cc: true`).  Cleared in `acknowledge()`.
@@ -268,67 +294,76 @@ pub struct ConsumerGroupConfig {
 }
 
 impl OutboxPollerSource {
-    pub async fn new_simple(
-        db: Arc<Client>,
-        stream_table_name: impl Into<String>,
-        outbox_table_name: impl Into<String>,
-        subject_template: impl Into<String>,
-        relay_group_id: impl Into<String>,
-        pipeline_id: impl Into<String>,
-    ) -> Result<Self, RelayError> {
-        Self::new_simple_with_mode(
-            db,
-            stream_table_name,
-            outbox_table_name,
-            subject_template,
-            relay_group_id,
-            pipeline_id,
-            false,
-        )
-        .await
-    }
-
-    /// Create a simple outbox poller with explicit payload mode.
+    /// Create a native simple outbox poller (ADR-011).
     ///
-    /// v0.15.0: `raw_payload_mode = true` treats payloads as native JSONB events.
-    pub async fn new_simple_with_mode(
+    /// Polls the canonical `tide.tide_outbox_messages` table with a static query
+    /// discriminated by `outbox_name`; payloads are decoded as native events.
+    pub async fn new_simple_native(
         db: Arc<Client>,
-        stream_table_name: impl Into<String>,
-        outbox_table_name: impl Into<String>,
+        outbox_name: impl Into<String>,
         subject_template: impl Into<String>,
         relay_group_id: impl Into<String>,
         pipeline_id: impl Into<String>,
-        raw_payload_mode: bool,
     ) -> Result<Self, RelayError> {
         let relay_group_id = relay_group_id.into();
         let pipeline_id = pipeline_id.into();
-        let stream_table_name = stream_table_name.into();
-        let outbox_table_name = outbox_table_name.into();
+        let outbox_name = outbox_name.into();
 
-        // v0.15.0: Relay-side identifier validation.
-        crate::config::validate_relay_identifier(&stream_table_name)?;
-        crate::config::validate_relay_identifier(&outbox_table_name)?;
+        let worker_id = worker_id();
 
-        let worker_id = format!(
-            "{}:{}",
-            std::env::var("HOSTNAME").unwrap_or_else(|_| "relay".to_string()),
-            std::process::id()
-        );
-
-        // Load last committed offset from catalog.
-        let last_offset = load_offset(&db, &relay_group_id, &pipeline_id).await?;
+        // Load last committed offset for this (relay group, pipeline, outbox).
+        let last_offset = load_offset(&db, &relay_group_id, &pipeline_id, &outbox_name).await?;
 
         Ok(Self {
             db,
-            stream_table_name,
-            outbox_table_name,
+            outbox_name,
+            mode: OutboxSourceMode::Native,
             subject_template: subject_template.into(),
             relay_group_id,
             pipeline_id,
             worker_id,
             consumer_group: None,
             last_offset,
-            raw_payload_mode,
+            pending_cc_oids: Vec::new(),
+        })
+    }
+
+    /// Create a pg_trickle-compatibility simple outbox poller.
+    ///
+    /// Retains the legacy dynamic per-outbox relation (`tide."outbox_<name>"`)
+    /// and `v:1` envelope decoding. The relation identifier is validated and
+    /// double-quoted; native producers should use [`Self::new_simple_native`].
+    pub async fn new_simple_pg_trickle(
+        db: Arc<Client>,
+        outbox_name: impl Into<String>,
+        subject_template: impl Into<String>,
+        relay_group_id: impl Into<String>,
+        pipeline_id: impl Into<String>,
+    ) -> Result<Self, RelayError> {
+        let relay_group_id = relay_group_id.into();
+        let pipeline_id = pipeline_id.into();
+        let outbox_name = outbox_name.into();
+        let table = format!("outbox_{outbox_name}");
+
+        // Identifier validation is required here because the relation name is
+        // interpolated into the compatibility query (not bound as a parameter).
+        crate::config::validate_relay_identifier(&outbox_name)?;
+        crate::config::validate_relay_identifier(&table)?;
+
+        let worker_id = worker_id();
+
+        let last_offset = load_offset(&db, &relay_group_id, &pipeline_id, &outbox_name).await?;
+
+        Ok(Self {
+            db,
+            outbox_name,
+            mode: OutboxSourceMode::PgTrickleCompat { table },
+            subject_template: subject_template.into(),
+            relay_group_id,
+            pipeline_id,
+            worker_id,
+            consumer_group: None,
+            last_offset,
             pending_cc_oids: Vec::new(),
         })
     }
@@ -336,8 +371,7 @@ impl OutboxPollerSource {
     #[allow(clippy::too_many_arguments)]
     pub async fn new_consumer_group(
         db: Arc<Client>,
-        stream_table_name: impl Into<String>,
-        outbox_table_name: impl Into<String>,
+        outbox_name: impl Into<String>,
         subject_template: impl Into<String>,
         relay_group_id: impl Into<String>,
         pipeline_id: impl Into<String>,
@@ -347,23 +381,19 @@ impl OutboxPollerSource {
     ) -> Result<Self, RelayError> {
         let relay_group_id = relay_group_id.into();
         let pipeline_id = pipeline_id.into();
-        let stream_table_name = stream_table_name.into();
-        let outbox_table_name = outbox_table_name.into();
+        let outbox_name = outbox_name.into();
 
-        // v0.15.0: Relay-side identifier validation.
-        crate::config::validate_relay_identifier(&stream_table_name)?;
-        crate::config::validate_relay_identifier(&outbox_table_name)?;
+        // Consumer-group mode reads via the tide.poll_outbox() SQL function on
+        // the canonical shared table, so the outbox name is passed as a bound
+        // parameter. Validate anyway to reject malformed configuration early.
+        crate::config::validate_relay_identifier(&outbox_name)?;
 
-        let worker_id = format!(
-            "{}:{}",
-            std::env::var("HOSTNAME").unwrap_or_else(|_| "relay".to_string()),
-            std::process::id()
-        );
+        let worker_id = worker_id();
 
         Ok(Self {
             db,
-            stream_table_name,
-            outbox_table_name,
+            outbox_name,
+            mode: OutboxSourceMode::Native,
             subject_template: subject_template.into(),
             relay_group_id,
             pipeline_id,
@@ -374,10 +404,18 @@ impl OutboxPollerSource {
                 visibility_seconds,
             }),
             last_offset: 0,
-            raw_payload_mode: false, // consumer group mode does not support raw payload mode
             pending_cc_oids: Vec::new(),
         })
     }
+}
+
+/// Build the worker identifier used to stamp offset writes.
+fn worker_id() -> String {
+    format!(
+        "{}:{}",
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "relay".to_string()),
+        std::process::id()
+    )
 }
 
 #[async_trait::async_trait]
@@ -396,22 +434,21 @@ impl super::Source for OutboxPollerSource {
                 &self.db,
                 &cg.group_name,
                 &cg.consumer_id,
-                &self.stream_table_name,
+                &self.outbox_name,
                 &self.subject_template,
                 batch_size as i32,
                 cg.visibility_seconds,
-                false, // consumer group doesn't use raw mode
+                self.mode.is_native(),
             )
             .await
         } else {
             poll_simple(
                 &self.db,
-                &self.outbox_table_name,
-                &self.stream_table_name,
+                &self.outbox_name,
+                &self.mode,
                 &self.subject_template,
                 self.last_offset,
                 batch_size,
-                self.raw_payload_mode,
                 &mut self.pending_cc_oids,
             )
             .await
@@ -432,15 +469,20 @@ impl super::Source for OutboxPollerSource {
                 }
             } else {
                 let offset_i64 = *offset;
+                // v0.40.0 (ADR-011): The offset write is monotonic and scoped by
+                // outbox. It only advances the in-memory position after the DB
+                // commit is confirmed, so an ack failure is visible to the worker.
                 update_simple_offset(
                     &self.db,
                     &self.relay_group_id,
                     &self.pipeline_id,
+                    &self.outbox_name,
                     offset_i64,
                     &self.worker_id,
                 )
                 .await?;
-                self.last_offset = offset_i64;
+                // In-memory position never rewinds (mirrors the DB GREATEST upsert).
+                self.last_offset = self.last_offset.max(offset_i64);
             }
         }
 
@@ -473,24 +515,122 @@ impl super::Source for OutboxPollerSource {
 #[allow(clippy::too_many_arguments)]
 async fn poll_simple(
     db: &Client,
-    outbox_table_name: &str,
-    stream_table_name: &str,
+    outbox_name: &str,
+    mode: &OutboxSourceMode,
     subject_template: &str,
     last_offset: i64,
     batch_size: i64,
-    raw_mode: bool,
     pending_cc_oids: &mut Vec<u32>,
 ) -> Result<Vec<RelayMessage>, RelayError> {
-    // Outbox tables are in the tide schema: tide."<outbox_table_name>"
-    // v0.31.0: Double-quote the identifier to handle names containing hyphens.
-    // QUOTED: tide."{outbox_table_name}" — identifier validated at construction
-    // via validate_relay_identifier() in OutboxPollerSource::new_simple_with_mode().
-    let outbox_schema_table = format!("tide.\"{outbox_table_name}\"");
+    match mode {
+        OutboxSourceMode::Native => {
+            poll_simple_native(
+                db,
+                outbox_name,
+                subject_template,
+                last_offset,
+                batch_size,
+                pending_cc_oids,
+            )
+            .await
+        }
+        OutboxSourceMode::PgTrickleCompat { table } => {
+            poll_simple_pg_trickle(
+                db,
+                table,
+                outbox_name,
+                subject_template,
+                last_offset,
+                batch_size,
+            )
+            .await
+        }
+    }
+}
+
+/// v0.40.0 (ADR-011): Native simple mode — one static, parameterized query on
+/// the canonical shared table. `outbox_name` is bound as a parameter, so no
+/// identifier interpolation is required. Ordering is strictly increasing by
+/// `id`; the global identity sequence may leave gaps within one outbox.
+async fn poll_simple_native(
+    db: &Client,
+    outbox_name: &str,
+    subject_template: &str,
+    last_offset: i64,
+    batch_size: i64,
+    pending_cc_oids: &mut Vec<u32>,
+) -> Result<Vec<RelayMessage>, RelayError> {
+    let rows = db
+        .query(
+            "SELECT id, payload, headers, created_at \
+             FROM tide.tide_outbox_messages \
+             WHERE outbox_name = $1 AND id > $2 \
+             ORDER BY id LIMIT $3",
+            &[&outbox_name, &last_offset, &batch_size],
+        )
+        .await
+        .map_err(RelayError::from)?;
+
+    // The stable logical dedup/subject identifier keeps the `outbox_` prefix
+    // (ADR-011 §5); it is a compatibility label, not a physical relation name.
+    let dedup_table = format!("outbox_{outbox_name}");
+    let mut messages = Vec::new();
+    for row in &rows {
+        let id: i64 = row.get("id");
+        let payload: serde_json::Value = row.get("payload");
+        let headers: Option<serde_json::Value> = row.try_get("headers").ok();
+        let created_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("created_at").ok();
+
+        // v0.28.0: Track native claim-check OIDs for post-ack lo_unlink.
+        if payload
+            .get("_cc")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            if let Some(oid_str) = payload.get("oid").and_then(|v| v.as_str()) {
+                if let Ok(loid) = oid_str.parse::<u32>() {
+                    pending_cc_oids.push(loid);
+                }
+            }
+        }
+
+        // Native decoding: payload is a native JSONB event (raw_mode = true).
+        let batch = decode_payload(&payload, db, outbox_name, id, true).await?;
+        let mut batch_msgs = batch.into_messages(&dedup_table, subject_template);
+        // Attach native row metadata (ADR-011 §4) and the ack token.
+        for msg in batch_msgs.iter_mut() {
+            msg.outbox_name = Some(outbox_name.to_string());
+            msg.headers = headers.clone();
+            msg.created_at = created_at;
+        }
+        if let Some(last) = batch_msgs.last_mut() {
+            last.ack_token = AckToken::OutboxOffset(id);
+        }
+        messages.extend(batch_msgs);
+    }
+    Ok(messages)
+}
+
+/// pg_trickle compatibility simple mode: dynamic per-outbox relation +
+/// `v:1` envelope decoding. The relation identifier was validated at
+/// construction (`OutboxPollerSource::new_simple_pg_trickle`).
+async fn poll_simple_pg_trickle(
+    db: &Client,
+    table: &str,
+    outbox_name: &str,
+    subject_template: &str,
+    last_offset: i64,
+    batch_size: i64,
+) -> Result<Vec<RelayMessage>, RelayError> {
+    // Outbox tables are in the tide schema: tide."<table>"
+    // QUOTED: tide."{table}" — identifier validated at construction via
+    // validate_relay_identifier() in OutboxPollerSource::new_simple_pg_trickle().
+    let outbox_schema_table = format!("tide.\"{table}\"");
     let rows = db
         .query(
             &format!(
-                "SELECT id, payload FROM {table} WHERE id > $1 ORDER BY id LIMIT $2",
-                table = outbox_schema_table
+                "SELECT id, payload FROM {t} WHERE id > $1 ORDER BY id LIMIT $2",
+                t = outbox_schema_table
             ),
             &[&last_offset, &batch_size],
         )
@@ -502,23 +642,11 @@ async fn poll_simple(
         let id: i64 = row.get("id");
         let payload: serde_json::Value = row.get("payload");
 
-        // v0.28.0: Track native claim-check OIDs for post-ack lo_unlink.
-        if raw_mode
-            && payload
-                .get("_cc")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        {
-            if let Some(oid_str) = payload.get("oid").and_then(|v| v.as_str()) {
-                if let Ok(loid) = oid_str.parse::<u32>() {
-                    pending_cc_oids.push(loid);
-                }
-            }
+        let batch = decode_payload(&payload, db, outbox_name, id, false).await?;
+        let mut batch_msgs = batch.into_messages(table, subject_template);
+        for msg in batch_msgs.iter_mut() {
+            msg.outbox_name = Some(outbox_name.to_string());
         }
-
-        let batch = decode_payload(&payload, db, stream_table_name, id, raw_mode).await?;
-        let mut batch_msgs = batch.into_messages(outbox_table_name, subject_template);
-        // Attach ack token to the last message in each outbox row.
         if let Some(last) = batch_msgs.last_mut() {
             last.ack_token = AckToken::OutboxOffset(id);
         }
@@ -564,6 +692,9 @@ async fn poll_consumer_group(
         let payload: serde_json::Value = row.get("payload");
         let batch = decode_payload(&payload, db, stream_table_name, id, raw_mode).await?;
         let mut batch_msgs = batch.into_messages(&outbox_table_name, subject_template);
+        for msg in batch_msgs.iter_mut() {
+            msg.outbox_name = Some(stream_table_name.to_string());
+        }
         if let Some(last) = batch_msgs.last_mut() {
             last.ack_token = AckToken::OutboxOffset(id);
         }
@@ -573,41 +704,81 @@ async fn poll_consumer_group(
 }
 
 /// Load the last committed offset for a simple-mode pipeline.
+///
+/// v0.40.0 (ADR-011): The offset identity includes `outbox_name`, so a pipeline
+/// name reused for another outbox never inherits the previous outbox's offset.
 async fn load_offset(
     db: &Client,
     relay_group_id: &str,
     pipeline_id: &str,
+    outbox_name: &str,
 ) -> Result<i64, RelayError> {
     let row = db
         .query_opt(
             "SELECT last_change_id FROM tide.relay_consumer_offsets
-             WHERE relay_group_id = $1 AND pipeline_id = $2",
-            &[&relay_group_id, &pipeline_id],
+             WHERE relay_group_id = $1 AND pipeline_id = $2 AND outbox_name = $3",
+            &[&relay_group_id, &pipeline_id, &outbox_name],
         )
         .await?;
     Ok(row.map(|r| r.get::<_, i64>(0)).unwrap_or(0))
 }
 
 /// Write (upsert) the committed offset for a simple-mode pipeline.
+///
+/// v0.40.0 (ADR-011): The upsert is monotonic — a lower offset never rewinds a
+/// higher stored value (`GREATEST`). The write returns the persisted offset and
+/// this function fails if it is below the acknowledged offset or if no row was
+/// written, so an offset-commit failure is visible to the worker rather than
+/// silently succeeding.
 async fn update_simple_offset(
     db: &Client,
     relay_group_id: &str,
     pipeline_id: &str,
+    outbox_name: &str,
     last_change_id: i64,
     worker_id: &str,
 ) -> Result<(), RelayError> {
-    db.execute(
-        "INSERT INTO tide.relay_consumer_offsets
-             (relay_group_id, pipeline_id, last_change_id, worker_id, updated_at)
-         VALUES ($1, $2, $3, $4, now())
-         ON CONFLICT (relay_group_id, pipeline_id)
-         DO UPDATE SET last_change_id = EXCLUDED.last_change_id,
-                       worker_id      = EXCLUDED.worker_id,
-                       updated_at     = EXCLUDED.updated_at",
-        &[&relay_group_id, &pipeline_id, &last_change_id, &worker_id],
-    )
-    .await?;
-    Ok(())
+    let row = db
+        .query_opt(
+            "INSERT INTO tide.relay_consumer_offsets
+                 (relay_group_id, pipeline_id, outbox_name, last_change_id, worker_id, updated_at)
+             VALUES ($1, $2, $3, $4, $5, now())
+             ON CONFLICT (relay_group_id, pipeline_id, outbox_name)
+             DO UPDATE SET
+                 last_change_id = GREATEST(
+                     tide.relay_consumer_offsets.last_change_id,
+                     EXCLUDED.last_change_id
+                 ),
+                 worker_id  = EXCLUDED.worker_id,
+                 updated_at = now()
+             RETURNING last_change_id",
+            &[
+                &relay_group_id,
+                &pipeline_id,
+                &outbox_name,
+                &last_change_id,
+                &worker_id,
+            ],
+        )
+        .await?;
+
+    match row {
+        Some(r) => {
+            let persisted: i64 = r.get(0);
+            if persisted < last_change_id {
+                return Err(RelayError::other(format!(
+                    "offset commit for relay_group={relay_group_id} pipeline={pipeline_id} \
+                     outbox={outbox_name} persisted {persisted} below acknowledged \
+                     {last_change_id}"
+                )));
+            }
+            Ok(())
+        }
+        None => Err(RelayError::other(format!(
+            "offset commit for relay_group={relay_group_id} pipeline={pipeline_id} \
+             outbox={outbox_name} wrote zero rows (attempted {last_change_id})"
+        ))),
+    }
 }
 
 // ── Fan-in source (v0.35.0) ───────────────────────────────────────────────
@@ -645,7 +816,7 @@ impl FanInSource {
         outbox_names: Vec<String>,
         subject_template: &str,
         relay_group_id: &str,
-        raw_mode: bool,
+        _raw_mode: bool,
     ) -> Result<Self, RelayError> {
         let worker_id = format!("pg-tide-fanin-{}", Uuid::new_v4());
         let mut sources = Vec::with_capacity(outbox_names.len());
@@ -669,19 +840,17 @@ impl FanInSource {
                 .map(|r| r.get::<_, i64>(0))
                 .unwrap_or(0);
 
-            // QUOTED: tide."{outbox_name}" — identifier loaded from relay_fanin_config
-            let table_name = format!("tide.\"{outbox_name}\"");
+            // v0.40.0: Fan-in members are native outboxes on the shared table.
             let mut src = OutboxPollerSource {
                 db: Arc::clone(&db),
-                stream_table_name: outbox_name.clone(),
-                outbox_table_name: table_name,
+                outbox_name: outbox_name.clone(),
+                mode: OutboxSourceMode::Native,
                 subject_template: subject_template.to_string(),
                 relay_group_id: relay_group_id.to_string(),
                 pipeline_id: pipeline_name.to_string(),
                 worker_id: worker_id.clone(),
                 consumer_group: None,
                 last_offset,
-                raw_payload_mode: raw_mode,
                 pending_cc_oids: Vec::new(),
             };
             // Override the last_offset on the source so it starts from the
@@ -724,7 +893,7 @@ impl super::Source for FanInSource {
             let batch = self.sources[idx].poll(per_source).await?;
             for msg in batch {
                 // Record which outbox produced this message for UNNEST commit.
-                let outbox_name = self.sources[idx].stream_table_name.clone();
+                let outbox_name = self.sources[idx].outbox_name.clone();
                 if let AckToken::OutboxOffset(offset) = &msg.ack_token {
                     self.pending_offsets.push((outbox_name, *offset));
                 }
@@ -800,11 +969,7 @@ impl super::Source for FanInSource {
 
         // Update the last_offset on each sub-source so the next poll advances correctly.
         for (member, max_offset) in &max_by_member {
-            if let Some(src) = self
-                .sources
-                .iter_mut()
-                .find(|s| &s.stream_table_name == member)
-            {
+            if let Some(src) = self.sources.iter_mut().find(|s| s.outbox_name == *member) {
                 src.last_offset = *max_offset;
             }
         }

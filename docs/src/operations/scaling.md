@@ -31,9 +31,14 @@ For a single high-throughput pipeline:
 Larger batches reduce round-trips but increase latency for individual messages:
 
 ```sql
-SELECT tide.relay_set_outbox('high-volume', 'events', 'nats',
-  '{"url": "nats://localhost:4222", "subject": "events"}'::jsonb,
-  p_batch_size := 500
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'high-volume',
+    'outbox', 'events',
+    'sink_type', 'nats',
+    'config', '{"url": "nats://localhost:4222", "subject": "events"}'::jsonb,
+    'batch_size', 500
+  )
 );
 ```
 
@@ -50,15 +55,15 @@ Each outbox gets its own pipeline and relay ownership lock.
 
 ### Index Performance
 
-The default partial index on `tide_outbox_messages` is optimized for pending-message polling:
+The native relay uses an unconditional index on the shared table for logical-outbox polling:
 
 ```sql
 -- Already created by the extension:
-CREATE INDEX idx_tide_outbox_messages_pending
-    ON tide.tide_outbox_messages (outbox_name, id)
-    WHERE consumed_at IS NULL;
+CREATE INDEX idx_tide_outbox_messages_poll
+    ON tide.tide_outbox_messages (outbox_name, id);
 ```
 
+The older partial `consumed_at` index remains for legacy/global cleanup surfaces.
 At very high volumes (>10M rows), consider time-based partitioning.
 
 ---
@@ -71,7 +76,8 @@ The relay uses a single PostgreSQL connection. For applications with many connec
 
 ### Read Replicas
 
-The relay must connect to the primary (it writes offsets and marks messages consumed). However, monitoring queries (`outbox_pending`, `consumer_lag`) can safely run against read replicas.
+The relay must connect to the primary because it writes offsets. Monitoring queries
+(`outbox_pending`, `consumer_lag`) can safely run against read replicas.
 
 ---
 

@@ -6,15 +6,7 @@ mod common;
 
 use common::PgTideTestDb;
 
-/// The SQL for the DLQ migration (v0.7.0).
-const DLQ_MIGRATION_SQL: &str = include_str!("../../sql/pg_tide--0.6.0--0.7.0.sql");
-
-async fn setup_dlq(db: &PgTideTestDb) {
-    db.client
-        .batch_execute(DLQ_MIGRATION_SQL)
-        .await
-        .expect("failed to apply DLQ migration");
-}
+async fn setup_dlq(_db: &PgTideTestDb) {}
 
 #[tokio::test]
 async fn test_dlq_insert_and_list() {

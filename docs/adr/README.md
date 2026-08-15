@@ -14,3 +14,9 @@ including the context, the decision, and the consequences.
 | [ADR-003](adr-003-wire-format-abstraction.md) | Wire Format Abstraction | Accepted |
 | [ADR-004](adr-004-jsonb-catalog-config.md) | JSONB Catalog Config | Accepted |
 | [ADR-005](adr-005-feature-gated-binary.md) | Feature-Gated Binary | Accepted |
+| [ADR-006](adr-006-outbox-table-partitioning.md) | Outbox Table Partitioning | Accepted |
+| [ADR-007](adr-007-shared-partition-table-semantics.md) | Shared Partition Table Semantics | Accepted |
+| [ADR-008](adr-008-claim-check-native-pathway.md) | Native Claim-Check Pathway via pg_largeobject | Accepted |
+| [ADR-009](adr-009-wal-logical-replication-source.md) | WAL Logical-Replication Source | Accepted |
+| [ADR-010](adr-010-envelope-encryption-kms.md) | Envelope Encryption with KMS | Accepted |
+| [ADR-011](adr-011-canonical-outbox-storage-and-relay-polling.md) | Canonical Outbox Storage and Relay Polling | Accepted |

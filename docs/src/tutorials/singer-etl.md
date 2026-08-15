@@ -26,11 +26,12 @@ pip install tap-hubspot
 CREATE EXTENSION pg_tide;
 SELECT tide.inbox_create('hubspot_contacts');
 
-SELECT tide.relay_set_inbox(
-    'hubspot-extraction',
-    'hubspot_contacts',
-    '{
-        "source_type": "singer",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'hubspot-extraction',
+    'inbox', 'hubspot_contacts',
+    'source', 'singer',
+    'config', '{
         "tap_command": "tap-hubspot",
         "tap_config": {
             "api_key": "${env:HUBSPOT_API_KEY}",
@@ -39,6 +40,7 @@ SELECT tide.relay_set_inbox(
         "stream_filter": ["contacts", "companies", "deals"],
         "state_persistence": true
     }'::jsonb
+  )
 );
 ```
 
@@ -99,11 +101,12 @@ FROM contact_summary;
 Configure Singer target export:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'to-snowflake',
-    'warehouse_events',
-    '{
-        "sink_type": "singer",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'to-snowflake',
+    'outbox', 'warehouse_events',
+    'sink_type', 'singer',
+    'config', '{
         "target_command": "target-snowflake",
         "target_config": {
             "account": "${env:SNOWFLAKE_ACCOUNT}",
@@ -113,6 +116,7 @@ SELECT tide.relay_set_outbox(
             "schema": "RAW"
         }
     }'::jsonb
+  )
 );
 ```
 

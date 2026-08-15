@@ -13,16 +13,17 @@ Choose Kinesis when you need high-throughput real-time streaming on AWS, when yo
 ### Minimal Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-kinesis',
-    'events',
-    'kinesis-relay',
-    '{
-        "sink_type": "kinesis",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-kinesis',
+    'outbox', 'events',
+    'sink_type', 'kinesis',
+    'config', '{
         "stream_name": "pg-tide-events",
         "region": "us-east-1",
         "partition_key": "{dedup_key}"
     }'::jsonb
+  )
 );
 ```
 

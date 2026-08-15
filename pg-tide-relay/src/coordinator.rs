@@ -1056,6 +1056,11 @@ async fn worker_inner(
 
         match directive {
             WorkerDirective::Continue => {
+                // v0.40.0 (ADR-011): The sink acknowledged the batch, but the
+                // offset write can still fail. A failed offset commit must be
+                // visible — mark the pipeline unhealthy, skip the success-shaped
+                // delivery receipt, and retry the batch. At-least-once means the
+                // sink may see a duplicate on retry; silent loss is forbidden.
                 if let Some(last) = batch.last() {
                     // v0.13.0: OTel span around acknowledge.
                     let ack_span = tracing::info_span!(
@@ -1063,11 +1068,29 @@ async fn worker_inner(
                         pipeline = %pipeline.name,
                     );
                     if let Err(e) = source.acknowledge(last).instrument(ack_span).await {
-                        tracing::warn!(
+                        tracing::error!(
                             pipeline = %pipeline.name,
+                            relay_group = %relay_group_id,
+                            outbox = %receipt_outbox_name,
+                            attempted_offset = last.outbox_id.unwrap_or(0),
                             error = %e,
-                            "acknowledge error"
+                            "offset commit failed after sink publish — pipeline unhealthy, \
+                             will retry batch (at-least-once)"
                         );
+                        metrics
+                            .pipeline_healthy
+                            .with_label_values(&[&pipeline.name, &tenant_label])
+                            .set(0);
+                        metrics
+                            .publish_errors
+                            .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
+                            .inc();
+                        consecutive_failures += 1;
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+                            _ = stop_rx.changed() => { break; }
+                        }
+                        continue;
                     }
                 }
 
@@ -1089,7 +1112,8 @@ async fn worker_inner(
                     .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                     .inc_by(batch.len() as u64);
 
-                // v0.28.0: Write delivery receipts after confirmed sink publish.
+                // v0.28.0: Write delivery receipts after confirmed sink publish
+                // AND a confirmed offset commit.
                 write_delivery_receipts(
                     &db,
                     &pipeline.name,
@@ -1615,11 +1639,14 @@ async fn build_source(
 ) -> Result<Box<dyn crate::source::Source>, RelayError> {
     let source_type = pipeline.require_str(&["source_type"])?;
     match source_type {
+        // v0.40.0 (ADR-011): Native shared-table path. Polls
+        // tide.tide_outbox_messages with a static query and decodes native
+        // payloads by default.
         "outbox" => {
             let outbox = pipeline.require_str(&["source", "outbox"])?;
             let subject_template = pipeline
                 .opt_str(&["source", "subject_template"])
-                .unwrap_or("{stream_table}.{op}");
+                .unwrap_or("{outbox}.{op}");
 
             if let Some(group_name) = pipeline.opt_str(&["source", "consumer_group"]) {
                 let consumer_id = pipeline
@@ -1631,7 +1658,6 @@ async fn build_source(
                 let src = crate::source::outbox::OutboxPollerSource::new_consumer_group(
                     db,
                     outbox,
-                    format!("outbox_{outbox}"),
                     subject_template,
                     relay_group_id,
                     &pipeline.name,
@@ -1642,23 +1668,34 @@ async fn build_source(
                 .await?;
                 Ok(Box::new(src))
             } else {
-                // v0.15.0: Support raw payload mode (no v:1 envelope).
-                let raw_mode = pipeline
-                    .opt_str(&["source", "payload_mode"])
-                    .map(|m| m == "raw")
-                    .unwrap_or(false);
-                let src = crate::source::outbox::OutboxPollerSource::new_simple_with_mode(
+                let src = crate::source::outbox::OutboxPollerSource::new_simple_native(
                     db,
                     outbox,
-                    format!("outbox_{outbox}"),
                     subject_template,
                     relay_group_id,
                     &pipeline.name,
-                    raw_mode,
                 )
                 .await?;
                 Ok(Box::new(src))
             }
+        }
+
+        // v0.40.0 (ADR-011 §10): Explicit pg_trickle compatibility path. Uses
+        // the legacy dynamic per-outbox relation and v:1 envelope decoding.
+        "pg_trickle_outbox" => {
+            let outbox = pipeline.require_str(&["source", "outbox"])?;
+            let subject_template = pipeline
+                .opt_str(&["source", "subject_template"])
+                .unwrap_or("{stream_table}.{op}");
+            let src = crate::source::outbox::OutboxPollerSource::new_simple_pg_trickle(
+                db,
+                outbox,
+                subject_template,
+                relay_group_id,
+                &pipeline.name,
+            )
+            .await?;
+            Ok(Box::new(src))
         }
 
         "stdin" => {
@@ -1932,58 +1969,18 @@ async fn build_source(
             Ok(src)
         }
 
-        // v0.35.0: Fan-in source type — polls multiple outboxes and commits
-        // offsets for all contributing members in a single UNNEST batch query,
-        // replacing N sequential UPDATE calls with one round-trip per batch.
-        "fanin" => {
-            let fanin_name = pipeline.name.clone();
-            let subject_template = pipeline
-                .opt_str(&["source", "subject_template"])
-                .unwrap_or("{stream_table}.{op}")
-                .to_string();
-            let raw_mode = pipeline
-                .opt_str(&["source", "payload_mode"])
-                .map(|m| m == "raw")
-                .unwrap_or(false);
-
-            // Load contributing outbox names from the catalog.
-            let row = db
-                .query_opt(
-                    "SELECT outbox_names FROM tide.relay_fanin_config WHERE name = $1",
-                    &[&fanin_name],
-                )
-                .await
-                .map_err(|e| RelayError::other(format!("fanin config query error: {e}")))?
-                .ok_or_else(|| RelayError::InvalidConfig {
-                    name: fanin_name.clone(),
-                    reason: format!(
-                        "fan-in pipeline '{}' not found in tide.relay_fanin_config",
-                        fanin_name
-                    ),
-                })?;
-
-            let outbox_names: Vec<String> = row.get(0);
-            if outbox_names.is_empty() {
-                return Err(RelayError::InvalidConfig {
-                    name: fanin_name.clone(),
-                    reason: format!(
-                        "fan-in pipeline '{}' has no outbox_names configured",
-                        fanin_name
-                    ),
-                });
-            }
-
-            let src = crate::source::outbox::FanInSource::new(
-                db,
-                &fanin_name,
-                outbox_names,
-                &subject_template,
-                relay_group_id,
-                raw_mode,
-            )
-            .await?;
-            Ok(Box::new(src))
-        }
+        // v0.40.0 (ADR-011 §12): Fan-in is experimental and quarantined.
+        // The coordinator does not start fan-in workers in the production path.
+        // Catalog rows and offsets are retained for a future release.
+        "fanin" => Err(RelayError::InvalidConfig {
+            name: pipeline.name.clone(),
+            reason: format!(
+                "fan-in pipeline '{}' is experimental and disabled in v0.40.0 \
+                 (ADR-011). Fan-in configs are retained but not runnable; \
+                 fan-in support returns in a later release.",
+                pipeline.name
+            ),
+        }),
 
         // v0.37.0: RockLake reverse relay source.
         // Polls new snapshots from a RockLake PG-wire catalog sidecar.
@@ -2050,11 +2047,13 @@ async fn build_sink(
         #[cfg(feature = "nats")]
         "nats" => {
             let url = pipeline.require_str(&["sink", "url"])?;
-            let subject_template = pipeline
-                .opt_str(&["sink", "subject_template"])
-                .unwrap_or("{stream_table}.{op}");
+            // v0.40.0 (ADR-011 §13): The sink renders the subject from config —
+            // a fixed `subject` or a `subject_template`. When neither is set the
+            // documented default template ({outbox}.{op}) applies.
+            let subject = pipeline.opt_str(&["sink", "subject"]);
+            let subject_template = pipeline.opt_str(&["sink", "subject_template"]);
             Ok(Box::new(
-                crate::sink::nats::NatsSink::new(url, subject_template).await?,
+                crate::sink::nats::NatsSink::new(url, subject, subject_template).await?,
             ))
         }
 

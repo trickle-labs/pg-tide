@@ -9,17 +9,18 @@ Choose Azure Service Bus when your infrastructure runs on Azure, when you need e
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-servicebus',
-    'events',
-    'servicebus-relay',
-    '{
-        "sink_type": "servicebus",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-servicebus',
+    'outbox', 'events',
+    'sink_type', 'servicebus',
+    'config', '{
         "connection_string": "${env:SERVICEBUS_CONNECTION_STRING}",
         "queue_or_topic": "outbox-events",
         "session_id": "{stream_table}",
         "batch_size": 50
     }'::jsonb
+  )
 );
 ```
 

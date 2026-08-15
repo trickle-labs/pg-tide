@@ -142,6 +142,9 @@ impl super::Source for RockLakeSource {
         });
 
         let message = RelayMessage {
+            outbox_name: None,
+            headers: None,
+            created_at: None,
             outbox_id: Some(latest),
             dedup_key: format!("rocklake:snap:{latest}"),
             subject,

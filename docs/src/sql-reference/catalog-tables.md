@@ -29,11 +29,12 @@ Shared message store for all outboxes.
 | `payload` | JSONB | Message body |
 | `headers` | JSONB | Message metadata |
 | `created_at` | TIMESTAMPTZ | Publication time |
-| `consumed_at` | TIMESTAMPTZ | When relay delivered it (NULL = pending) |
+| `consumed_at` | TIMESTAMPTZ | Legacy/global-consumer status; not authoritative for native delivery |
 | `consumer_group` | TEXT | Which group consumed it |
 
 **Indexes:**
 - `idx_tide_outbox_messages_pending` — partial index on `(outbox_name, id) WHERE consumed_at IS NULL`
+- `idx_tide_outbox_messages_poll` — unconditional `(outbox_name, id)` index for native relay polling
 
 ---
 
@@ -128,5 +129,9 @@ Durable per-pipeline offset tracking for the relay binary.
 |--------|------|-------------|
 | `relay_group_id` | TEXT (PK) | Relay deployment group |
 | `pipeline_id` | TEXT (PK) | Pipeline name |
-| `last_offset` | TEXT | Last processed offset |
+| `outbox_name` | TEXT (PK) | Logical outbox scope |
+| `last_change_id` | BIGINT | Highest acknowledged message ID |
 | `updated_at` | TIMESTAMPTZ | Last update timestamp |
+
+The primary key is `(relay_group_id, pipeline_id, outbox_name)`. Offset writes are
+monotonic, so a lower acknowledgment cannot rewind a higher stored value.

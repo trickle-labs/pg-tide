@@ -9,18 +9,19 @@ Choose PagerDuty when critical business events in your PostgreSQL database shoul
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'critical-alerts',
-    'incidents',
-    'pagerduty-relay',
-    '{
-        "sink_type": "pagerduty",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'critical-alerts',
+    'outbox', 'incidents',
+    'sink_type', 'pagerduty',
+    'config', '{
         "routing_key": "${env:PAGERDUTY_ROUTING_KEY}",
         "severity": "critical",
         "source": "pg-tide",
         "component": "payment-service",
         "dedup_key_field": "dedup_key"
     }'::jsonb
+  )
 );
 ```
 
@@ -46,12 +47,24 @@ You can configure separate pipelines for triggering and resolving incidents:
 
 ```sql
 -- Trigger incidents from error events
-SELECT tide.relay_set_outbox('trigger-alerts', 'errors', 'pd-group',
-    '{"sink_type": "pagerduty", "routing_key": "${env:PD_KEY}", "event_action": "trigger"}'::jsonb);
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'trigger-alerts',
+    'outbox', 'errors',
+    'sink_type', 'pagerduty',
+    'config', '{ "routing_key": "${env:PD_KEY}", "event_action": "trigger"}'::jsonb
+  )
+);
 
 -- Resolve incidents from recovery events
-SELECT tide.relay_set_outbox('resolve-alerts', 'recoveries', 'pd-group',
-    '{"sink_type": "pagerduty", "routing_key": "${env:PD_KEY}", "event_action": "resolve"}'::jsonb);
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'resolve-alerts',
+    'outbox', 'recoveries',
+    'sink_type', 'pagerduty',
+    'config', '{ "routing_key": "${env:PD_KEY}", "event_action": "resolve"}'::jsonb
+  )
+);
 ```
 
 ## Troubleshooting

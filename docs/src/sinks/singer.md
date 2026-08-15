@@ -20,12 +20,12 @@ The relay launches a Singer target process and streams messages to it via stdin 
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-amplitude',
-    'analytics_events',
-    'singer-relay',
-    '{
-        "sink_type": "singer",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-amplitude',
+    'outbox', 'analytics_events',
+    'sink_type', 'singer',
+    'config', '{
         "target_command": "target-amplitude",
         "target_config": {
             "api_key": "${env:AMPLITUDE_API_KEY}",
@@ -34,6 +34,7 @@ SELECT tide.relay_set_outbox(
         "on_schema_change": "log",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

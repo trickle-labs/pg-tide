@@ -9,11 +9,12 @@ When publishing to an HTTP webhook endpoint, pg_tide can sign the request body a
 ### Configuration (Outgoing)
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'order-notifications',
-    'order_events',
-    '{
-        "sink_type": "webhook",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'order-notifications',
+    'outbox', 'order_events',
+    'sink_type', 'webhook',
+    'config', '{
         "url": "https://partner.example.com/webhooks/orders",
         "signature": {
             "scheme": "hmac-sha256",
@@ -21,6 +22,7 @@ SELECT tide.relay_set_outbox(
             "header": "X-Signature-256"
         }
     }'::jsonb
+  )
 );
 ```
 
@@ -33,16 +35,18 @@ When receiving webhooks from external services via the [webhook receiver source]
 ### Configuration (Incoming)
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'stripe-events',
-    'payment_inbox',
-    '{
-        "source_type": "webhook",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'stripe-events',
+    'inbox', 'payment_inbox',
+    'source', 'webhook',
+    'config', '{
         "listen_addr": "0.0.0.0:8080",
         "path": "/webhooks/stripe",
         "signature_scheme": "stripe",
         "signature_secret": "${env:STRIPE_WEBHOOK_SECRET}"
     }'::jsonb
+  )
 );
 ```
 

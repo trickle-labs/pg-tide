@@ -5,17 +5,19 @@ The SQS source receives messages from Amazon SQS queues and delivers them into a
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'events-from-sqs',
-    'incoming_events',
-    '{
-        "source_type": "sqs",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'events-from-sqs',
+    'inbox', 'incoming_events',
+    'source', 'sqs',
+    'config', '{
         "queue_url": "${env:SQS_QUEUE_URL}",
         "region": "us-east-1",
         "wait_time_seconds": 20,
         "visibility_timeout": 60,
         "batch_size": 10
     }'::jsonb
+  )
 );
 ```
 

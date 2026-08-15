@@ -431,6 +431,9 @@ mod tests {
 
         let msgs: Vec<RelayMessage> = (1..=3)
             .map(|i| RelayMessage {
+                outbox_name: None,
+                headers: None,
+                created_at: None,
                 subject: "orders".to_string(),
                 op: "insert".to_string(),
                 dedup_key: format!("key-{i}"),
@@ -473,6 +476,9 @@ mod tests {
 
         let msgs: Vec<RelayMessage> = (1..=5)
             .map(|i| RelayMessage {
+                outbox_name: None,
+                headers: None,
+                created_at: None,
                 subject: "orders".to_string(),
                 op: "insert".to_string(),
                 dedup_key: format!("key-{i}"),
@@ -531,6 +537,9 @@ mod tests {
 
         for i in 0..3 {
             sink.buffer.push(RelayMessage {
+                outbox_name: None,
+                headers: None,
+                created_at: None,
                 subject: "s".to_string(),
                 op: "insert".to_string(),
                 dedup_key: format!("k{i}"),

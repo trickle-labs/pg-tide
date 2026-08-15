@@ -24,10 +24,13 @@ The relay listens on the `tide_relay_config` PostgreSQL notification channel. Wh
 
 ```sql
 -- This triggers immediate reload
-SELECT tide.relay_set_outbox(
-    'orders-pipeline',
-    'order_events',
-    '{"sink_type": "kafka", "brokers": "kafka:9092", "topic": "orders"}'::jsonb
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-pipeline',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{ "brokers": "kafka:9092", "topic": "orders"}'::jsonb
+  )
 );
 ```
 

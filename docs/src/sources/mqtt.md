@@ -5,11 +5,12 @@ The MQTT source subscribes to MQTT topics and delivers messages into a pg_tide i
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'telemetry-from-devices',
-    'device_telemetry',
-    '{
-        "source_type": "mqtt",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'telemetry-from-devices',
+    'inbox', 'device_telemetry',
+    'source', 'mqtt',
+    'config', '{
         "url": "mqtts://${env:MQTT_BROKER}:8883",
         "topic": "devices/+/telemetry",
         "qos": 1,
@@ -18,6 +19,7 @@ SELECT tide.relay_set_inbox(
         "password": "${env:MQTT_PASS}",
         "tls_enabled": true
     }'::jsonb
+  )
 );
 ```
 

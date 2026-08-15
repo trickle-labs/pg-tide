@@ -15,28 +15,29 @@ Consider Snowflake or BigQuery if you prefer fully managed cloud services with z
 ### Minimal Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-clickhouse',
-    'events',
-    'clickhouse-relay',
-    '{
-        "sink_type": "clickhouse",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-clickhouse',
+    'outbox', 'events',
+    'sink_type', 'clickhouse',
+    'config', '{
         "url": "http://localhost:8123",
         "database": "analytics",
         "table": "events"
     }'::jsonb
+  )
 );
 ```
 
 ### Production Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-clickhouse',
-    'events',
-    'clickhouse-relay',
-    '{
-        "sink_type": "clickhouse",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-clickhouse',
+    'outbox', 'events',
+    'sink_type', 'clickhouse',
+    'config', '{
         "url": "https://${env:CLICKHOUSE_HOST}:8443",
         "database": "analytics",
         "table": "events",
@@ -45,6 +46,7 @@ SELECT tide.relay_set_outbox(
         "batch_size": 1000,
         "tls_enabled": true
     }'::jsonb
+  )
 );
 ```
 

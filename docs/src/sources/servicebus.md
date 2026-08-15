@@ -5,15 +5,17 @@ The Service Bus source receives messages from Azure Service Bus queues or topic 
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'events-from-servicebus',
-    'incoming_events',
-    '{
-        "source_type": "servicebus",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'events-from-servicebus',
+    'inbox', 'incoming_events',
+    'source', 'servicebus',
+    'config', '{
         "connection_string": "${env:SERVICEBUS_CONNECTION_STRING}",
         "queue_or_subscription": "incoming-events",
         "batch_size": 50
     }'::jsonb
+  )
 );
 ```
 

@@ -5,17 +5,19 @@ The Redis source consumes messages from Redis Streams using consumer groups (XRE
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'events-from-redis',
-    'incoming_events',
-    '{
-        "source_type": "redis",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'events-from-redis',
+    'inbox', 'incoming_events',
+    'source', 'redis',
+    'config', '{
         "url": "redis://localhost:6379",
         "stream_key": "events:orders",
         "group_name": "pg-tide",
         "consumer_name": "relay-01",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

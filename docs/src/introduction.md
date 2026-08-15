@@ -77,8 +77,13 @@ BEGIN;
 COMMIT;
 
 -- Configure a relay pipeline
-SELECT tide.relay_set_outbox('orders-nats', 'orders', 'nats',
-  '{"url": "nats://localhost:4222", "subject": "orders.events"}'::jsonb
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-nats',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', '{"url": "nats://localhost:4222", "subject": "orders.events"}'::jsonb
+  )
 );
 
 -- Start the relay — messages flow automatically

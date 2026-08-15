@@ -5,16 +5,18 @@ The RabbitMQ source consumes messages from RabbitMQ queues and delivers them int
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'events-from-rabbit',
-    'incoming_events',
-    '{
-        "source_type": "rabbitmq",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'events-from-rabbit',
+    'inbox', 'incoming_events',
+    'source', 'rabbitmq',
+    'config', '{
         "url": "amqp://user:pass@rabbitmq:5672/%2f",
         "queue": "pg-tide-events",
         "prefetch_count": 100,
         "auto_ack": false
     }'::jsonb
+  )
 );
 ```
 

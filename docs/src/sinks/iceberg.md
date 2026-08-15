@@ -9,12 +9,12 @@ Choose Apache Iceberg when you want the cost efficiency of object storage with t
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-iceberg',
-    'events',
-    'iceberg-relay',
-    '{
-        "sink_type": "iceberg",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-iceberg',
+    'outbox', 'events',
+    'sink_type', 'iceberg',
+    'config', '{
         "catalog_type": "rest",
         "catalog_uri": "${env:ICEBERG_CATALOG_URI}",
         "warehouse": "s3://my-lake/warehouse",
@@ -22,6 +22,7 @@ SELECT tide.relay_set_outbox(
         "table": "events",
         "batch_size": 1000
     }'::jsonb
+  )
 );
 ```
 

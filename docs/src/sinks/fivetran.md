@@ -9,17 +9,18 @@ Choose the Fivetran sink when your organization uses Fivetran as its primary dat
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-fivetran',
-    'events',
-    'fivetran-relay',
-    '{
-        "sink_type": "fivetran",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-fivetran',
+    'outbox', 'events',
+    'sink_type', 'fivetran',
+    'config', '{
         "endpoint_url": "${env:FIVETRAN_WEBHOOK_URL}",
         "api_key": "${env:FIVETRAN_API_KEY}",
         "api_secret": "${env:FIVETRAN_API_SECRET}",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

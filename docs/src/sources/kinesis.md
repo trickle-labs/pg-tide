@@ -5,16 +5,18 @@ The Kinesis source reads records from Amazon Kinesis Data Streams and delivers t
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'events-from-kinesis',
-    'incoming_events',
-    '{
-        "source_type": "kinesis",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'events-from-kinesis',
+    'inbox', 'incoming_events',
+    'source', 'kinesis',
+    'config', '{
         "stream_name": "external-events",
         "region": "us-east-1",
         "iterator_type": "LATEST",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

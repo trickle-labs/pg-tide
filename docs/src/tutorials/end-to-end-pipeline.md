@@ -47,15 +47,20 @@ SELECT tide.create_consumer_group('kafka-relay', 'orders',
 ### Step 2: Configure the Kafka pipeline
 
 ```sql
-SELECT tide.relay_set_outbox('orders-to-kafka', 'orders', 'kafka',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'brokers', 'localhost:9092',
-    'topic', 'order-events',
-    'acks', 'all',            -- wait for all replicas to acknowledge
-    'compression', 'snappy',  -- good balance of speed and compression ratio
-    'key', '{event_type}'     -- partition by event type for ordering
-  ),
-  p_batch_size := 200  -- Kafka benefits from larger batches
+    'name', 'orders-to-kafka',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', jsonb_build_object(
+      'brokers', 'localhost:9092',
+      'topic', 'order-events',
+      'acks', 'all',            -- wait for all replicas to acknowledge
+      'compression', 'snappy',  -- good balance of speed and compression ratio
+      'key', '{event_type}'     -- partition by event type for ordering
+    ),
+    'batch_size', 200
+  )
 );
 ```
 
@@ -166,15 +171,19 @@ This creates a table `tide."payments_inbox"` with a UNIQUE constraint on `event_
 ### Step 7: Configure the reverse pipeline
 
 ```sql
-SELECT tide.relay_set_inbox('nats-to-payments', 'payments',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'url', 'nats://localhost:4222',
-    'subject', 'payments.confirmed',
-    'queue_group', 'pg-tide-payments'
-  ),
-  p_source := 'nats',
-  p_batch_size := 50,
-  p_idempotent := true
+    'name', 'nats-to-payments',
+    'inbox', 'payments',
+    'source', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://localhost:4222',
+      'subject', 'payments.confirmed',
+      'queue_group', 'pg-tide-payments'
+    ),
+    'batch_size', 50,
+    'idempotent', true
+  )
 );
 ```
 

@@ -34,8 +34,12 @@
 -- The relay's DuckLakeSink::ensure_catalog() will refuse to publish until
 -- tide.ducklake_migrate_catalog() has been run on an existing pre-v0.39.0
 -- catalog, emitting a clear error message.
-
-BEGIN;
+--
+-- v0.40.0: The wrapping top-level BEGIN;/COMMIT; were removed so this script is
+-- valid inside an extension script (CREATE EXTENSION / ALTER EXTENSION UPDATE
+-- run in an implicit transaction, where transaction control statements raise
+-- SQLSTATE 0A000). The migration remains atomic under the extension and the
+-- migration harness.
 
 -- Drop the v0.19.0–v0.20.0 void-returning version of ducklake_migrate_catalog
 -- so we can recreate it with RETURNS TABLE (PostgreSQL does not allow OR REPLACE
@@ -607,5 +611,3 @@ COMMENT ON FUNCTION tide.ducklake_migrate_catalog(TEXT) IS
 'Idempotent one-time migration helper that upgrades an existing DuckLake catalog '
 'schema from the pg-tide pre-v0.39.0 custom format to the real DuckLake v1.0 spec. '
 'Run: SELECT tide.ducklake_migrate_catalog(''ducklake'');';
-
-COMMIT;

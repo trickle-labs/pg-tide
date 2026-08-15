@@ -96,6 +96,9 @@ impl MqttSource {
                         let dedup_key = format!("mqtt:{}:{}", p.topic, uuid::Uuid::new_v4());
 
                         let msg = RelayMessage {
+                            outbox_name: None,
+                            headers: None,
+                            created_at: None,
                             subject: p.topic.clone(),
                             op: "event".to_string(),
                             dedup_key,

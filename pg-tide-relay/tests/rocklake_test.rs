@@ -52,6 +52,9 @@ mod rocklake_integration {
             ack_token: AckToken::OutboxOffset(i as i64),
             is_full_refresh: false,
             refresh_id: None,
+            outbox_name: None,
+            headers: None,
+            created_at: None,
         }
     }
 

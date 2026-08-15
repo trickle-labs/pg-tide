@@ -11,12 +11,12 @@ Choose DuckLake when you want a lightweight lakehouse that integrates naturally 
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-ducklake',
-    'events',
-    'ducklake-relay',
-    '{
-        "sink_type": "ducklake",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-ducklake',
+    'outbox', 'events',
+    'sink_type', 'ducklake',
+    'config', '{
         "catalog_url": "postgresql://localhost:5432/analytics",
         "data_path": "s3://my-lake/ducklake/events",
         "table": "raw_events",
@@ -25,6 +25,7 @@ SELECT tide.relay_set_outbox(
             "AWS_REGION": "us-east-1"
         }
     }'::jsonb
+  )
 );
 ```
 

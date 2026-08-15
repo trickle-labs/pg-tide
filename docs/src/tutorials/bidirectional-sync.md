@@ -52,19 +52,23 @@ SELECT tide.inbox_create('fulfilments');
 
 ```sql
 -- Forward pipeline: outbox → NATS subject "orders.events"
-SELECT tide.relay_set_outbox(
-    'forward-orders',          -- pipeline name
-    'orders',                  -- source outbox
-    'nats',                    -- sink type
-    '{"url":"nats://broker:4222","subject":"orders.events"}'::jsonb
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'forward-orders',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', '{"url":"nats://broker:4222","subject":"orders.events"}'::jsonb
+  )
 );
 
 -- Reverse pipeline: NATS subject "fulfilments.events" → inbox
-SELECT tide.relay_set_inbox(
-    'reverse-fulfilments',     -- pipeline name
-    'nats',                    -- source type
-    'fulfilments',             -- target inbox
-    '{"url":"nats://broker:4222","subject":"fulfilments.events"}'::jsonb
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'reverse-fulfilments',
+    'inbox', 'nats',
+    'source', 'fulfilments',
+    'config', '{"url":"nats://broker:4222","subject":"fulfilments.events"}'::jsonb
+  )
 );
 ```
 

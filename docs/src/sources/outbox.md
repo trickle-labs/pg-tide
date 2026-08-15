@@ -4,31 +4,32 @@ The PostgreSQL Outbox source is the heart of pg_tide's forward pipeline. It poll
 
 ## How It Works
 
-The outbox source uses a combination of polling and PostgreSQL NOTIFY to detect new messages efficiently:
+The native outbox source uses a combination of polling and PostgreSQL NOTIFY to detect new messages efficiently:
 
 1. **Notification-driven wake-up** — When your application publishes a message with `outbox_publish()`, PostgreSQL sends a NOTIFY on the `tide_outbox_notify` channel. The relay, which is LISTENing on this channel, wakes up immediately.
-2. **Batch polling** — The relay queries the outbox table for unacknowledged messages belonging to this pipeline's consumer group, fetching up to `batch_size` messages at a time.
-3. **Offset tracking** — After the sink confirms delivery, the relay commits the consumer group offset, marking those messages as delivered.
-4. **Retention cleanup** — Messages older than the configured `retention_hours` are periodically deleted by background cleanup.
+2. **Batch polling** — The relay queries `tide.tide_outbox_messages` by logical `outbox_name`, fetching up to `batch_size` messages at a time.
+3. **Offset tracking** — After the sink confirms delivery, the relay commits the scoped `(relay_group_id, pipeline_id, outbox_name)` offset.
+4. **Retention cleanup** — Legacy cleanup remains separate from native per-pipeline delivery state.
 
 This hybrid approach means messages are typically delivered within milliseconds of being published (notification-driven), while the polling fallback ensures no messages are missed even if a notification is lost.
 
 ## Configuration
 
-The outbox source is implicitly configured when you create a forward pipeline with `relay_set_outbox()`:
+The outbox source is implicitly configured when you create a forward pipeline with `relay_set_outbox_v2(JSONB)`:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-pipeline',      -- pipeline name
-    'orders',               -- outbox name (this IS the source)
-    'relay-consumer',       -- consumer group name
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-pipeline',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "localhost:9092",
         "topic": "order-events",
         "batch_size": 100,
         "poll_interval_ms": 1000
     }'::jsonb
+  )
 );
 ```
 
@@ -46,11 +47,25 @@ Each forward pipeline uses a consumer group to track its position in the outbox.
 
 ```sql
 -- Two pipelines reading the same outbox independently
-SELECT tide.relay_set_outbox('to-kafka', 'orders', 'kafka-group', '{"sink_type": "kafka", ...}'::jsonb);
-SELECT tide.relay_set_outbox('to-s3', 'orders', 's3-group', '{"sink_type": "object_storage", ...}'::jsonb);
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'to-kafka',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', '{ ...}'::jsonb
+  )
+);
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'to-s3',
+    'outbox', 'orders',
+    'sink_type', 'object_storage',
+    'config', '{ ...}'::jsonb
+  )
+);
 ```
 
-Each consumer group maintains its own offset, so Kafka delivery and S3 archival proceed independently without affecting each other.
+Each pipeline maintains its own scoped offset, so Kafka delivery and S3 archival proceed independently without affecting each other.
 
 ## Troubleshooting
 

@@ -43,17 +43,19 @@ emit_tombstones = true
 Or via SQL:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-pipeline',
-    'order_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-pipeline',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{
         "wire_format": "debezium",
         "wire_config": {
             "server_name": "production",
             "emit_tombstones": true
         }
     }'::jsonb
+  )
 );
 ```
 

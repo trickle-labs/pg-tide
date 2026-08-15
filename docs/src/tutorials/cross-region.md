@@ -41,32 +41,36 @@ SELECT tide.inbox_create('replicated_orders');
 Publish pipeline (US → NATS):
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'us-orders-publish',
-    'order_events',
-    '{
-        "sink_type": "nats",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'us-orders-publish',
+    'outbox', 'order_events',
+    'sink_type', 'nats',
+    'config', '{
         "url": "nats://nats-us:4222",
         "subject_template": "orders.{op}.us-east",
         "stream": "ORDERS"
     }'::jsonb
+  )
 );
 ```
 
 Subscribe pipeline (NATS → US inbox, for EU-originated events):
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'eu-orders-subscribe',
-    'replicated_orders',
-    '{
-        "source_type": "nats",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'eu-orders-subscribe',
+    'inbox', 'replicated_orders',
+    'source', 'nats',
+    'config', '{
         "url": "nats://nats-us:4222",
         "subject": "orders.*.eu-west",
         "stream": "ORDERS",
         "consumer_group": "us-east-replica",
         "durable_name": "us-east-replica"
     }'::jsonb
+  )
 );
 ```
 
@@ -82,32 +86,36 @@ SELECT tide.inbox_create('replicated_orders');
 Publish pipeline (EU → NATS):
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'eu-orders-publish',
-    'order_events',
-    '{
-        "sink_type": "nats",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'eu-orders-publish',
+    'outbox', 'order_events',
+    'sink_type', 'nats',
+    'config', '{
         "url": "nats://nats-eu:4222",
         "subject_template": "orders.{op}.eu-west",
         "stream": "ORDERS"
     }'::jsonb
+  )
 );
 ```
 
 Subscribe pipeline (NATS → EU inbox, for US-originated events):
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'us-orders-subscribe',
-    'replicated_orders',
-    '{
-        "source_type": "nats",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'us-orders-subscribe',
+    'inbox', 'replicated_orders',
+    'source', 'nats',
+    'config', '{
         "url": "nats://nats-eu:4222",
         "subject": "orders.*.us-east",
         "stream": "ORDERS",
         "consumer_group": "eu-west-replica",
         "durable_name": "eu-west-replica"
     }'::jsonb
+  )
 );
 ```
 

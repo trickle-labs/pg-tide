@@ -11,10 +11,37 @@ use pgrx::prelude::*;
 
 // ── TIDE-API: relay_fanin_enable / relay_fanin_disable ────────────────────
 
-/// Enable a fan-in pipeline (set enabled = TRUE).
+/// Enable a fan-in pipeline.
+///
+/// v0.40.0 (ADR-011 §12): Fan-in is experimental and disabled. Enabling always
+/// returns an error so an enabled fan-in pipeline is never presented as
+/// runnable. Fan-in configs remain in the catalog for a future release.
 #[pg_extern(schema = "tide")]
 pub fn relay_fanin_enable(p_name: &str) {
-    relay_fanin_set_enabled_impl(p_name, true).unwrap_or_else(|e| pgrx::error!("{}", e))
+    relay_fanin_enable_impl(p_name).unwrap_or_else(|e| pgrx::error!("{}", e))
+}
+
+fn relay_fanin_enable_impl(name: &str) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(name)?;
+    // Verify the pipeline exists so the caller gets an accurate error, but never
+    // set enabled = TRUE while fan-in is quarantined.
+    let exists: bool = Spi::get_one_with_args::<bool>(
+        "SELECT EXISTS(SELECT 1 FROM tide.relay_fanin_config WHERE name = $1)",
+        &[name.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("relay_fanin_enable lookup: {e}")))?
+    .unwrap_or(false);
+    if !exists {
+        return Err(PgTideError::InvalidArgument(format!(
+            "fan-in pipeline '{}' not found",
+            name
+        )));
+    }
+    Err(PgTideError::InvalidArgument(format!(
+        "fan-in pipeline '{}' cannot be enabled: fan-in is experimental and \
+         disabled in v0.40.0 (ADR-011). The config is retained for a future release.",
+        name
+    )))
 }
 
 /// Disable a fan-in pipeline (set enabled = FALSE).
@@ -131,7 +158,7 @@ mod tests {
     }
 
     #[pg_test]
-    fn test_relay_fanin_enable_disable() {
+    fn test_relay_fanin_enable_disabled_quarantine() {
         setup_outbox("fanin-src-1");
         setup_outbox("fanin-src-2");
 
@@ -147,6 +174,7 @@ mod tests {
         )
         .unwrap();
 
+        // Disable still works.
         crate::fanin::relay_fanin_disable("test-fanin-ed");
         let enabled: bool = Spi::get_one(
             "SELECT enabled FROM tide.relay_fanin_config WHERE name = 'test-fanin-ed'",
@@ -155,13 +183,22 @@ mod tests {
         .unwrap_or(true);
         assert!(!enabled, "fan-in should be disabled");
 
-        crate::fanin::relay_fanin_enable("test-fanin-ed");
-        let enabled2: bool = Spi::get_one(
-            "SELECT enabled FROM tide.relay_fanin_config WHERE name = 'test-fanin-ed'",
+        // v0.40.0: Enabling is quarantined — it must fail and must NOT flip
+        // enabled to TRUE.
+        let result = crate::fanin::relay_fanin_enable_impl("test-fanin-ed");
+        assert!(
+            result.is_err(),
+            "enabling fan-in must fail while quarantined in v0.40.0"
+        );
+        let still_disabled: bool = Spi::get_one(
+            "SELECT NOT enabled FROM tide.relay_fanin_config WHERE name = 'test-fanin-ed'",
         )
         .unwrap()
         .unwrap_or(false);
-        assert!(enabled2, "fan-in should be re-enabled");
+        assert!(
+            still_disabled,
+            "fan-in must remain disabled after a rejected enable"
+        );
     }
 
     #[pg_test]
@@ -188,7 +225,7 @@ mod tests {
 
     #[pg_test]
     fn test_relay_fanin_enable_unknown_errors() {
-        let result = crate::fanin::relay_fanin_set_enabled_impl("no-such-fanin", true);
+        let result = crate::fanin::relay_fanin_enable_impl("no-such-fanin");
         assert!(result.is_err(), "enabling nonexistent fan-in must fail");
     }
 }

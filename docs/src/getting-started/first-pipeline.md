@@ -1,6 +1,6 @@
 # Your First Pipeline
 
-This guide walks you through setting up pg_tide from scratch and building a complete message pipeline. By the end, you'll have an outbox publishing order events and a relay delivering them to NATS — with monitoring, consumer tracking, and exactly-once delivery all working together.
+This guide walks you through setting up pg_tide from scratch and building a complete message pipeline. By the end, you'll have an outbox publishing order events and a relay delivering them to NATS JetStream — with monitoring, per-pipeline offset tracking, and at-least-once delivery (with stable deduplication identities) all working together.
 
 We'll go step by step, explaining what's happening at each stage so you understand not just *what* to do, but *why* each piece matters.
 
@@ -63,21 +63,23 @@ psql "postgres://postgres:postgres@localhost:5432/app"
 
 The pg_tide extension creates the `tide` schema with all the catalog tables, views, and functions you'll need:
 
+<!-- quickstart:run -->
 ```sql
-CREATE EXTENSION pg_tide;
+CREATE EXTENSION IF NOT EXISTS pg_tide;
 ```
 
 Let's verify it's installed correctly:
 
+<!-- quickstart:run -->
 ```sql
 SELECT extname, extversion FROM pg_extension WHERE extname = 'pg_tide';
 ```
 
-The output shows the current installed version, e.g.:
+The output shows the current installed version:
 ```
  extname | extversion
----------+------------
- pg_tide | 0.27.0
+---------+-------------------
+ pg_tide | <installed-version>
 ```
 
 Behind the scenes, this created:
@@ -95,8 +97,9 @@ An outbox is a named message stream. You might have one outbox for order events,
 
 Let's create an outbox for order events:
 
+<!-- quickstart:run -->
 ```sql
-SELECT tide.outbox_create('orders',
+SELECT tide.outbox_create_if_not_exists('orders',
   p_retention_hours := 48,
   p_inline_threshold := 10000
 );
@@ -200,9 +203,11 @@ This returns a JSONB object with comprehensive information about the outbox's cu
 
 ---
 
-## Step 5: Create a Consumer Group
+## Step 5: (Optional) Create a Consumer Group
 
-Before the relay can start delivering messages, it needs a consumer group to track its progress:
+The native relay tracks its own durable offset per relay group, pipeline, and outbox, so it does **not** require a consumer group. Consumer groups remain available as a legacy/global-consumer surface (for example, for SQL-side `tide.poll_outbox()` consumers). You can skip to Step 6 for the native pipeline.
+
+If you do want a consumer group, create one like this:
 
 ```sql
 SELECT tide.create_consumer_group('nats-relay', 'orders',
@@ -210,27 +215,30 @@ SELECT tide.create_consumer_group('nats-relay', 'orders',
 );
 ```
 
-We're using `'earliest'` because we want the relay to process all existing messages, including the three we just published. If we used `'latest'`, it would skip those and only process future messages.
+`'earliest'` processes all existing messages; `'latest'` skips to only future messages.
 
 ---
 
 ## Step 6: Configure the Relay Pipeline
 
-Now we tell pg_tide how to deliver messages from the `orders` outbox to NATS:
+Now we tell pg_tide how to deliver messages from the `orders` outbox to NATS. The native relay polls the shared `tide.tide_outbox_messages` table directly and tracks a durable offset per relay group, pipeline, and outbox (ADR-011) — no consumer group is required:
 
+<!-- quickstart:run -->
 ```sql
-SELECT tide.relay_set_outbox(
-  'orders-to-nats',        -- pipeline name (unique identifier)
-  'orders',                -- source outbox
-  'nats',                  -- sink type
-  jsonb_build_object(      -- sink-specific configuration
-    'url', 'nats://localhost:4222',
-    'subject', 'orders.{event_type}'
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-nats',       -- pipeline name (unique identifier)
+    'outbox', 'orders',             -- source outbox
+    'sink_type', 'nats',            -- sink type
+    'config', jsonb_build_object(   -- sink-specific configuration
+      'url', 'nats://localhost:4222',
+      'subject_template', 'orders.{event_type}'
+    )
   )
 );
 ```
 
-Notice the **subject template**: `'orders.{event_type}'`. The relay will substitute `{event_type}` with the value from the message headers. Our messages have `"event_type": "order.confirmed"`, so they'll be published to the NATS subject `orders.order.confirmed`.
+Notice the **subject template**: `'orders.{event_type}'`. The NATS sink substitutes `{event_type}` with the value from the message's `event_type` header (a missing or non-string header falls back to the literal `event`). Our messages have `"event_type": "order.confirmed"`, so they'll be published to the NATS subject `orders.order.confirmed`.
 
 This is powerful — different event types from the same outbox can be routed to different NATS subjects without any relay-side logic.
 
@@ -247,7 +255,7 @@ pg-tide --postgres-url "postgres://postgres:postgres@localhost:5432/app"
 You'll see log output like:
 
 ```
-INFO  pg_tide_relay: Starting pg-tide relay v0.27.0
+INFO  pg_tide_relay: Starting pg-tide relay v<installed-version>
 INFO  pg_tide_relay: Connected to PostgreSQL
 INFO  pg_tide_relay: Discovered pipeline: orders-to-nats (forward, nats)
 INFO  pg_tide_relay: Acquired advisory lock for pipeline: orders-to-nats
@@ -386,7 +394,7 @@ This is the foundational pattern. From here, you can:
 
 ## Next Steps
 
-- [Concepts: Message Guarantees →](../concepts/message-guarantees.md) — understand exactly-once delivery in depth
+- [Concepts: Message Guarantees →](../concepts/message-guarantees.md) — understand at-least-once delivery and application-level deduplication in depth
 - [Concepts: Consumption and Relay →](../concepts/consumption-and-relay.md) — deep dive into consumer groups and pipeline mechanics
 - [Relay Guide: Backends →](../relay-guide/backends.md) — configure NATS, Kafka, Redis, and more
 - [Tutorial: End-to-End Pipeline →](../tutorials/end-to-end-pipeline.md) — build a forward + reverse pipeline with Kafka
