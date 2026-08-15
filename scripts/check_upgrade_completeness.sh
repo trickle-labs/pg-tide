@@ -45,7 +45,7 @@ for ((i = 0; i < ${#VERSIONS[@]} - 1; i++)); do
 done
 
 # Assert the chain reaches the current workspace version.
-WORKSPACE_VERSION="$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
+WORKSPACE_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/p' Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')"
 LAST_VERSION="${VERSIONS[${#VERSIONS[@]} - 1]}"
 echo "Workspace version: $WORKSPACE_VERSION ; last base version: $LAST_VERSION"
 if [[ "$LAST_VERSION" != "$WORKSPACE_VERSION" ]]; then
