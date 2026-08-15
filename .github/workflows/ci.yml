@@ -486,7 +486,11 @@ jobs:
       - name: Start PostgreSQL 18 and create a test database
         run: |
           sudo service postgresql stop || true
-          sudo pg_createcluster 18 main --start
+          while read -r version name _; do
+            sudo pg_ctlcluster "$version" "$name" stop || true
+          done < <(sudo pg_lsclusters --no-header)
+          sudo pg_dropcluster --stop 18 main || true
+          sudo pg_createcluster 18 main --start --port=5432
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           sudo -u postgres createdb pgtide_e2e
 
@@ -548,7 +552,11 @@ jobs:
           PGURL: "postgres://postgres:postgres@127.0.0.1:5432/postgres"
         run: |
           sudo service postgresql stop || true
-          sudo pg_createcluster 18 main --start
+          while read -r version name _; do
+            sudo pg_ctlcluster "$version" "$name" stop || true
+          done < <(sudo pg_lsclusters --no-header)
+          sudo pg_dropcluster --stop 18 main || true
+          sudo pg_createcluster 18 main --start --port=5432
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           python3 scripts/run_quickstart_sql.py \
             README.md docs/src/getting-started/first-pipeline.md
@@ -624,7 +632,11 @@ jobs:
       - name: Compare real fresh-install vs upgrade schema
         run: |
           sudo service postgresql stop || true
-          sudo pg_createcluster 18 main --start
+          while read -r version name _; do
+            sudo pg_ctlcluster "$version" "$name" stop || true
+          done < <(sudo pg_lsclusters --no-header)
+          sudo pg_dropcluster --stop 18 main || true
+          sudo pg_createcluster 18 main --start --port=5432
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           export PGPASSWORD=postgres
           # Fresh install directly at the current version.
