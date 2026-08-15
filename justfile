@@ -12,7 +12,7 @@ fmt:
 # Run clippy (must pass with zero warnings)
 # pg-tide-ext (pgrx) needs cargo-pgrx + PostgreSQL 18; relay is pure Rust.
 lint:
-    cargo clippy --package pg-tide-relay --all-targets --all-features -- -D warnings
+    cargo clippy --package pg-tide-relay --all-targets --no-default-features --features core -- -D warnings
     cargo fmt --all -- --check
 
 # v0.26.0: Guard against bare expect() in production (non-test) relay code.
@@ -175,7 +175,7 @@ test-all: test-unit test-integration
 
 # Build the relay binary
 build-relay:
-    cargo build --package {{PG_TIDE_RELAY}} --release
+    cargo build --package {{PG_TIDE_RELAY}} --release --no-default-features --features core
 
 # Build all
 build:

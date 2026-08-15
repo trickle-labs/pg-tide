@@ -14,17 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # v0.38.0: Checkout rocklake at the sibling path expected by the path
-      # dependency in pg-tide-relay/Cargo.toml (../../rocklake2).
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -43,22 +32,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (relay — no PostgreSQL required)
-        run: cargo clippy --package pg-tide-relay --all-targets --all-features -- -D warnings
+        run: cargo clippy --package pg-tide-relay --all-targets --no-default-features --features core -- -D warnings
 
   lint-ext:
     name: Clippy (pg-tide-ext)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -106,15 +86,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -137,21 +108,10 @@ jobs:
         run: cargo test --package pg-tide-relay --bins -- --test-threads=4
 
   test-integration:
-    name: Relay Integration Tests
+    name: Relay Experimental-full Integration Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      # v0.38.0: Checkout rocklake at the sibling path expected by the path
-      # dependency in pg-tide-relay/Cargo.toml (../../rocklake2).
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Free disk space for integration tests
         run: |
@@ -175,7 +135,7 @@ jobs:
           key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run integration tests (testcontainers)
-        run: cargo test --package pg-tide-relay --test '*' --all-features -- --test-threads=1
+        run: cargo test --package pg-tide-relay --test '*' --no-default-features --features experimental-full -- --test-threads=1
 
   # v0.16.0: Additional parallel integration test job groups by backend category.
   # Splits the 40+ test files into groups to reduce CI wall-clock time.
@@ -184,15 +144,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -228,16 +179,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Checkout rocklake at the sibling path expected by the path dependency.
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -261,15 +202,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -295,15 +227,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -325,15 +248,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -368,15 +282,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -431,15 +336,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -509,15 +405,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -569,15 +456,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -602,9 +480,6 @@ jobs:
         run: |
           cargo install cargo-pgrx --version "=0.18.0" --locked
           cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
-
-      - name: Provide historical RockLake dependency path
-        run: ln -s "$(dirname "$GITHUB_WORKSPACE")/rocklake2" "$GITHUB_WORKSPACE/rocklake2"
 
       - name: Install packaged v0.39.0 extension
         run: |
@@ -694,15 +569,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -960,15 +826,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
 
       - name: Install Rust nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
