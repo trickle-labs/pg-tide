@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.41.0 — Focused Release Metadata](#0410--focused-release-metadata)
 - [0.40.0 — One Real Pipeline: Native Outbox → NATS JetStream](#0400--one-real-pipeline-native-outbox--nats-jetstream)
 - [0.38.0 — RockLake Native Ingestion, Phase 6 Integration Testing & Phase 7 Production Hardening](#0380--rocklake-native-ingestion-phase-6-integration-testing--phase-7-production-hardening)
 - [0.37.0 — CloudNativePG Image Volume Extensions & RockLake Integration Phases 0–5](#0370--cloudnativepg-image-volume-extensions--rocklake-integration-phases-05)
@@ -47,6 +48,14 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.41.0] — Focused Release Metadata
+
+- Bumped coordinated extension, package, and Helm metadata to `0.41.0`.
+- Added the `0.40.0 → 0.41.0` comment-only migration; user data and catalog
+  objects are unchanged.
 
 ---
 
