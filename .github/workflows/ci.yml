@@ -653,7 +653,12 @@ jobs:
           # Normalized schema comparison.
           for db in fresh40 upgrade40; do
             pg_dump -h 127.0.0.1 -U postgres -d "$db" --schema-only --schema=tide \
-              --no-owner --no-privileges | grep -v '^--' | grep -v '^$' | sort > "/dev/shm/${db}.sql"
+              --no-owner --no-privileges \
+              | grep -v '^--' \
+              | grep -v '^$' \
+              | grep -v '^\\restrict ' \
+              | grep -v '^\\unrestrict ' \
+              | sort > "/dev/shm/${db}.sql"
           done
           if diff --ignore-space-change /dev/shm/fresh40.sql /dev/shm/upgrade40.sql; then
             echo "OK: real fresh install and 0.39.0 -> 0.40.0 upgrade produce identical tide schemas."
