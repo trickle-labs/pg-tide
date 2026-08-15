@@ -485,7 +485,7 @@ jobs:
 
       - name: Start PostgreSQL 18 and create a test database
         run: |
-          sudo systemctl start postgresql@18-main || sudo pg_ctlcluster 18 main start
+          sudo pg_ctlcluster 18 main start || sudo pg_createcluster 18 main --start
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           sudo -u postgres createdb pgtide_e2e
 
@@ -546,7 +546,7 @@ jobs:
         env:
           PGURL: "postgres://postgres:postgres@127.0.0.1:5432/postgres"
         run: |
-          sudo systemctl start postgresql@18-main || sudo pg_ctlcluster 18 main start
+          sudo pg_ctlcluster 18 main start || sudo pg_createcluster 18 main --start
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           python3 scripts/run_quickstart_sql.py \
             README.md docs/src/getting-started/first-pipeline.md
@@ -593,6 +593,9 @@ jobs:
           cargo install cargo-pgrx --version "=0.18.0" --locked
           cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
 
+      - name: Provide historical RockLake dependency path
+        run: ln -s "$(dirname "$GITHUB_WORKSPACE")/rocklake2" "$GITHUB_WORKSPACE/rocklake2"
+
       - name: Install packaged v0.39.0 extension
         run: |
           git clone --depth 1 --branch v0.39.0 \
@@ -615,7 +618,7 @@ jobs:
 
       - name: Compare real fresh-install vs upgrade schema
         run: |
-          sudo systemctl start postgresql@18-main || sudo pg_ctlcluster 18 main start
+          sudo pg_ctlcluster 18 main start || sudo pg_createcluster 18 main --start
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           export PGPASSWORD=postgres
           # Fresh install directly at the current version.
