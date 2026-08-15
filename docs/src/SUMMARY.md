@@ -209,4 +209,13 @@
 
 ---
 
+# Support
+
+- [Support Policy](support/support-policy.md)
+- [Production-Supported Definition](support/production-supported.md)
+- [Test Levels](support/test-levels.md)
+- [PostgreSQL 17 Feasibility](support/postgresql-17-feasibility.md)
+
+---
+
 [Glossary](glossary.md)
