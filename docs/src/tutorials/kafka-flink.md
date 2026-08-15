@@ -10,7 +10,7 @@ PostgreSQL (orders)  →  pg_tide  →  Kafka  →  Flink SQL  →  Kafka (resul
 
 ## Prerequisites
 
-- PostgreSQL 14+ with pg_tide extension installed
+- PostgreSQL 18 with pg_tide extension installed
 - pg-tide relay binary
 - Apache Kafka (or Redpanda)
 - Apache Flink 1.17+ with SQL Gateway

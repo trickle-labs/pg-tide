@@ -9,7 +9,7 @@
 /// no `RETURNING`, no `pg_notify()`.  This sink is designed specifically for
 /// that subset.
 ///
-/// ## Design (from `plans/ecosystem/rocklake.md`)
+/// ## Design (from `docs/archive/plans/rocklake.md`)
 ///
 /// ### Phase 0 — Wire corpus
 /// All SQL emitted by this sink was captured to

@@ -2,7 +2,7 @@
 
 When you publish a message to a pg_tide outbox, that message sits safely in your PostgreSQL database, waiting to be delivered somewhere useful. A **sink** is the destination where the pg_tide relay delivers those messages. Think of it like a postal service: your application drops a letter (message) into a mailbox (outbox), and the postal carrier (relay) delivers it to the recipient's address (sink).
 
-pg_tide supports 30 different sinks, covering everything from traditional message queues like Apache Kafka and RabbitMQ, to cloud services like Amazon SQS and Google Cloud Pub/Sub, to modern data lakes like Apache Iceberg and Delta Lake, to notification services like Slack and PagerDuty. No matter where your messages need to go, there is likely a sink that fits your needs.
+The current sink surface is intentionally narrow and evidence-based. See the [generated connector compatibility matrix](../support/connector-compatibility.md) for maturity, build profiles, tested versions, and evidence before choosing a sink.
 
 ## Choosing the Right Sink
 
@@ -61,7 +61,6 @@ These sinks integrate with established connector frameworks, giving you access t
 |------|----------|---------------|
 | [Singer / Meltano](singer.md) | Open-source ETL, Meltano Hub targets | ~500 targets |
 | [Airbyte](airbyte.md) | Managed data integration, destination connectors | ~400 connectors |
-| [Fivetran HVR](fivetran.md) | Enterprise data integration, HVR endpoint | Fivetran ecosystem |
 
 ### Infrastructure
 

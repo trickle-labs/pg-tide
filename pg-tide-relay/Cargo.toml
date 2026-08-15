@@ -18,15 +18,7 @@ path = "src/main.rs"
 default = ["core"]
 core = ["nats", "stdout"]
 core-kafka = ["core", "kafka"]
-experimental-full = [
-    "nats", "webhook", "kafka", "stdout", "redis", "sqs",
-    "rabbitmq", "native-tls", "elasticsearch", "pubsub", "kinesis", "servicebus",
-    "mqtt", "eventhubs", "object-storage", "schema-registry", "otel", "slack",
-    "discord", "pagerduty", "arrow-flight", "singer", "airbyte", "clickhouse",
-    "mongodb", "snowflake", "bigquery", "iceberg", "delta", "ducklake", "rocklake",
-    "debezium", "maxwell", "canal", "cdc-json", "wal-source", "kms", "kms-aws",
-    "kms-gcp", "kms-vault", "kms-local",
-]
+experimental-full = ["airbyte", "arrow-flight", "bigquery", "canal", "cdc-json", "clickhouse", "debezium", "delta", "discord", "ducklake", "elasticsearch", "eventhubs", "iceberg", "kafka", "kinesis", "kms", "kms-aws", "kms-gcp", "kms-local", "kms-vault", "maxwell", "mongodb", "mqtt", "native-tls", "nats", "object-storage", "otel", "pagerduty", "pubsub", "rabbitmq", "redis", "rocklake", "schema-registry", "servicebus", "singer", "slack", "snowflake", "sqs", "stdout", "wal-source", "webhook"]
 # END GENERATED CONNECTOR PROFILES
 
 # Optional backends (each adds a Cargo dependency)

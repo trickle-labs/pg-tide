@@ -3,7 +3,7 @@
 /// `RockLakeSink` (RockLake PG-wire sidecar).
 ///
 /// Extracted in v0.37.0 as part of the RockLake Integration Phases 0–1
-/// scaffold described in [plans/ecosystem/rocklake.md].
+/// scaffold described in [docs/archive/plans/rocklake.md].
 ///
 /// v0.39.0: Added `IdState` struct for DuckLake v1.0 spec-compliant
 /// snapshot ID allocation (in-process counter replacing

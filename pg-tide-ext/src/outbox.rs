@@ -1,7 +1,7 @@
 //! Transactional Outbox API for pg_tide.
 //!
 //! Provides the `tide.*` outbox functions extracted from pg_trickle v0.46.0.
-//! Works with any PostgreSQL 18+ database — pg_trickle is NOT required.
+//! Works with PostgreSQL 18 — pg_trickle is NOT required.
 //!
 //! # Outbox Table Layout
 //!

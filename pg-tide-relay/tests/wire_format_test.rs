@@ -1,6 +1,6 @@
 //! Integration tests: Pluggable wire formats (v0.11.0).
 //!
-//! Tests the `WireFormat` abstraction end-to-end: the `WireFormat` trait,
+//! Contract and round-trip tests for the `WireFormat` abstraction: the `WireFormat` trait,
 //! the `NativePgTideFormat`, `DebeziumFormat`, and the optional Maxwell,
 //! Canal, and custom CDC JSON formats.
 //!

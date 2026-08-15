@@ -1,10 +1,9 @@
 /// Sustained-throughput load test.
 ///
-/// Publishes 50 000 messages across 10 concurrent outboxes using an in-memory
-/// stdout sink and measures end-to-end throughput.
+/// Inserts 50 000 messages across 10 concurrent PostgreSQL outboxes.
 ///
 /// Asserts: throughput ≥ 10 000 messages / second on the CI runner.
-/// Records results in `pg-tide-relay/benches/baseline.json` for regression tracking.
+/// Does not write into the checkout; CI enforces the single threshold below.
 mod common;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,7 +40,7 @@ async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
 }
 
 #[tokio::test]
-async fn test_sustained_throughput_50k_messages() {
+async fn test_postgresql_insert_load_50k_messages() {
     use testcontainers::{runners::AsyncRunner, ImageExt};
     use testcontainers_modules::postgres::Postgres;
 
@@ -135,26 +134,6 @@ async fn test_sustained_throughput_50k_messages() {
         elapsed.as_secs_f64(),
         throughput
     );
-
-    // Record baseline results.
-    let baseline = serde_json::json!({
-        "total_messages": inserted,
-        "elapsed_secs": elapsed.as_secs_f64(),
-        "throughput_msg_per_sec": throughput,
-        "min_required_msg_per_sec": MIN_THROUGHPUT_MSG_PER_SEC,
-        "passed": throughput >= MIN_THROUGHPUT_MSG_PER_SEC
-    });
-
-    // Write baseline.json for regression tracking.
-    let baseline_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("benches")
-        .join("baseline.json");
-    if let Err(e) = std::fs::write(
-        &baseline_path,
-        serde_json::to_string_pretty(&baseline).unwrap(),
-    ) {
-        eprintln!("Warning: failed to write baseline.json: {e}");
-    }
 
     assert_eq!(inserted, TOTAL_MESSAGES, "all messages must be inserted");
     assert!(

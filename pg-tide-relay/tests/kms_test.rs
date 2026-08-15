@@ -11,7 +11,7 @@
 // No PostgreSQL container is required — the tests operate on the encryption
 // library directly.
 //
-// CI runs with `--all-features`, so both `kms-local` and `kms-gcp` tests are
+// CI runs with `experimental-full`, so both `kms-local` and `kms-gcp` tests are
 // always exercised there.
 
 // ── LocalKeyFile key rotation integration tests ───────────────────────────────

@@ -1,6 +1,6 @@
 //! Integration tests: Object Storage sink (v0.6.0).
 //!
-//! These tests verify the relay's database-side guarantees and S3 end-to-end
+//! These tests verify the relay's database-side guarantees and S3 transport
 //! behavior (via LocalStack). JSONL and Parquet encoding are tested by unit
 //! tests within `src/sink/object_storage.rs`.
 //!
@@ -131,13 +131,13 @@ async fn test_object_storage_azure_blob_queues_messages() {
     );
 }
 
-/// End-to-end S3 test using LocalStack.
+/// Transport integration S3 test using LocalStack.
 ///
 /// Uses the `object_store` crate directly to write a JSONL file and verifies
 /// the file was created with the correct content — testing the same code path
 /// the relay uses internally.
 #[tokio::test]
-async fn test_object_storage_s3_end_to_end_jsonl() {
+async fn test_object_storage_s3_transport_integration_jsonl() {
     use testcontainers::{core::WaitFor, runners::AsyncRunner, ImageExt};
 
     let localstack = testcontainers::GenericImage::new("localstack/localstack", "3")

@@ -1,7 +1,7 @@
 //! pg_tide — Transactional Outbox, Idempotent Inbox & Relay Catalog
 //!
 //! Extracted from pg_trickle v0.46.0 into a standalone extension.
-//! Works with any PostgreSQL 18+ database — pg_trickle is NOT required.
+//! Works with PostgreSQL 18 — pg_trickle is NOT required.
 //!
 //! Schema: `tide`
 //! Catalog: `tide.tide_outbox_config`, `tide.tide_inbox_config`,

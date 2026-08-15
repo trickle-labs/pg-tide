@@ -11,8 +11,17 @@ permissions:
   id-token: write
 
 jobs:
+  connector-registry:
+    name: Check connector registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check generated connector surface
+        run: python3 scripts/generate_connector_surface.py --check
+
   build:
     name: Build relay (${{ matrix.target }})
+    needs: connector-registry
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:

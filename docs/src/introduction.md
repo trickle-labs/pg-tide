@@ -1,6 +1,6 @@
 # pg_tide
 
-**Transactional outbox, idempotent inbox, and relay pipelines for PostgreSQL 18+.**
+**Transactional outbox, idempotent inbox, and relay pipelines for PostgreSQL 18.**
 
 pg_tide gives your PostgreSQL database a built-in messaging backbone. Publish events within your existing transactions — no dual-writes, no distributed transactions, no message brokers required at the database layer.
 
@@ -22,7 +22,7 @@ pg_tide eliminates this entire class of bugs by implementing the **transactional
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    PostgreSQL 18+                             │
+│                    PostgreSQL 18                              │
 │                                                              │
 │  Your Application                                            │
 │       │                                                      │

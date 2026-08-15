@@ -10,7 +10,7 @@ We'll go step by step, explaining what's happening at each stage so you understa
 
 Before starting, make sure you have:
 
-- **PostgreSQL 18+** running and accessible (local or remote)
+- **PostgreSQL 18** running and accessible (local or remote)
 - **NATS server** running locally (we'll use this as our message sink)
 - **pg-tide relay** binary installed (see [Installation](installation.md))
 

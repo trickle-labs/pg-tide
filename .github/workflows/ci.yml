@@ -8,6 +8,29 @@ on:
   workflow_dispatch:
 
 jobs:
+  connector-registry:
+    name: Connector registry and generated output
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check connector registry
+        run: python3 scripts/generate_connector_surface.py --check
+
+  clean-checkout:
+    name: Clean checkout workspace build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Assert no sibling RockLake checkout
+        run: test ! -e ../rocklake2
+      - name: Build and test the workspace
+        run: |
+          cargo build --workspace --locked
+          cargo test --workspace --locked
+          cargo package --package pg-tide-relay --locked --allow-dirty
+
   lint:
     name: Format + Clippy
     runs-on: ubuntu-latest
@@ -32,7 +55,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (relay — no PostgreSQL required)
-        run: cargo clippy --package pg-tide-relay --all-targets --no-default-features --features core -- -D warnings
+        run: cargo clippy --package pg-tide-relay --all-targets --no-default-features --features experimental-full -- -D warnings
 
   lint-ext:
     name: Clippy (pg-tide-ext)

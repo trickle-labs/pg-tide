@@ -78,7 +78,6 @@
 - [PagerDuty](sinks/pagerduty.md)
 - [Singer Target](sinks/singer.md)
 - [Airbyte Destination](sinks/airbyte.md)
-- [Fivetran Destination](sinks/fivetran.md)
 - [PostgreSQL Inbox](sinks/pg-inbox.md)
 - [PostgreSQL Outbox](sinks/pg-outbox.md)
 - [stdout](sinks/stdout.md)
@@ -135,7 +134,6 @@
 - [Grafana Dashboards](features/dashboards.md)
 - [Singer Protocol](features/singer-protocol.md)
 - [Airbyte Protocol](features/airbyte-protocol.md)
-- [Fivetran Support](features/fivetran.md)
 
 ---
 

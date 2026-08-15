@@ -12,7 +12,7 @@ fmt:
 # Run clippy (must pass with zero warnings)
 # pg-tide-ext (pgrx) needs cargo-pgrx + PostgreSQL 18; relay is pure Rust.
 lint:
-    cargo clippy --package pg-tide-relay --all-targets --no-default-features --features core -- -D warnings
+    cargo clippy --package pg-tide-relay --all-targets --no-default-features --features experimental-full -- -D warnings
     cargo fmt --all -- --check
 
 # v0.26.0: Guard against bare expect() in production (non-test) relay code.
@@ -189,6 +189,14 @@ check:
 docs-build:
     mdbook build
 
+# Regenerate the checked-in connector matrix, profiles, and release checklist.
+generate-connectors:
+    python3 scripts/generate_connector_surface.py
+
+# Fail when the connector registry or any generated output is stale.
+check-connectors:
+    python3 scripts/generate_connector_surface.py --check
+
 # Serve documentation locally
 docs-serve:
     mdbook serve --open
@@ -254,27 +262,6 @@ release-notes:
     echo ""
     echo "**Tag:** \`git tag -s v${VERSION} -m 'Release v${VERSION}' && git push origin v${VERSION}\`"
     echo ""
-    # v0.30.0: For releases in the v0.28–v0.30 range, include a "Features Pulled from v1.x" section
-    # that credits the original roadmap entries for traceability.
-    MAJOR=$(echo "${VERSION}" | cut -d. -f1)
-    MINOR=$(echo "${VERSION}" | cut -d. -f2)
-    if [[ "${MAJOR}" == "0" && "${MINOR}" -ge 28 && "${MINOR}" -le 30 ]]; then
-        echo "---"
-        echo ""
-        echo "## Features Pulled from v1.x Roadmap"
-        echo ""
-        echo "This release incorporates work originally planned for v1.0.0 GA, pulled forward"
-        echo "to stabilise the v0.x series and give early adopters more time with these features:"
-        echo ""
-        # Extract bullet points from ROADMAP.md for this version's section.
-        awk "/^#### v${VERSION}/,/^####/" ROADMAP.md \
-          | grep '^- \*\*' \
-          | sed 's/^- \*\*/- /' \
-          | sed 's/\*\*.*//' \
-          | head -20 || true
-        echo ""
-        echo "_See [ROADMAP.md](ROADMAP.md) for the full roadmap and version history._"
-    fi
 
 # v0.33.0: Generate a Production GA Announcement release body.
 # Usage: just release-notes-ga
@@ -316,8 +303,7 @@ release-notes-ga:
     echo "## Headline Features"
     echo ""
     echo "- **Envelope encryption** — optional KMS-backed per-message AES-256-GCM encryption (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file)"
-    echo "- **30 sink backends** — NATS, Kafka, HTTP webhook, Redis Streams, SQS, RabbitMQ, PostgreSQL inbox, Pub/Sub, Kinesis, Azure Service Bus, Elasticsearch, MQTT, Azure Event Hubs, Object Storage (S3/GCS/Azure), Snowflake, BigQuery, ClickHouse, MongoDB, Apache Iceberg, Delta Lake, DuckLake, Slack, Discord, PagerDuty, Arrow Flight, Singer, Airbyte, Fivetran, stdout/file"
-    echo "- **16 source backends** — PostgreSQL outbox, NATS JetStream, Kafka, Redis Streams, SQS, RabbitMQ, Singer, Airbyte, HTTP webhook, DuckLake, and WAL logical-replication (preview)"
+    echo "- **Connector surface** — generated from connectors.toml; see docs/src/support/connector-compatibility.md"
     echo "- **DuckLake native integration** — exactly-once outbox → data lake with same-transaction atomicity"
     echo "- **Pipeline dependency DAG** — DAG-aware coordinator with cycle detection and policy-based gating"
     echo "- **Multi-tenant relay groups** — per-tenant pipeline isolation, RLS, and Prometheus labels"

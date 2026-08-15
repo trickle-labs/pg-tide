@@ -2,7 +2,7 @@
 
 While sinks deliver messages *from* your PostgreSQL outbox *to* external systems, sources work in the opposite direction — they consume messages *from* external systems and deliver them *into* your PostgreSQL inbox. This is what pg_tide calls a "reverse pipeline." Think of it as an intake funnel: events from the outside world flow through the source, through the relay, and into your inbox table where your application can process them with full transactional guarantees and idempotent deduplication.
 
-pg_tide supports 16 different sources, covering all the major message brokers, cloud services, and connector ecosystems. Any system that can produce messages can be connected to your PostgreSQL inbox.
+The current source surface is intentionally narrow and evidence-based. See the [generated connector compatibility matrix](../support/connector-compatibility.md) for maturity, build profiles, tested versions, and evidence before choosing a source.
 
 ## Why Use Sources?
 

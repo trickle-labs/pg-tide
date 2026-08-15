@@ -8,7 +8,7 @@ pg_tide consists of two components that work together: a **PostgreSQL extension*
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    PostgreSQL 18+                         │
+│                    PostgreSQL 18                          │
 │                                                          │
 │  ┌──────────────┐   ┌──────────────┐   ┌────────────┐  │
 │  │ tide_outbox   │   │ tide_inbox    │   │ relay_     │  │
