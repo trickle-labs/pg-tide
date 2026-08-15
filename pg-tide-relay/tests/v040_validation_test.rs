@@ -160,7 +160,11 @@ async fn test_v040_migration_fails_on_ambiguous_backfill() {
         result.is_err(),
         "migration must fail explicitly on an ambiguous offset backfill"
     );
-    let msg = result.unwrap_err().to_string();
+    let error = result.unwrap_err();
+    let msg = error
+        .as_db_error()
+        .map(|db_error| db_error.message().to_owned())
+        .unwrap_or_else(|| error.to_string());
     assert!(
         msg.contains("cannot be mapped to an outbox"),
         "error should explain the ambiguity, got: {msg}"

@@ -19,16 +19,6 @@ use common::PgTideTestDb;
 use pg_tide_relay::dlq::{self, DlqEntry, ErrorKind};
 use pg_tide_relay::envelope::RelayMessage;
 
-/// SQL for DLQ migration (v0.7.0).
-const DLQ_MIGRATION_SQL: &str = include_str!("../../sql/pg_tide--0.6.0--0.7.0.sql");
-
-async fn setup_dlq(db: &PgTideTestDb) {
-    db.client
-        .batch_execute(DLQ_MIGRATION_SQL)
-        .await
-        .expect("failed to apply DLQ migration");
-}
-
 fn make_entry(dedup_key: &str, kind: ErrorKind) -> DlqEntry {
     DlqEntry {
         relay_mode: "forward".to_string(),
@@ -61,7 +51,6 @@ fn entry_from_message(msg: &RelayMessage, kind: ErrorKind) -> DlqEntry {
 #[tokio::test]
 async fn test_dlq_fault_normal_write_succeeds() {
     let db = PgTideTestDb::start().await;
-    setup_dlq(&db).await;
 
     let client = Arc::new(db.client);
 
@@ -91,7 +80,6 @@ async fn test_dlq_fault_normal_write_succeeds() {
 #[tokio::test]
 async fn test_dlq_fault_revoked_insert_returns_error() {
     let db = PgTideTestDb::start().await;
-    setup_dlq(&db).await;
 
     // Create a restricted role that cannot INSERT into relay_dlq.
     db.client
@@ -149,7 +137,6 @@ async fn test_dlq_fault_revoked_insert_returns_error() {
 #[tokio::test]
 async fn test_dlq_fault_empty_batch_is_noop() {
     let db = PgTideTestDb::start().await;
-    setup_dlq(&db).await;
 
     let client = Arc::new(db.client);
 
@@ -164,7 +151,6 @@ async fn test_dlq_fault_empty_batch_is_noop() {
 #[tokio::test]
 async fn test_dlq_fault_error_kind_classification() {
     let db = PgTideTestDb::start().await;
-    setup_dlq(&db).await;
 
     let client = Arc::new(db.client);
 
@@ -209,7 +195,6 @@ async fn test_dlq_fault_error_kind_classification() {
 #[tokio::test]
 async fn test_dlq_fault_from_message_fields() {
     let db = PgTideTestDb::start().await;
-    setup_dlq(&db).await;
 
     let client = Arc::new(db.client);
 

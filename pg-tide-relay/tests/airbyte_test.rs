@@ -7,21 +7,11 @@ mod common;
 
 use common::PgTideTestDb;
 
-const MIGRATION_SQL: &str = include_str!("../../sql/pg_tide--0.8.0--0.9.0.sql");
-
-async fn apply_v090_migration(db: &PgTideTestDb) {
-    db.client
-        .batch_execute(MIGRATION_SQL)
-        .await
-        .expect("failed to apply v0.9.0 migration");
-}
-
 // ── Airbyte STATE persistence ─────────────────────────────────────────────────
 
 #[tokio::test]
 async fn test_airbyte_state_insert_and_retrieve() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     let state = serde_json::json!({
         "type": "STREAM",
@@ -59,7 +49,6 @@ async fn test_airbyte_state_insert_and_retrieve() {
 #[tokio::test]
 async fn test_airbyte_state_upsert_on_conflict() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     // First state.
     db.client

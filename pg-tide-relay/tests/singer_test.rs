@@ -8,23 +8,11 @@ mod common;
 
 use common::PgTideTestDb;
 
-/// SQL for the v0.9.0 migration (adds singer_state, singer_schema_log, relay_airbyte_state).
-const MIGRATION_SQL: &str = include_str!("../../sql/pg_tide--0.8.0--0.9.0.sql");
-
-/// Apply the v0.9.0 migration to a test database.
-async fn apply_v090_migration(db: &PgTideTestDb) {
-    db.client
-        .batch_execute(MIGRATION_SQL)
-        .await
-        .expect("failed to apply v0.9.0 migration");
-}
-
 // ── STATE persistence ────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn test_singer_state_upsert_and_retrieve() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     // Insert a STATE checkpoint.
     db.client
@@ -62,7 +50,6 @@ async fn test_singer_state_upsert_and_retrieve() {
 #[tokio::test]
 async fn test_singer_state_upsert_replaces_previous() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     // Insert initial state.
     db.client
@@ -111,7 +98,6 @@ async fn test_singer_state_upsert_replaces_previous() {
 #[tokio::test]
 async fn test_singer_state_delete_resets_tap() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     // Insert a state checkpoint.
     db.client
@@ -151,7 +137,6 @@ async fn test_singer_state_delete_resets_tap() {
 #[tokio::test]
 async fn test_singer_state_list_function() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     // Insert two states.
     db.client
@@ -177,7 +162,6 @@ async fn test_singer_state_list_function() {
 #[tokio::test]
 async fn test_singer_schema_log_records_schema() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     let schema_v1 = serde_json::json!({
         "type": "object",
@@ -224,7 +208,6 @@ async fn test_singer_schema_log_records_schema() {
 #[tokio::test]
 async fn test_singer_schema_drift_detection_function() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     // Insert v1 schema (two properties).
     let schema_v1 = serde_json::json!({
@@ -453,7 +436,6 @@ fn test_airbyte_cdc_delete_marker() {
 #[tokio::test]
 async fn test_airbyte_state_upsert_and_retrieve() {
     let db = PgTideTestDb::start().await;
-    apply_v090_migration(&db).await;
 
     let state_value = serde_json::json!({
         "type": "GLOBAL",

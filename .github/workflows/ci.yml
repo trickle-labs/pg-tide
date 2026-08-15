@@ -485,7 +485,8 @@ jobs:
 
       - name: Start PostgreSQL 18 and create a test database
         run: |
-          sudo pg_ctlcluster 18 main start || sudo pg_createcluster 18 main --start
+          sudo service postgresql stop || true
+          sudo pg_createcluster 18 main --start
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           sudo -u postgres createdb pgtide_e2e
 
@@ -546,7 +547,8 @@ jobs:
         env:
           PGURL: "postgres://postgres:postgres@127.0.0.1:5432/postgres"
         run: |
-          sudo pg_ctlcluster 18 main start || sudo pg_createcluster 18 main --start
+          sudo service postgresql stop || true
+          sudo pg_createcluster 18 main --start
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           python3 scripts/run_quickstart_sql.py \
             README.md docs/src/getting-started/first-pipeline.md
@@ -598,6 +600,9 @@ jobs:
 
       - name: Install packaged v0.39.0 extension
         run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            /usr/share/postgresql/18/extension \
+            /usr/lib/postgresql/18/lib
           git clone --depth 1 --branch v0.39.0 \
             https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v039-source"
           (
@@ -618,7 +623,8 @@ jobs:
 
       - name: Compare real fresh-install vs upgrade schema
         run: |
-          sudo pg_ctlcluster 18 main start || sudo pg_createcluster 18 main --start
+          sudo service postgresql stop || true
+          sudo pg_createcluster 18 main --start
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           export PGPASSWORD=postgres
           # Fresh install directly at the current version.
