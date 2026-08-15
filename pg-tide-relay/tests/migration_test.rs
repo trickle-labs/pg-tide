@@ -50,6 +50,7 @@ const V0_35_0_TO_0_36_0: &str = include_str!("../../sql/pg_tide--0.35.0--0.36.0.
 const V0_36_0_TO_0_37_0: &str = include_str!("../../sql/pg_tide--0.36.0--0.37.0.sql");
 const V0_37_0_TO_0_38_0: &str = include_str!("../../sql/pg_tide--0.37.0--0.38.0.sql");
 const V0_38_0_TO_0_39_0: &str = include_str!("../../sql/pg_tide--0.38.0--0.39.0.sql");
+const V0_39_0_TO_0_40_0: &str = include_str!("../../sql/pg_tide--0.39.0--0.40.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -91,6 +92,7 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.36.0 → 0.37.0", V0_36_0_TO_0_37_0),
     ("0.37.0 → 0.38.0", V0_37_0_TO_0_38_0),
     ("0.38.0 → 0.39.0", V0_38_0_TO_0_39_0),
+    ("0.39.0 → 0.40.0", V0_39_0_TO_0_40_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
@@ -246,8 +248,8 @@ async fn test_sequential_migration_upgrade() {
     client
         .execute(
             "INSERT INTO tide.relay_consumer_offsets \
-             (relay_group_id, pipeline_id, last_change_id, worker_id) \
-             VALUES ('default', 'post-upgrade-pipeline', 0, 'test-worker')",
+             (relay_group_id, pipeline_id, outbox_name, last_change_id, worker_id) \
+             VALUES ('default', 'post-upgrade-pipeline', 'post_upgrade_test', 0, 'test-worker')",
             &[],
         )
         .await
@@ -288,7 +290,7 @@ async fn test_sequential_migration_upgrade() {
     // #[pg_extern] functions (the plpgsql duplicates were removed in v0.17.0).
     // This SQL-only migration test does not load the Rust extension, so those
     // functions are not available here. Their presence is verified by the pgrx
-    // test suite (test-ext-pgrx CI job) and by the E2E test (sql_to_sink_e2e).
+    // test suite (test-ext-pgrx CI job) and by the E2E test (public_api_outbox_to_nats_e2e).
 
     // After v0.22.0 upgrade: DuckLake source tables should exist.
     let has_ducklake_source_config: bool = client
@@ -527,5 +529,74 @@ async fn test_sequential_migration_upgrade() {
     assert!(
         has_outbox_v2,
         "after v0.36.0 upgrade, tide.relay_set_outbox_v2() must still exist"
+    );
+
+    // ── v0.40.0 (ADR-011) assertions ─────────────────────────────────────
+
+    // The unconditional (outbox_name, id) polling index must exist and must
+    // NOT be partial (no WHERE clause).
+    let poll_index_def: Option<String> = client
+        .query_opt(
+            "SELECT indexdef FROM pg_indexes \
+             WHERE schemaname = 'tide' AND indexname = 'idx_tide_outbox_messages_poll'",
+            &[],
+        )
+        .await
+        .expect("poll index lookup")
+        .map(|r| r.get(0));
+    let poll_index_def = poll_index_def.expect("idx_tide_outbox_messages_poll must exist");
+    assert!(
+        !poll_index_def.to_lowercase().contains(" where "),
+        "poll index must be unconditional (not partial): {poll_index_def}"
+    );
+
+    // relay_consumer_offsets.outbox_name must exist and be NOT NULL.
+    let outbox_name_nullable: String = client
+        .query_one(
+            "SELECT is_nullable FROM information_schema.columns \
+             WHERE table_schema = 'tide' AND table_name = 'relay_consumer_offsets' \
+               AND column_name = 'outbox_name'",
+            &[],
+        )
+        .await
+        .expect("outbox_name column check")
+        .get(0);
+    assert_eq!(
+        outbox_name_nullable, "NO",
+        "relay_consumer_offsets.outbox_name must be NOT NULL after v0.40.0"
+    );
+
+    // The offset primary key must be (relay_group_id, pipeline_id, outbox_name):
+    // inserting the same pipeline id for two different outboxes must succeed.
+    client
+        .execute(
+            "INSERT INTO tide.tide_outbox_config (outbox_name) VALUES ('orders_v40'), ('audit_v40')",
+            &[],
+        )
+        .await
+        .expect("create outboxes for offset key test");
+    client
+        .execute(
+            "INSERT INTO tide.relay_consumer_offsets \
+             (relay_group_id, pipeline_id, outbox_name, last_change_id, worker_id) \
+             VALUES ('g', 'same-pipeline', 'orders_v40', 10, 'w'), \
+                    ('g', 'same-pipeline', 'audit_v40', 20, 'w')",
+            &[],
+        )
+        .await
+        .expect("same pipeline id for different outboxes must be allowed");
+
+    // fanin configs must be disabled after the migration.
+    let enabled_fanin: i64 = client
+        .query_one(
+            "SELECT COUNT(*)::bigint FROM tide.relay_fanin_config WHERE enabled",
+            &[],
+        )
+        .await
+        .expect("fanin enabled count")
+        .get(0);
+    assert_eq!(
+        enabled_fanin, 0,
+        "all fan-in configs must be disabled after v0.40.0 migration"
     );
 }

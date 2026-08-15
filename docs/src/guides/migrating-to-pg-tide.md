@@ -39,13 +39,19 @@ This guide covers migrating from common messaging and CDC solutions to pg_tide. 
 
 4. **Configure pipeline with Debezium wire format:**
    ```sql
-   SELECT tide.relay_set_outbox('orders-cdc', 'orders_cdc', '{
-       "sink_type": "kafka",
-       "brokers": "kafka:9092",
-       "topic": "dbserver1.public.orders",
-       "wire_format": "debezium",
-       "wire_config": { "server_name": "dbserver1" }
-   }'::jsonb);
+   SELECT tide.relay_set_outbox_v2(
+     jsonb_build_object(
+       'name', 'orders-cdc',
+       'outbox', 'orders_cdc',
+       'sink_type', 'kafka',
+       'config', '{
+         "brokers": "kafka:9092",
+         "topic": "dbserver1.public.orders",
+         "wire_format": "debezium",
+         "wire_config": { "server_name": "dbserver1" }
+       }'::jsonb
+     )
+   );
    ```
 
 5. **Run in parallel:** Deploy pg_tide alongside Debezium, publishing to a separate topic. Compare output.
@@ -100,10 +106,16 @@ CREATE TABLE outbox (
 
 4. **Configure relay pipeline:**
    ```sql
-   SELECT tide.relay_set_outbox('events-pipeline', 'events', '{
-       "sink_type": "your-sink",
-       ...
-   }'::jsonb);
+   SELECT tide.relay_set_outbox_v2(
+     jsonb_build_object(
+       'name', 'events-pipeline',
+       'outbox', 'events',
+       'sink_type', 'your-sink',
+       'config', '{
+         ...
+       }'::jsonb
+     )
+   );
    ```
 
 5. **Remove old polling infrastructure:** Delete cron jobs, background workers, custom retry logic.
@@ -148,12 +160,18 @@ If you're using a traditional message broker and want to move to pg_tide:
 3. **Consumers stay the same** — they still read from the same queues
 
 ```sql
-SELECT tide.relay_set_outbox('orders-to-rabbit', 'order_events', '{
-    "sink_type": "rabbitmq",
-    "url": "amqp://guest:guest@rabbitmq:5672",
-    "exchange": "orders",
-    "routing_key": "order.created"
-}'::jsonb);
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-rabbit',
+    'outbox', 'order_events',
+    'sink_type', 'rabbitmq',
+    'config', '{
+        "url": "amqp://guest:guest@rabbitmq:5672",
+        "exchange": "orders",
+        "routing_key": "order.created"
+    }'::jsonb
+  )
+);
 ```
 
 ## Rollback Plan

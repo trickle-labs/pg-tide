@@ -36,12 +36,18 @@ fn relay_exists(name: &str) -> Result<bool, PgTideError> {
 ///
 /// v0.36.0: This is the only remaining form of `relay_set_outbox()`; the
 /// 6-positional-parameter form was removed in v0.36.0.
+///
+/// v0.40.0 (ADR-011): Defaults to the **native** shared-table source. The named
+/// outbox must already exist. pg_trickle compatibility is selected explicitly
+/// via `source_mode`, never inferred from storage.
+///
 /// The config object accepts the following keys:
 ///
 /// - `name`        TEXT  (required) Pipeline name.
-/// - `outbox`      TEXT  (required) Source outbox name.
+/// - `outbox`      TEXT  (required) Source outbox name (must exist).
 /// - `sink_type`   TEXT  (required) Sink backend type (e.g. `"nats"`, `"stdout"`).
 /// - `config`      JSONB (default: `{}`) Sink-specific configuration.
+/// - `source_mode` TEXT  (default: `"native"`) `"native"` or `"pg_trickle"`.
 /// - `batch_size`  INT   (default: 100)
 /// - `enabled`     BOOL  (default: true)
 /// - `wire_format` TEXT  (default: `"native"`)
@@ -79,6 +85,18 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
             )
         })?;
 
+    // v0.40.0 (ADR-011 §10): Native by default; pg_trickle is an explicit mode.
+    let source_type = match obj.get("source_mode").and_then(|v| v.as_str()) {
+        None | Some("native") => "outbox",
+        Some("pg_trickle") => "pg_trickle_outbox",
+        Some(other) => {
+            return Err(PgTideError::InvalidArgument(format!(
+                "relay_set_outbox_v2: unsupported source_mode '{other}' \
+                 (expected 'native' or 'pg_trickle')"
+            )))
+        }
+    };
+
     let sink_config = obj
         .get("config")
         .cloned()
@@ -89,8 +107,13 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(name)?;
     crate::validation::validate_identifier(outbox)?;
 
+    // v0.40.0: Validate the named outbox exists before mutating the catalog.
+    if !crate::outbox::outbox_exists(outbox)? {
+        return Err(PgTideError::OutboxNotFound(outbox.to_string()));
+    }
+
     let full_config = serde_json::json!({
-        "source_type": "outbox",
+        "source_type": source_type,
         "source": { "outbox": outbox },
         "sink_type": sink_type,
         "sink": sink_config,
@@ -456,6 +479,79 @@ mod tests {
         .unwrap()
         .unwrap_or(false);
         assert!(exists, "relay_set_outbox_v2 must create a config row");
+    }
+
+    #[pg_test]
+    fn test_relay_set_outbox_v2_defaults_to_native() {
+        setup_outbox("v2-native-outbox");
+        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "v2-native-pipeline",
+            "outbox": "v2-native-outbox",
+            "sink_type": "stdout",
+        })));
+        let source_type: String = Spi::get_one(
+            "SELECT config ->> 'source_type' FROM tide.relay_outbox_config \
+             WHERE name = 'v2-native-pipeline'",
+        )
+        .unwrap()
+        .unwrap_or_default();
+        assert_eq!(source_type, "outbox", "default source_mode must be native");
+    }
+
+    #[pg_test]
+    fn test_relay_set_outbox_v2_pg_trickle_mode() {
+        setup_outbox("v2-compat-outbox");
+        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
+            "name": "v2-compat-pipeline",
+            "outbox": "v2-compat-outbox",
+            "sink_type": "stdout",
+            "source_mode": "pg_trickle",
+        })));
+        let source_type: String = Spi::get_one(
+            "SELECT config ->> 'source_type' FROM tide.relay_outbox_config \
+             WHERE name = 'v2-compat-pipeline'",
+        )
+        .unwrap()
+        .unwrap_or_default();
+        assert_eq!(
+            source_type, "pg_trickle_outbox",
+            "explicit pg_trickle mode must select the compatibility source"
+        );
+    }
+
+    #[pg_test]
+    fn test_relay_set_outbox_v2_unknown_outbox_fails_before_mutation() {
+        let result = crate::relay::relay_set_outbox_v2_impl(pgrx::JsonB(serde_json::json!({
+            "name": "v2-orphan-pipeline",
+            "outbox": "no-such-outbox",
+            "sink_type": "stdout",
+        })));
+        assert!(result.is_err(), "unknown outbox must fail");
+        // No config row may have been written.
+        let exists: bool = Spi::get_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = 'v2-orphan-pipeline')",
+        )
+        .unwrap()
+        .unwrap_or(true);
+        assert!(
+            !exists,
+            "no config row may be written for an unknown outbox"
+        );
+    }
+
+    #[pg_test]
+    fn test_relay_set_outbox_v2_unsupported_mode_fails() {
+        setup_outbox("v2-badmode-outbox");
+        let result = crate::relay::relay_set_outbox_v2_impl(pgrx::JsonB(serde_json::json!({
+            "name": "v2-badmode-pipeline",
+            "outbox": "v2-badmode-outbox",
+            "sink_type": "stdout",
+            "source_mode": "bogus",
+        })));
+        assert!(
+            matches!(result, Err(crate::error::PgTideError::InvalidArgument(_))),
+            "unsupported source_mode must fail with InvalidArgument"
+        );
     }
 
     #[pg_test]

@@ -39,30 +39,45 @@ SELECT tide.create_consumer_group('analytics-relay', 'orders');
 SELECT tide.create_consumer_group('email-relay', 'orders');
 
 -- Three pipelines: same outbox, different destinations
-SELECT tide.relay_set_outbox('orders-to-warehouse', 'orders', 'nats',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'nats://nats:4222',
-    'subject', 'warehouse.orders.{event_type}'
-  ),
-  p_batch_size := 50
+    'name', 'orders-to-warehouse',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://nats:4222',
+      'subject', 'warehouse.orders.{event_type}'
+    ),
+    'batch_size', 50
+  )
 );
 
-SELECT tide.relay_set_outbox('orders-to-analytics', 'orders', 'kafka',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'brokers', 'kafka:9092',
-    'topic', 'order-events',
-    'compression', 'zstd'
-  ),
-  p_batch_size := 500
+    'name', 'orders-to-analytics',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', jsonb_build_object(
+      'brokers', 'kafka:9092',
+      'topic', 'order-events',
+      'compression', 'zstd'
+    ),
+    'batch_size', 500
+  )
 );
 
-SELECT tide.relay_set_outbox('orders-to-email', 'orders', 'webhook',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'https://email-service.internal/hooks/orders',
-    'timeout_ms', 5000,
-    'headers', '{"Authorization": "Bearer ${ENV:EMAIL_SVC_TOKEN}"}'
-  ),
-  p_batch_size := 10
+    'name', 'orders-to-email',
+    'outbox', 'orders',
+    'sink_type', 'webhook',
+    'config', jsonb_build_object(
+      'url', 'https://email-service.internal/hooks/orders',
+      'timeout_ms', 5000,
+      'headers', '{"Authorization": "Bearer ${ENV:EMAIL_SVC_TOKEN}"}'
+    ),
+    'batch_size', 10
+  )
 );
 ```
 
@@ -136,20 +151,22 @@ BEGIN
   );
 
   -- Configure webhook delivery pipeline
-  PERFORM tide.relay_set_outbox(
-    'deliver-' || tenant_id,
-    'webhooks-' || tenant_id,
-    'webhook',
+  PERFORM tide.relay_set_outbox_v2(
     jsonb_build_object(
-      'url', webhook_url,
-      'timeout_ms', 10000,
-      'retry_codes', '[429, 500, 502, 503, 504]',
-      'headers', jsonb_build_object(
-        'X-Tenant-ID', tenant_id,
-        'X-Webhook-Version', '2024-01-01'
-      )
-    ),
-    p_batch_size := 1  -- Deliver webhooks one at a time for ordering
+      'name', 'deliver-' || tenant_id,
+      'outbox', 'webhooks-' || tenant_id,
+      'sink_type', 'webhook',
+      'config', jsonb_build_object(
+        'url', webhook_url,
+        'timeout_ms', 10000,
+        'retry_codes', '[429, 500, 502, 503, 504]',
+        'headers', jsonb_build_object(
+          'X-Tenant-ID', tenant_id,
+          'X-Webhook-Version', '2024-01-01'
+        )
+      ),
+      'batch_size', 1  -- Deliver webhooks one at a time for ordering
+    )
   );
 END;
 $$;
@@ -222,14 +239,19 @@ SELECT tide.outbox_create('dim-changes', p_retention_hours := 168);
 SELECT tide.create_consumer_group('warehouse-loader', 'dim-changes');
 
 -- Pipeline to Kafka (where Kafka Connect or a custom consumer loads into the warehouse)
-SELECT tide.relay_set_outbox('dims-to-kafka', 'dim-changes', 'kafka',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'brokers', 'kafka:9092',
-    'topic', 'warehouse.dim-changes',
-    'compression', 'zstd',
-    'key', '{event_type}'  -- partition by entity type for parallel loading
-  ),
-  p_batch_size := 500
+    'name', 'dims-to-kafka',
+    'outbox', 'dim-changes',
+    'sink_type', 'kafka',
+    'config', jsonb_build_object(
+      'brokers', 'kafka:9092',
+      'topic', 'warehouse.dim-changes',
+      'compression', 'zstd',
+      'key', '{event_type}'  -- partition by entity type for parallel loading
+    ),
+    'batch_size', 500
+  )
 );
 ```
 
@@ -300,10 +322,15 @@ Order Service                    Inventory Service              Payment Service
 -- Outbox: publishes order events
 SELECT tide.outbox_create('orders', p_retention_hours := 168);
 SELECT tide.create_consumer_group('nats-fanout', 'orders');
-SELECT tide.relay_set_outbox('orders-fanout', 'orders', 'nats',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'nats://nats:4222',
-    'subject', 'orders.{event_type}'
+    'name', 'orders-fanout',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://nats:4222',
+      'subject', 'orders.{event_type}'
+    )
   )
 );
 
@@ -312,13 +339,17 @@ SELECT tide.inbox_create('order-results',
   p_max_retries := 10,
   p_processed_retention_hours := 168
 );
-SELECT tide.relay_set_inbox('results-from-services', 'order-results',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'url', 'nats://nats:4222',
-    'subject', 'orders.*.completed',
-    'queue_group', 'order-svc'
-  ),
-  p_source := 'nats'
+    'name', 'results-from-services',
+    'inbox', 'order-results',
+    'source', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://nats:4222',
+      'subject', 'orders.*.completed',
+      'queue_group', 'order-svc'
+    )
+  )
 );
 ```
 
@@ -327,22 +358,31 @@ SELECT tide.relay_set_inbox('results-from-services', 'order-results',
 ```sql
 -- Inbox: receives inventory reservation requests
 SELECT tide.inbox_create('inventory-requests', p_max_retries := 3);
-SELECT tide.relay_set_inbox('inv-requests', 'inventory-requests',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'url', 'nats://nats:4222',
-    'subject', 'orders.order.confirmed',
-    'queue_group', 'inventory-svc'
-  ),
-  p_source := 'nats'
+    'name', 'inv-requests',
+    'inbox', 'inventory-requests',
+    'source', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://nats:4222',
+      'subject', 'orders.order.confirmed',
+      'queue_group', 'inventory-svc'
+    )
+  )
 );
 
 -- Outbox: publishes reservation results
 SELECT tide.outbox_create('inventory-results', p_retention_hours := 72);
 SELECT tide.create_consumer_group('inv-nats', 'inventory-results');
-SELECT tide.relay_set_outbox('inv-results-out', 'inventory-results', 'nats',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'nats://nats:4222',
-    'subject', 'orders.inventory.completed'
+    'name', 'inv-results-out',
+    'outbox', 'inventory-results',
+    'sink_type', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://nats:4222',
+      'subject', 'orders.inventory.completed'
+    )
   )
 );
 ```
@@ -377,24 +417,34 @@ SELECT tide.outbox_create('audit-log',
 
 -- Forward to cloud storage via webhook (to an internal archival service)
 SELECT tide.create_consumer_group('archive-relay', 'audit-log');
-SELECT tide.relay_set_outbox('audit-to-archive', 'audit-log', 'webhook',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'https://compliance-archiver.internal/ingest',
-    'timeout_ms', 30000,
-    'headers', '{"Authorization": "Bearer ${ENV:ARCHIVE_TOKEN}"}'
-  ),
-  p_batch_size := 100
+    'name', 'audit-to-archive',
+    'outbox', 'audit-log',
+    'sink_type', 'webhook',
+    'config', jsonb_build_object(
+      'url', 'https://compliance-archiver.internal/ingest',
+      'timeout_ms', 30000,
+      'headers', '{"Authorization": "Bearer ${ENV:ARCHIVE_TOKEN}"}'
+    ),
+    'batch_size', 100
+  )
 );
 
 -- Also forward to Kafka for real-time compliance monitoring
 SELECT tide.create_consumer_group('compliance-kafka', 'audit-log');
-SELECT tide.relay_set_outbox('audit-to-kafka', 'audit-log', 'kafka',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'brokers', 'kafka:9092',
-    'topic', 'compliance.audit-events',
-    'acks', 'all'
-  ),
-  p_batch_size := 200
+    'name', 'audit-to-kafka',
+    'outbox', 'audit-log',
+    'sink_type', 'kafka',
+    'config', jsonb_build_object(
+      'brokers', 'kafka:9092',
+      'topic', 'compliance.audit-events',
+      'acks', 'all'
+    ),
+    'batch_size', 200
+  )
 );
 ```
 

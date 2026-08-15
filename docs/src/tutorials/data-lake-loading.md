@@ -25,11 +25,12 @@ SELECT tide.outbox_create('analytics_events');
 ## Step 2: Configure Iceberg Sink
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-lake',
-    'analytics_events',
-    '{
-        "sink_type": "iceberg",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-lake',
+    'outbox', 'analytics_events',
+    'sink_type', 'iceberg',
+    'config', '{
         "catalog_type": "rest",
         "catalog_uri": "http://iceberg-rest:8181",
         "warehouse": "s3://my-lake/warehouse",
@@ -42,34 +43,38 @@ SELECT tide.relay_set_outbox(
         "partition_by": ["year", "month", "event_type"],
         "commit_interval_seconds": 60
     }'::jsonb
+  )
 );
 ```
 
 ### Alternative: Delta Lake
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-delta',
-    'analytics_events',
-    '{
-        "sink_type": "delta",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-delta',
+    'outbox', 'analytics_events',
+    'sink_type', 'delta',
+    'config', '{
         "table_uri": "s3://my-lake/delta/events",
         "partition_columns": ["year", "month"],
         "aws_access_key_id": "${env:AWS_ACCESS_KEY_ID}",
         "aws_secret_access_key": "${env:AWS_SECRET_ACCESS_KEY}",
         "target_file_size_mb": 128
     }'::jsonb
+  )
 );
 ```
 
 ### Alternative: Raw Object Storage (Parquet)
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-parquet',
-    'analytics_events',
-    '{
-        "sink_type": "object_storage",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-parquet',
+    'outbox', 'analytics_events',
+    'sink_type', 'object_storage',
+    'config', '{
         "provider": "s3",
         "bucket": "my-lake",
         "prefix": "raw/events/",
@@ -80,6 +85,7 @@ SELECT tide.relay_set_outbox(
         "aws_access_key_id": "${env:AWS_ACCESS_KEY_ID}",
         "aws_secret_access_key": "${env:AWS_SECRET_ACCESS_KEY}"
     }'::jsonb
+  )
 );
 ```
 

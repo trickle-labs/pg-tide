@@ -13,33 +13,35 @@ Choose Pub/Sub when your infrastructure runs on Google Cloud Platform, when you 
 ### Minimal Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-pubsub',
-    'events',
-    'pubsub-relay',
-    '{
-        "sink_type": "pubsub",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-pubsub',
+    'outbox', 'events',
+    'sink_type', 'pubsub',
+    'config', '{
         "project_id": "my-gcp-project",
         "topic": "outbox-events"
     }'::jsonb
+  )
 );
 ```
 
 ### Production Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-pubsub',
-    'events',
-    'pubsub-relay',
-    '{
-        "sink_type": "pubsub",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-pubsub',
+    'outbox', 'events',
+    'sink_type', 'pubsub',
+    'config', '{
         "project_id": "${env:GCP_PROJECT_ID}",
         "topic": "events-{stream_table}",
         "credentials_json": "${file:/etc/gcp/service-account.json}",
         "ordering_key": "{dedup_key}",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

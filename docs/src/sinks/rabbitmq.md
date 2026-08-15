@@ -11,28 +11,29 @@ Choose RabbitMQ when you need complex message routing patterns (topic exchanges,
 ### Minimal Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-rabbit',
-    'orders',
-    'rabbit-relay',
-    '{
-        "sink_type": "rabbitmq",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-rabbit',
+    'outbox', 'orders',
+    'sink_type', 'rabbitmq',
+    'config', '{
         "url": "amqp://localhost:5672",
         "exchange": "events",
         "routing_key": "orders.created"
     }'::jsonb
+  )
 );
 ```
 
 ### Production Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-rabbit',
-    'orders',
-    'rabbit-relay',
-    '{
-        "sink_type": "rabbitmq",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-rabbit',
+    'outbox', 'orders',
+    'sink_type', 'rabbitmq',
+    'config', '{
         "url": "amqps://${env:RABBITMQ_USER}:${env:RABBITMQ_PASS}@${env:RABBITMQ_HOST}:5671/%2f",
         "exchange": "events",
         "exchange_type": "topic",
@@ -42,6 +43,7 @@ SELECT tide.relay_set_outbox(
         "tls_enabled": true,
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

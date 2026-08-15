@@ -9,18 +9,19 @@ Choose BigQuery when your analytics stack runs on Google Cloud, when you want tr
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-bigquery',
-    'events',
-    'bq-relay',
-    '{
-        "sink_type": "bigquery",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-bigquery',
+    'outbox', 'events',
+    'sink_type', 'bigquery',
+    'config', '{
         "project_id": "${env:GCP_PROJECT_ID}",
         "dataset": "event_analytics",
         "table": "raw_events",
         "credentials_json": "${file:/etc/gcp/service-account.json}",
         "batch_size": 500
     }'::jsonb
+  )
 );
 ```
 

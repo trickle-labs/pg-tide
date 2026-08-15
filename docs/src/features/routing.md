@@ -19,11 +19,12 @@ Message payload:                   Routing rules:
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'multi-topic-orders',
-    'order_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'multi-topic-orders',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "routing": {
             "default_template": "orders.general",
@@ -46,6 +47,7 @@ SELECT tide.relay_set_outbox(
             ]
         }
     }'::jsonb
+  )
 );
 ```
 

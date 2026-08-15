@@ -9,17 +9,19 @@ Use the webhook receiver when external services push events to you via HTTP (pay
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'stripe-webhooks',
-    'payment_events',
-    '{
-        "source_type": "webhook",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'stripe-webhooks',
+    'inbox', 'payment_events',
+    'source', 'webhook',
+    'config', '{
         "listen_addr": "0.0.0.0:8080",
         "path": "/webhooks/stripe",
         "signature_scheme": "stripe",
         "signature_secret": "${env:STRIPE_WEBHOOK_SECRET}",
         "idempotency_header": "Stripe-Idempotency-Key"
     }'::jsonb
+  )
 );
 ```
 

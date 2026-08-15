@@ -13,15 +13,17 @@ Fivetran Cloud  →  HTTP Push  →  pg_tide (Fivetran destination)  →  Inbox 
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'fivetran-crm',
-    'crm_inbox',
-    '{
-        "source_type": "fivetran",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'fivetran-crm',
+    'inbox', 'crm_inbox',
+    'source', 'fivetran',
+    'config', '{
         "listen_addr": "0.0.0.0:8080",
         "api_key": "${env:FIVETRAN_API_KEY}",
         "api_secret": "${env:FIVETRAN_API_SECRET}"
     }'::jsonb
+  )
 );
 ```
 

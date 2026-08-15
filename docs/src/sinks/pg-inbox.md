@@ -9,16 +9,17 @@ Choose the PostgreSQL Inbox sink when you need direct database-to-database messa
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-warehouse',
-    'orders',
-    'inbox-relay',
-    '{
-        "sink_type": "inbox",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-warehouse',
+    'outbox', 'orders',
+    'sink_type', 'inbox',
+    'config', '{
         "target_url": "${env:WAREHOUSE_DB_URL}",
         "inbox_name": "incoming_orders",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

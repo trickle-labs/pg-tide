@@ -9,12 +9,12 @@ Choose Delta Lake when your analytics platform is built on Databricks or Spark, 
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-delta',
-    'events',
-    'delta-relay',
-    '{
-        "sink_type": "delta",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-delta',
+    'outbox', 'events',
+    'sink_type', 'delta',
+    'config', '{
         "table_uri": "s3://my-lake/delta/events",
         "storage_options": {
             "AWS_ACCESS_KEY_ID": "${env:AWS_ACCESS_KEY_ID}",
@@ -23,6 +23,7 @@ SELECT tide.relay_set_outbox(
         },
         "batch_size": 1000
     }'::jsonb
+  )
 );
 ```
 

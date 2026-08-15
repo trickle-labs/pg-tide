@@ -212,6 +212,9 @@ impl PgLogicalSource {
             let headers: serde_json::Value = row.get(2);
 
             messages.push(RelayMessage {
+                outbox_name: None,
+                headers: None,
+                created_at: None,
                 dedup_key: format!("{}:wal:{}", self.config.table_name, id),
                 subject: format!("{}.insert", self.config.table_name),
                 payload: serde_json::json!({

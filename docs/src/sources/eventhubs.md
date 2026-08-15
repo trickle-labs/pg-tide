@@ -5,16 +5,18 @@ The Event Hubs source reads events from Azure Event Hubs and delivers them into 
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'events-from-eventhubs',
-    'incoming_events',
-    '{
-        "source_type": "eventhubs",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'events-from-eventhubs',
+    'inbox', 'incoming_events',
+    'source', 'eventhubs',
+    'config', '{
         "connection_string": "${env:EVENTHUBS_CONNECTION_STRING}",
         "event_hub_name": "external-events",
         "consumer_group": "$Default",
         "batch_size": 100
     }'::jsonb
+  )
 );
 ```
 

@@ -9,12 +9,12 @@ Choose the Airbyte sink when your target destination has an Airbyte connector bu
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-destination',
-    'events',
-    'airbyte-relay',
-    '{
-        "sink_type": "airbyte",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-destination',
+    'outbox', 'events',
+    'sink_type', 'airbyte',
+    'config', '{
         "destination_image": "airbyte/destination-bigquery:latest",
         "destination_config": {
             "project_id": "${env:GCP_PROJECT}",
@@ -23,6 +23,7 @@ SELECT tide.relay_set_outbox(
         },
         "batch_size": 500
     }'::jsonb
+  )
 );
 ```
 

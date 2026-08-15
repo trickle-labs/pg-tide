@@ -5,14 +5,16 @@ The stdin source reads line-delimited JSON from standard input or a file and del
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'file-import',
-    'imported_events',
-    '{
-        "source_type": "stdin",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'file-import',
+    'inbox', 'imported_events',
+    'source', 'stdin',
+    'config', '{
         "input_file": "/data/events-export.jsonl",
         "batch_size": 1000
     }'::jsonb
+  )
 );
 ```
 

@@ -78,15 +78,16 @@ These sinks deliver messages to other PostgreSQL instances or output streams. Th
 Every sink is configured through the relay pipeline's JSONB configuration stored in PostgreSQL. The basic pattern looks like this:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'my-pipeline',
-    'orders',
-    'relay-group',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'my-pipeline',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "localhost:9092",
         "topic": "order-events"
     }'::jsonb
+  )
 );
 ```
 

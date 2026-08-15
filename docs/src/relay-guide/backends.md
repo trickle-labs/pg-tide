@@ -65,10 +65,15 @@ The official Docker image and GitHub release binaries include all backends.
 ### Forward (Outbox → NATS)
 
 ```sql
-SELECT tide.relay_set_outbox('orders-nats', 'orders', 'nats',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'nats://localhost:4222',
-    'subject', 'orders.events'
+    'name', 'orders-nats',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://localhost:4222',
+      'subject', 'orders.events'
+    )
   )
 );
 ```
@@ -96,12 +101,16 @@ This is powerful for fan-out patterns: a single outbox can route events to many 
 ### Reverse (NATS → Inbox)
 
 ```sql
-SELECT tide.relay_set_inbox('nats-to-inbox', 'incoming-events',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'url', 'nats://localhost:4222',
-    'subject', 'external.events.>'
-  ),
-  p_source := 'nats'
+    'name', 'nats-to-inbox',
+    'inbox', 'incoming-events',
+    'source', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://localhost:4222',
+      'subject', 'external.events.>'
+    )
+  )
 );
 ```
 
@@ -133,13 +142,18 @@ The `queue_group` option enables NATS queue subscriptions: if multiple relay ins
 ### Forward (Outbox → Kafka)
 
 ```sql
-SELECT tide.relay_set_outbox('events-kafka', 'events', 'kafka',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'brokers', 'broker1:9092,broker2:9092,broker3:9092',
-    'topic', 'app-events',
-    'acks', 'all',
-    'compression', 'snappy',
-    'key', '{event_type}'
+    'name', 'events-kafka',
+    'outbox', 'events',
+    'sink_type', 'kafka',
+    'config', jsonb_build_object(
+      'brokers', 'broker1:9092,broker2:9092,broker3:9092',
+      'topic', 'app-events',
+      'acks', 'all',
+      'compression', 'snappy',
+      'key', '{event_type}'
+    )
   )
 );
 ```
@@ -163,13 +177,17 @@ SELECT tide.relay_set_outbox('events-kafka', 'events', 'kafka',
 ### Reverse (Kafka → Inbox)
 
 ```sql
-SELECT tide.relay_set_inbox('kafka-to-inbox', 'kafka-events',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'brokers', 'broker1:9092,broker2:9092',
-    'topic', 'external-events',
-    'group_id', 'pg-tide-consumer'
-  ),
-  p_source := 'kafka'
+    'name', 'kafka-to-inbox',
+    'inbox', 'kafka-events',
+    'source', 'kafka',
+    'config', jsonb_build_object(
+      'brokers', 'broker1:9092,broker2:9092',
+      'topic', 'external-events',
+      'group_id', 'pg-tide-consumer'
+    )
+  )
 );
 ```
 
@@ -200,11 +218,16 @@ SELECT tide.relay_set_inbox('kafka-to-inbox', 'kafka-events',
 ### Forward (Outbox → Redis Stream)
 
 ```sql
-SELECT tide.relay_set_outbox('events-redis', 'events', 'redis',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'redis://localhost:6379',
-    'stream', 'app:events',
-    'maxlen', 100000
+    'name', 'events-redis',
+    'outbox', 'events',
+    'sink_type', 'redis',
+    'config', jsonb_build_object(
+      'url', 'redis://localhost:6379',
+      'stream', 'app:events',
+      'maxlen', 100000
+    )
   )
 );
 ```
@@ -220,14 +243,18 @@ SELECT tide.relay_set_outbox('events-redis', 'events', 'redis',
 ### Reverse (Redis Stream → Inbox)
 
 ```sql
-SELECT tide.relay_set_inbox('redis-to-inbox', 'redis-events',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'url', 'redis://localhost:6379',
-    'stream', 'external:events',
-    'group', 'pg-tide',
-    'consumer', 'relay-0'
-  ),
-  p_source := 'redis'
+    'name', 'redis-to-inbox',
+    'inbox', 'redis-events',
+    'source', 'redis',
+    'config', jsonb_build_object(
+      'url', 'redis://localhost:6379',
+      'stream', 'external:events',
+      'group', 'pg-tide',
+      'consumer', 'relay-0'
+    )
+  )
 );
 ```
 
@@ -257,13 +284,18 @@ SELECT tide.relay_set_inbox('redis-to-inbox', 'redis-events',
 ### Forward (Outbox → RabbitMQ)
 
 ```sql
-SELECT tide.relay_set_outbox('events-rabbit', 'events', 'rabbitmq',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'amqp://user:pass@localhost:5672/%2f',
-    'exchange', 'app.events',
-    'routing_key', 'orders.created',
-    'exchange_type', 'topic',
-    'durable', true
+    'name', 'events-rabbit',
+    'outbox', 'events',
+    'sink_type', 'rabbitmq',
+    'config', jsonb_build_object(
+      'url', 'amqp://user:pass@localhost:5672/%2f',
+      'exchange', 'app.events',
+      'routing_key', 'orders.created',
+      'exchange_type', 'topic',
+      'durable', true
+    )
   )
 );
 ```
@@ -281,13 +313,17 @@ SELECT tide.relay_set_outbox('events-rabbit', 'events', 'rabbitmq',
 ### Reverse (RabbitMQ → Inbox)
 
 ```sql
-SELECT tide.relay_set_inbox('rabbit-to-inbox', 'amqp-events',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'url', 'amqp://user:pass@localhost:5672/%2f',
-    'queue', 'incoming-events',
-    'prefetch', 20
-  ),
-  p_source := 'rabbitmq'
+    'name', 'rabbit-to-inbox',
+    'inbox', 'amqp-events',
+    'source', 'rabbitmq',
+    'config', jsonb_build_object(
+      'url', 'amqp://user:pass@localhost:5672/%2f',
+      'queue', 'incoming-events',
+      'prefetch', 20
+    )
+  )
 );
 ```
 
@@ -317,10 +353,15 @@ SELECT tide.relay_set_inbox('rabbit-to-inbox', 'amqp-events',
 ### Forward (Outbox → SQS)
 
 ```sql
-SELECT tide.relay_set_outbox('events-sqs', 'events', 'sqs',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'queue_url', 'https://sqs.us-east-1.amazonaws.com/123456789012/my-queue',
-    'region', 'us-east-1'
+    'name', 'events-sqs',
+    'outbox', 'events',
+    'sink_type', 'sqs',
+    'config', jsonb_build_object(
+      'queue_url', 'https://sqs.us-east-1.amazonaws.com/123456789012/my-queue',
+      'region', 'us-east-1'
+    )
   )
 );
 ```
@@ -337,14 +378,18 @@ SELECT tide.relay_set_outbox('events-sqs', 'events', 'sqs',
 ### Reverse (SQS → Inbox)
 
 ```sql
-SELECT tide.relay_set_inbox('sqs-to-inbox', 'sqs-events',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'queue_url', 'https://sqs.us-east-1.amazonaws.com/123456789012/incoming',
-    'region', 'us-east-1',
-    'wait_time_seconds', 20,
-    'max_messages', 10
-  ),
-  p_source := 'sqs'
+    'name', 'sqs-to-inbox',
+    'inbox', 'sqs-events',
+    'source', 'sqs',
+    'config', jsonb_build_object(
+      'queue_url', 'https://sqs.us-east-1.amazonaws.com/123456789012/incoming',
+      'region', 'us-east-1',
+      'wait_time_seconds', 20,
+      'max_messages', 10
+    )
+  )
 );
 ```
 
@@ -388,11 +433,16 @@ HTTP webhooks are the universal integration mechanism — any system with an HTT
 Delivers outbox messages as HTTP POST requests to a configured URL:
 
 ```sql
-SELECT tide.relay_set_outbox('events-webhook', 'events', 'webhook',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'https://api.example.com/webhooks/events',
-    'timeout_ms', 5000,
-    'headers', '{"Authorization": "Bearer token123", "X-Source": "pg-tide"}'
+    'name', 'events-webhook',
+    'outbox', 'events',
+    'sink_type', 'webhook',
+    'config', jsonb_build_object(
+      'url', 'https://api.example.com/webhooks/events',
+      'timeout_ms', 5000,
+      'headers', '{"Authorization": "Bearer token123", "X-Source": "pg-tide"}'
+    )
   )
 );
 ```
@@ -428,13 +478,17 @@ The `X-PgTide-Dedup-Key` header allows the receiver to implement idempotency. Th
 Exposes an HTTP endpoint that accepts incoming webhook deliveries and writes them to an inbox:
 
 ```sql
-SELECT tide.relay_set_inbox('webhook-receiver', 'incoming-hooks',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'port', 8080,
-    'path', '/webhooks/incoming',
-    'auth_header', 'Bearer whsec_your_secret'
-  ),
-  p_source := 'webhook'
+    'name', 'webhook-receiver',
+    'inbox', 'incoming-hooks',
+    'source', 'webhook',
+    'config', jsonb_build_object(
+      'port', 8080,
+      'path', '/webhooks/incoming',
+      'auth_header', 'Bearer whsec_your_secret'
+    )
+  )
 );
 ```
 
@@ -473,7 +527,13 @@ For development, testing, and debugging, the relay includes `stdout` (forward) a
 **stdout** prints delivered messages to the relay's standard output — useful for verifying that your pipeline configuration works without setting up an external system:
 
 ```sql
-SELECT tide.relay_set_outbox('debug-pipeline', 'events', 'stdout');
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'debug-pipeline',
+    'outbox', 'events',
+    'sink_type', 'stdout'
+  )
+);
 ```
 
 **stdin** reads messages from standard input — useful for manual testing of inbox processing:

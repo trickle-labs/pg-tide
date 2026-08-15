@@ -26,26 +26,45 @@ When you're ready to fan out to Kafka, NATS, Redis Streams, or any analytics pla
 
 ## Quick Start
 
+Requires **PostgreSQL 18**. The block below runs against a database with the
+`pg_tide` extension installed:
+
+<!-- quickstart:run -->
 ```sql
--- Install the extension
-CREATE EXTENSION pg_tide;
+-- Install the extension (idempotent)
+CREATE EXTENSION IF NOT EXISTS pg_tide;
 
--- Create an outbox
-SELECT tide.outbox_create_if_not_exists('orders', 24, NULL);
+-- Create an outbox. This inserts a catalog row — no per-outbox table DDL.
+SELECT tide.outbox_create_if_not_exists('orders');
 
--- Publish a message atomically with your business transaction
+-- Publish an event atomically with your business write.
+CREATE TABLE IF NOT EXISTS orders (id BIGINT PRIMARY KEY, total NUMERIC);
 BEGIN;
   INSERT INTO orders (id, total) VALUES (42, 99.99);
-  SELECT tide.outbox_publish('orders',
+  SELECT tide.outbox_publish(
+    'orders',
     '{"order_id": 42, "total": 99.99}'::jsonb,
     '{"event_type": "order.created"}'::jsonb
   );
 COMMIT;
 
--- Configure a relay pipeline (config persists in PostgreSQL)
-SELECT tide.relay_set_outbox('orders-nats', 'orders', 'nats',
-  '{"url": "nats://localhost:4222", "subject": "orders.events"}'::jsonb
+-- Configure a native outbox → NATS JetStream pipeline.
+-- The config persists in PostgreSQL and hot-reloads; the native relay polls the
+-- shared tide.tide_outbox_messages table directly (ADR-011).
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-nats',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://localhost:4222',
+      'subject', 'orders.created'
+    )
+  )
 );
+
+-- Confirm the installed extension version.
+SELECT extversion FROM pg_extension WHERE extname = 'pg_tide';
 ```
 
 Start the relay:
@@ -54,7 +73,9 @@ Start the relay:
 pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
 ```
 
-Messages flow from the outbox to NATS. Change the pipeline config in PostgreSQL — the relay picks it up without a restart. See the [documentation](https://trickle-labs.github.io/pg-tide/) for full details.
+Messages flow from the outbox to NATS JetStream. Change the pipeline config in PostgreSQL — the relay picks it up without a restart.
+
+**Delivery semantics.** The native relay polls the canonical shared table and tracks a durable offset per relay group, pipeline, and outbox. Delivery is **at-least-once**; each forward message carries a stable deduplication identity (`outbox_<name>:<id>:<row_index>`, published as `Nats-Msg-Id`) so JetStream can deduplicate a replay. Successful native delivery is proved by the per-pipeline offset — it does **not** mark a row globally `consumed_at`, and pg_tide makes no unqualified exactly-once claim. See the [documentation](https://trickle-labs.github.io/pg-tide/) for full details.
 
 ## Installation
 
@@ -195,8 +216,8 @@ All functions live in the `tide` schema. Key functions by area:
 
 | Function | Description |
 |----------|-------------|
-| `tide.relay_set_outbox(name, outbox, sink_type, config)` | Configure forward pipeline (outbox → sink) |
-| `tide.relay_set_inbox(name, inbox, source_type, config)` | Configure reverse pipeline (source → inbox) |
+| `tide.relay_set_outbox_v2(config jsonb)` | Configure forward pipeline (outbox → sink); keys: `name`, `outbox`, `sink_type`, `config`, optional `source_mode` (`native` default / `pg_trickle`) |
+| `tide.relay_set_inbox_v2(config jsonb)` | Configure reverse pipeline (source → inbox) |
 | `tide.relay_set_tenant(pipeline, tenant)` | Assign a pipeline to a tenant |
 | `tide.relay_grant_tenant(pipeline, tenant, role)` | Grant tenant access |
 

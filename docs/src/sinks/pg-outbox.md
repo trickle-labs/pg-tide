@@ -9,16 +9,17 @@ Choose this sink for multi-region deployments where events published in one regi
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'replicate-to-eu',
-    'orders',
-    'federation-relay',
-    '{
-        "sink_type": "pg_outbox",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'replicate-to-eu',
+    'outbox', 'orders',
+    'sink_type', 'pg_outbox',
+    'config', '{
         "target_url": "${env:EU_DB_URL}",
         "target_outbox": "orders_eu_replica",
         "batch_size": 200
     }'::jsonb
+  )
 );
 ```
 

@@ -157,18 +157,20 @@ pg_tide supports two pipeline directions:
 Forward pipelines connect an outbox to an external sink:
 
 ```sql
-SELECT tide.relay_set_outbox(
-  'orders-to-kafka',     -- pipeline name (must be unique)
-  'orders',              -- source outbox name
-  'kafka',               -- sink type
-  jsonb_build_object(    -- sink-specific configuration
-    'brokers', 'broker1:9092,broker2:9092',
-    'topic', 'order-events',
-    'acks', 'all',
-    'compression', 'snappy'
-  ),
-  p_batch_size := 200,   -- deliver messages in batches of 200
-  p_enabled := true      -- start processing immediately
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-kafka',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', jsonb_build_object(    -- sink-specific configuration
+      'brokers', 'broker1:9092,broker2:9092',
+      'topic', 'order-events',
+      'acks', 'all',
+      'compression', 'snappy'
+    ),
+    'batch_size', 200,
+    'enabled', true
+  )
 );
 ```
 
@@ -179,17 +181,19 @@ The `config` parameter is a JSONB object whose keys depend on the sink type. Eac
 Reverse pipelines connect an external source to an inbox:
 
 ```sql
-SELECT tide.relay_set_inbox(
-  'stripe-webhooks',       -- pipeline name
-  'payment-events',        -- target inbox name
-  jsonb_build_object(      -- source-specific configuration
-    'port', 8080,
-    'path', '/webhooks/stripe',
-    'auth_header', 'Bearer whsec_abc123'
-  ),
-  p_source := 'webhook',  -- source type
-  p_batch_size := 50,
-  p_idempotent := true     -- enable dedup key extraction
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'stripe-webhooks',
+    'inbox', 'payment-events',
+    'source', 'webhook',
+    'config', jsonb_build_object(      -- source-specific configuration
+      'port', 8080,
+      'path', '/webhooks/stripe',
+      'auth_header', 'Bearer whsec_abc123'
+    ),
+    'batch_size', 50,
+    'idempotent', true
+  )
 );
 ```
 
@@ -291,37 +295,56 @@ Here's a typical production setup with multiple pipelines serving different purp
 
 ```sql
 -- Forward: order events go to NATS for real-time microservice communication
-SELECT tide.relay_set_outbox('orders-realtime', 'orders', 'nats',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'nats://nats-cluster:4222',
-    'subject', 'orders.{event_type}'
+    'name', 'orders-realtime',
+    'outbox', 'orders',
+    'sink_type', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://nats-cluster:4222',
+      'subject', 'orders.{event_type}'
+    )
   )
 );
 
 -- Forward: order events also go to Kafka for long-term analytics
-SELECT tide.relay_set_outbox('orders-analytics', 'orders', 'kafka',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'brokers', 'kafka:9092',
-    'topic', 'orders-analytics',
-    'compression', 'zstd'
-  ),
-  p_batch_size := 500
+    'name', 'orders-analytics',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', jsonb_build_object(
+      'brokers', 'kafka:9092',
+      'topic', 'orders-analytics',
+      'compression', 'zstd'
+    ),
+    'batch_size', 500
+  )
 );
 
 -- Reverse: incoming payment confirmations from a third-party webhook
-SELECT tide.relay_set_inbox('payment-webhooks', 'payments',
+SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
-    'port', 8080,
-    'path', '/webhooks/payments'
-  ),
-  p_source := 'webhook'
+    'name', 'payment-webhooks',
+    'inbox', 'payments',
+    'source', 'webhook',
+    'config', jsonb_build_object(
+      'port', 8080,
+      'path', '/webhooks/payments'
+    )
+  )
 );
 
 -- Forward: payment confirmations forwarded to an internal NATS subject
-SELECT tide.relay_set_outbox('payments-internal', 'payment-notifications', 'nats',
+SELECT tide.relay_set_outbox_v2(
   jsonb_build_object(
-    'url', 'nats://nats-cluster:4222',
-    'subject', 'payments.confirmed'
+    'name', 'payments-internal',
+    'outbox', 'payment-notifications',
+    'sink_type', 'nats',
+    'config', jsonb_build_object(
+      'url', 'nats://nats-cluster:4222',
+      'subject', 'payments.confirmed'
+    )
   )
 );
 ```

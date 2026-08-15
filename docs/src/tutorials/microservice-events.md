@@ -63,14 +63,16 @@ COMMIT;
 Configure the relay to publish to NATS:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-nats',
-    'order_events',
-    '{
-        "sink_type": "nats",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-nats',
+    'outbox', 'order_events',
+    'sink_type', 'nats',
+    'config', '{
         "url": "nats://nats:4222",
         "subject_template": "events.orders.{op}"
     }'::jsonb
+  )
 );
 ```
 
@@ -85,16 +87,18 @@ SELECT tide.inbox_create('payment_triggers');
 Configure an inbox pipeline that subscribes to order events:
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'orders-for-payments',
-    'payment_triggers',
-    '{
-        "source_type": "nats",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'orders-for-payments',
+    'inbox', 'payment_triggers',
+    'source', 'nats',
+    'config', '{
         "url": "nats://nats:4222",
         "subject": "events.orders.>",
         "consumer_group": "payment-service",
         "durable_name": "payment-service"
     }'::jsonb
+  )
 );
 ```
 
@@ -117,11 +121,12 @@ SELECT tide.inbox_mark_processed('payment_triggers', 42);
 CREATE EXTENSION pg_tide;
 SELECT tide.inbox_create('shipping_triggers');
 
-SELECT tide.relay_set_inbox(
-    'orders-for-shipping',
-    'shipping_triggers',
-    '{
-        "source_type": "nats",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'orders-for-shipping',
+    'inbox', 'shipping_triggers',
+    'source', 'nats',
+    'config', '{
         "url": "nats://nats:4222",
         "subject": "events.orders.>",
         "consumer_group": "shipping-service",
@@ -130,6 +135,7 @@ SELECT tide.relay_set_inbox(
             "filter": "payload.event_type == '"'"'order.created'"'"'"
         }
     }'::jsonb
+  )
 );
 ```
 

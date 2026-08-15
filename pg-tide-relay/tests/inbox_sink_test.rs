@@ -143,6 +143,9 @@ async fn test_pg_inbox_sink_round_trip() {
             is_full_refresh: false,
             outbox_id: None,
             refresh_id: None,
+            outbox_name: None,
+            headers: None,
+            created_at: None,
             ack_token: pg_tide_relay::envelope::AckToken::None,
         })
         .collect();

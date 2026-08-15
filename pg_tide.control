@@ -1,6 +1,6 @@
 # pg_tide extension control file
 comment = 'Transactional outbox, idempotent inbox, and relay catalog for PostgreSQL'
-default_version = '0.39.0'
+default_version = '0.40.0'
 module_pathname = '$libdir/pg_tide'
 relocatable = false
 requires = ''

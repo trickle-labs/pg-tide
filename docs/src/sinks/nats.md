@@ -21,46 +21,48 @@ Consider Kafka instead if you need very long retention periods (weeks/months), s
 The relay connects to a NATS server (or cluster) and publishes messages to JetStream subjects. JetStream provides durable storage, so messages are persisted even if no consumer is currently subscribed. The flow is:
 
 1. The relay fetches a batch of undelivered messages from the outbox.
-2. Each message is published to the configured NATS subject (which can be templated per-message).
-3. JetStream acknowledges persistence of each message.
-4. The relay commits the consumer group offset in PostgreSQL.
+2. The **sink** renders the configured subject (fixed `subject` or a `subject_template`) from each message's metadata and publishes it.
+3. JetStream acknowledges persistence of each message before the batch is treated as delivered.
+4. The relay advances its durable per-pipeline offset (relay group, pipeline, outbox) in PostgreSQL.
 
-NATS JetStream supports message deduplication based on a `Nats-Msg-Id` header. pg_tide automatically sets this header to the outbox message's dedup_key, which means that even if the relay retries a publish (after a network interruption, for example), NATS will not create duplicate messages in the stream.
+NATS JetStream supports message deduplication based on a `Nats-Msg-Id` header. pg_tide automatically sets this header to the outbox message's stable dedup key, which means that even if the relay retries a publish (after a network interruption, for example), NATS will not create duplicate messages in the stream.
 
 ## Configuration
 
 ### Minimal Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-nats',
-    'orders',
-    'nats-relay',
-    '{
-        "sink_type": "nats",
-        "url": "nats://localhost:4222",
-        "subject": "orders.events"
-    }'::jsonb
+SELECT tide.relay_set_outbox_v2(
+    jsonb_build_object(
+        'name', 'orders-to-nats',
+        'outbox', 'orders',
+        'sink_type', 'nats',
+        'config', jsonb_build_object(
+            'url', 'nats://localhost:4222',
+            'subject', 'orders.events'
+        )
+    )
 );
 ```
 
 ### Production Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-nats',
-    'orders',
-    'nats-relay',
-    '{
-        "sink_type": "nats",
-        "url": "${env:NATS_URL}",
-        "subject": "events.{stream_table}.{op}",
-        "credentials_file": "${env:NATS_CREDS_FILE}",
-        "tls_enabled": true,
-        "tls_ca_cert": "/etc/certs/nats-ca.pem",
-        "stream": "EVENTS",
-        "batch_size": 200
-    }'::jsonb
+SELECT tide.relay_set_outbox_v2(
+    jsonb_build_object(
+        'name', 'orders-to-nats',
+        'outbox', 'orders',
+        'sink_type', 'nats',
+        'batch_size', 200,
+        'config', jsonb_build_object(
+            'url', '${env:NATS_URL}',
+            'subject_template', 'events.{outbox}.{op}',
+            'credentials_file', '${env:NATS_CREDS_FILE}',
+            'tls_enabled', true,
+            'tls_ca_cert', '/etc/certs/nats-ca.pem',
+            'stream', 'EVENTS'
+        )
+    )
 );
 ```
 
@@ -70,7 +72,8 @@ SELECT tide.relay_set_outbox(
 |-----------|------|---------|-------------|
 | `sink_type` | string | — | Must be `"nats"` |
 | `url` | string | — | NATS server URL(s). Comma-separated for clusters: `"nats://host1:4222,nats://host2:4222"` |
-| `subject` | string | — | Target subject. Supports templates: `{stream_table}`, `{op}`, `{outbox_id}` |
+| `subject` | string | — | Fixed target subject, used verbatim |
+| `subject_template` | string | `{outbox}.{op}` | Rendered subject. Variables: `{outbox}`, `{op}`, `{outbox_id}`, `{event_type}` (from a string `event_type` header, falls back to `event`), and the legacy `{stream_table}` (renders `outbox_<name>`) |
 | `stream` | string | `null` | JetStream stream name (auto-detected from subject if not specified) |
 | `credentials_file` | string | `null` | Path to NATS credentials file (`.creds`) |
 | `nkey_seed` | string | `null` | NKey seed for authentication |
@@ -137,12 +140,12 @@ Simple token-based auth for smaller deployments:
 
 ## Delivery Guarantees
 
-The NATS JetStream sink provides **exactly-once delivery** when properly configured. This is achieved through the combination of:
+The NATS JetStream sink provides **at-least-once delivery**, and JetStream deduplication makes downstream delivery effectively exactly-once within the stream's dedup window when properly configured. This is achieved through the combination of:
 
-1. **JetStream message deduplication** — pg_tide sets the `Nats-Msg-Id` header to the message's dedup_key. JetStream tracks published message IDs within its deduplication window and rejects duplicates silently.
-2. **Outbox offset tracking** — The relay only commits offsets after JetStream acknowledges persistence.
+1. **JetStream message deduplication** — pg_tide sets the `Nats-Msg-Id` header to the message's stable dedup key (`outbox_<name>:<id>:<row_index>`). JetStream tracks published message IDs within its deduplication window and rejects duplicates silently.
+2. **Per-pipeline offset tracking** — The relay only advances its durable offset (keyed by relay group, pipeline, and outbox) after JetStream acknowledges persistence.
 
-This means that even if the relay crashes and restarts, re-published messages will be deduplicated by JetStream, preventing downstream consumers from seeing duplicates.
+This means that even if the relay crashes and restarts, re-published messages carry the same `Nats-Msg-Id` and are deduplicated by JetStream, preventing downstream consumers from seeing duplicates. pg_tide itself makes no unqualified exactly-once claim.
 
 ## Subject Routing
 
@@ -159,7 +162,7 @@ Configure dynamic subject routing with:
 
 ```json
 {
-    "subject": "events.{stream_table}.{op}"
+    "subject_template": "events.{outbox}.{op}"
 }
 ```
 
@@ -170,22 +173,23 @@ Downstream services can subscribe to exactly the events they care about using NA
 ### 1. Create the Outbox
 
 ```sql
-SELECT tide.outbox_create('notifications', retention_hours => 24);
+SELECT tide.outbox_create_if_not_exists('notifications', 24);
 ```
 
 ### 2. Configure the Pipeline
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'notify-pipeline',
-    'notifications',
-    'nats-group',
-    '{
-        "sink_type": "nats",
-        "url": "nats://localhost:4222",
-        "subject": "notifications.{op}",
-        "stream": "NOTIFICATIONS"
-    }'::jsonb
+SELECT tide.relay_set_outbox_v2(
+    jsonb_build_object(
+        'name', 'notify-pipeline',
+        'outbox', 'notifications',
+        'sink_type', 'nats',
+        'config', jsonb_build_object(
+            'url', 'nats://localhost:4222',
+            'subject_template', 'notifications.{op}',
+            'stream', 'NOTIFICATIONS'
+        )
+    )
 );
 SELECT tide.relay_enable('notify-pipeline');
 ```
@@ -196,7 +200,7 @@ SELECT tide.relay_enable('notify-pipeline');
 SELECT tide.outbox_publish(
     'notifications',
     '{"type": "order.shipped", "order_id": "ord-555", "customer": "alice@example.com"}'::jsonb,
-    'ord-555-shipped'
+    '{"event_type": "order.shipped"}'::jsonb
 );
 ```
 

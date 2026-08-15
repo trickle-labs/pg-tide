@@ -52,15 +52,16 @@ sequenceDiagram
 The simplest possible Kafka sink configuration requires only the broker addresses and a topic name:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-kafka',          -- pipeline name
-    'orders',                    -- outbox name
-    'kafka-relay',               -- consumer group
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-kafka',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "localhost:9092",
         "topic": "order-events"
     }'::jsonb
+  )
 );
 ```
 
@@ -71,12 +72,12 @@ This connects to a local Kafka cluster without authentication, sends all message
 A production-ready configuration includes authentication, compression, and tuned producer settings:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-kafka',
-    'orders',
-    'kafka-relay',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-kafka',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "${env:KAFKA_BROKERS}",
         "topic": "orders.events.{op}",
         "sasl_mechanism": "SCRAM-SHA-256",
@@ -90,6 +91,7 @@ SELECT tide.relay_set_outbox(
         "idempotent": true,
         "request_timeout_ms": 30000
     }'::jsonb
+  )
 );
 ```
 
@@ -303,12 +305,12 @@ COMMIT;
 ### 3. Configure the Pipeline
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-to-kafka',
-    'orders',
-    'kafka-relay',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-to-kafka',
+    'outbox', 'orders',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "order-events",
         "compression": "zstd",
@@ -316,6 +318,7 @@ SELECT tide.relay_set_outbox(
         "idempotent": true,
         "batch_size": 100
     }'::jsonb
+  )
 );
 SELECT tide.relay_enable('orders-to-kafka');
 ```

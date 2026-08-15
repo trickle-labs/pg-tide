@@ -169,6 +169,9 @@ impl super::Source for EventHubsSource {
             );
 
             messages.push(RelayMessage {
+                outbox_name: None,
+                headers: None,
+                created_at: None,
                 subject: format!("{}/{}", self.event_hub, partition_id),
                 op: self.event_type.clone(),
                 dedup_key,

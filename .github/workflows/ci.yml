@@ -210,12 +210,13 @@ jobs:
         run: |
           cargo test --package pg-tide-relay --test migration_test -- --test-threads=1
           cargo test --package pg-tide-relay --test sql_api_test -- --test-threads=1
-          cargo test --package pg-tide-relay --test sql_to_sink_e2e -- --test-threads=1
+          cargo test --package pg-tide-relay --test outbox_source_test -- --test-threads=1
           cargo test --package pg-tide-relay --test wire_format_test -- --test-threads=1
           cargo test --package pg-tide-relay --test wire_format_proptest -- --test-threads=1
           cargo test --package pg-tide-relay --test dag_test -- --test-threads=1
           cargo test --package pg-tide-relay --test v037_validation_test -- --test-threads=1
           cargo test --package pg-tide-relay --test v038_validation_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test v040_validation_test -- --test-threads=1
 
   # v0.38.0: RockLake Phase 6 integration tests.
   # Uses PgWireHarness (in-process RockLake PG-wire server) — no Docker required.
@@ -422,6 +423,244 @@ jobs:
             /usr/lib/postgresql/18/lib
           cargo pgrx test pg18 --package pg-tide-ext
 
+  # v0.40.0 (Workstream G): Authoritative public-API outbox → NATS JetStream E2E.
+  # Installs the packaged extension into a real PostgreSQL 18, then runs the
+  # public_api_outbox_to_nats_e2e test (NATS provided by testcontainers).
+  public-api-nats-e2e:
+    name: Public API Outbox → NATS JetStream E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-public-api-nats-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install PostgreSQL 18 and build dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates gnupg lsb-release \
+            libclang-dev clang llvm-dev pkg-config
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            --fail -sS https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-18 postgresql-server-dev-18
+
+      - name: Install cargo-pgrx
+        run: cargo install cargo-pgrx --version "=0.18.0" --locked
+
+      - name: Init pgrx with system PostgreSQL 18
+        run: cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
+
+      - name: Install pg_tide into system PostgreSQL 18
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            /usr/share/postgresql/18/extension \
+            /usr/lib/postgresql/18/lib
+          cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
+
+      - name: Start PostgreSQL 18 and create a test database
+        run: |
+          sudo systemctl start postgresql@18-main || sudo pg_ctlcluster 18 main start
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres createdb pgtide_e2e
+
+      - name: Run public API outbox → NATS JetStream E2E
+        env:
+          PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e"
+        run: |
+          cargo test --package pg-tide-relay --test public_api_outbox_to_nats_e2e -- \
+            --test-threads=1 --nocapture
+
+  # v0.40.0 (Workstream H.3): Execute the marked Quick Start SQL blocks against a
+  # real installed extension.
+  quickstart-sql:
+    name: Executable Quick Start SQL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install PostgreSQL 18 and build dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates gnupg lsb-release \
+            libclang-dev clang llvm-dev pkg-config python3
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            --fail -sS https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-18 postgresql-server-dev-18
+
+      - name: Install cargo-pgrx and pg_tide
+        run: |
+          cargo install cargo-pgrx --version "=0.18.0" --locked
+          cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
+          sudo chown -R "$(id -u):$(id -g)" \
+            /usr/share/postgresql/18/extension \
+            /usr/lib/postgresql/18/lib
+          cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
+
+      - name: Start PostgreSQL and run marked Quick Start SQL
+        env:
+          PGURL: "postgres://postgres:postgres@127.0.0.1:5432/postgres"
+        run: |
+          sudo systemctl start postgresql@18-main || sudo pg_ctlcluster 18 main start
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          python3 scripts/run_quickstart_sql.py \
+            README.md docs/src/getting-started/first-pipeline.md
+
+  # v0.40.0 (Workstream I): Real packaged fresh-install vs upgrade parity.
+  # CREATE EXTENSION '0.40.0' vs CREATE EXTENSION '0.39.0' + ALTER EXTENSION UPDATE.
+  real-extension-parity:
+    name: Real Fresh Install vs Upgrade Parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: trickle-labs/rocklake
+          ref: v0.27.14
+          path: rocklake2
+
+      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
+        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install PostgreSQL 18 and build dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates gnupg lsb-release \
+            libclang-dev clang llvm-dev pkg-config
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            --fail -sS https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-18 postgresql-server-dev-18
+
+      - name: Install cargo-pgrx
+        run: |
+          cargo install cargo-pgrx --version "=0.18.0" --locked
+          cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
+
+      - name: Install packaged v0.39.0 extension
+        run: |
+          git clone --depth 1 --branch v0.39.0 \
+            https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v039-source"
+          (
+            cd "$GITHUB_WORKSPACE/v039-source"
+            cargo pgrx install --package pg-tide-ext \
+              --pg-config /usr/lib/postgresql/18/bin/pg_config
+          )
+
+      - name: Install packaged v0.40.0 extension
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            /usr/share/postgresql/18/extension \
+            /usr/lib/postgresql/18/lib
+          cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
+
+      - name: Verify upgrade path exists (chain completeness through workspace version)
+        run: bash scripts/check_upgrade_completeness.sh
+
+      - name: Compare real fresh-install vs upgrade schema
+        run: |
+          sudo systemctl start postgresql@18-main || sudo pg_ctlcluster 18 main start
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          export PGPASSWORD=postgres
+          # Fresh install directly at the current version.
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS fresh40;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh40;"
+          psql -h 127.0.0.1 -U postgres -d fresh40 -c "CREATE EXTENSION pg_tide VERSION '0.40.0';"
+          # Upgrade from 0.39.0.
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade40;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade40;"
+          psql -h 127.0.0.1 -U postgres -d upgrade40 -c "CREATE EXTENSION pg_tide VERSION '0.39.0';"
+          psql -h 127.0.0.1 -U postgres -d upgrade40 -c "ALTER EXTENSION pg_tide UPDATE TO '0.40.0';"
+          # Normalized schema comparison.
+          for db in fresh40 upgrade40; do
+            pg_dump -h 127.0.0.1 -U postgres -d "$db" --schema-only --schema=tide \
+              --no-owner --no-privileges | grep -v '^--' | grep -v '^$' | sort > "/dev/shm/${db}.sql"
+          done
+          if diff --ignore-space-change /dev/shm/fresh40.sql /dev/shm/upgrade40.sql; then
+            echo "OK: real fresh install and 0.39.0 -> 0.40.0 upgrade produce identical tide schemas."
+          else
+            echo "FAIL: fresh vs upgrade schema drift for v0.40.0."
+            exit 1
+          fi
+
+  # v0.40.0: Fast doc/migration guards (no build required).
+  docs-migration-guards:
+    name: Docs & Migration Guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Reject active positional relay API calls in docs
+        run: |
+          ALLOWLIST='docs/src/operations/v1-migration-guide.md|docs/src/guides/migrating-to-pg-tide.md|docs/src/integration/pg-trickle.md'
+          HITS=$(grep -rn 'SELECT tide.relay_set_outbox(\|SELECT tide.relay_set_inbox(' docs/ examples/ README.md 2>/dev/null \
+            | grep -v '_v2' | grep -vE "^(${ALLOWLIST}):" || true)
+          if [ -n "$HITS" ]; then
+            echo "ERROR: active positional relay API calls found (use *_v2 JSONB forms):"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK: no active positional relay API calls in documentation."
+
+      - name: Verify migration chain completeness through workspace version
+        run: bash scripts/check_upgrade_completeness.sh
+
   supply-chain:
     name: Supply-Chain Audit (cargo-deny)
     runs-on: ubuntu-latest
@@ -534,37 +773,6 @@ jobs:
           fi
           echo "OK: No stale PGTRICKLE_ references found."
 
-  # v0.17.0: SQL → relay → file-sink E2E test — verifies the SQL/relay contract.
-  test-e2e:
-    name: SQL → relay → sink E2E test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Run SQL → relay → sink E2E test
-        run: cargo test --package pg-tide-relay --test sql_to_sink_e2e -- --test-threads=1
-
   # v0.26.0: Guard against expect() calls in production (non-test) relay code.
   # SAFETY-annotated expect() calls are permitted; bare ones are not.
   lint-expect:
@@ -660,38 +868,9 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d fresh_schema \
             -f sql/pg_tide--0.1.0.sql
 
-          for f in \
-            sql/pg_tide--0.1.0--0.2.0.sql \
-            sql/pg_tide--0.2.0--0.3.0.sql \
-            sql/pg_tide--0.3.0--0.4.0.sql \
-            sql/pg_tide--0.4.0--0.5.0.sql \
-            sql/pg_tide--0.5.0--0.6.0.sql \
-            sql/pg_tide--0.6.0--0.7.0.sql \
-            sql/pg_tide--0.7.0--0.8.0.sql \
-            sql/pg_tide--0.8.0--0.9.0.sql \
-            sql/pg_tide--0.9.0--0.10.0.sql \
-            sql/pg_tide--0.10.0--0.11.0.sql \
-            sql/pg_tide--0.11.0--0.12.0.sql \
-            sql/pg_tide--0.12.0--0.13.0.sql \
-            sql/pg_tide--0.13.0--0.14.0.sql \
-            sql/pg_tide--0.14.0--0.15.0.sql \
-            sql/pg_tide--0.15.0--0.16.0.sql \
-            sql/pg_tide--0.16.0--0.17.0.sql \
-            sql/pg_tide--0.17.0--0.18.0.sql \
-            sql/pg_tide--0.18.0--0.19.0.sql \
-            sql/pg_tide--0.19.0--0.20.0.sql \
-            sql/pg_tide--0.20.0--0.21.0.sql \
-            sql/pg_tide--0.21.0--0.22.0.sql \
-            sql/pg_tide--0.22.0--0.23.0.sql \
-            sql/pg_tide--0.23.0--0.24.0.sql \
-            sql/pg_tide--0.24.0--0.25.0.sql \
-            sql/pg_tide--0.25.0--0.26.0.sql \
-            sql/pg_tide--0.26.0--0.27.0.sql \
-            sql/pg_tide--0.27.0--0.28.0.sql \
-            sql/pg_tide--0.28.0--0.29.0.sql \
-            sql/pg_tide--0.29.0--0.30.0.sql \
-            sql/pg_tide--0.30.0--0.31.0.sql \
-            sql/pg_tide--0.31.0--0.32.0.sql; do
+          # v0.40.0: Derive the ordered upgrade chain from the repository files
+          # (version-sorted) instead of a hard-coded list.
+          for f in $(ls sql/pg_tide--*--*.sql | sort -V); do
             psql -h 127.0.0.1 -U postgres -d fresh_schema -f "$f"
           done
 
@@ -714,38 +893,8 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d upgrade_schema -c "CREATE SCHEMA tide;"
           psql -h 127.0.0.1 -U postgres -d upgrade_schema -f sql/pg_tide--0.1.0.sql
 
-          for f in \
-            sql/pg_tide--0.1.0--0.2.0.sql \
-            sql/pg_tide--0.2.0--0.3.0.sql \
-            sql/pg_tide--0.3.0--0.4.0.sql \
-            sql/pg_tide--0.4.0--0.5.0.sql \
-            sql/pg_tide--0.5.0--0.6.0.sql \
-            sql/pg_tide--0.6.0--0.7.0.sql \
-            sql/pg_tide--0.7.0--0.8.0.sql \
-            sql/pg_tide--0.8.0--0.9.0.sql \
-            sql/pg_tide--0.9.0--0.10.0.sql \
-            sql/pg_tide--0.10.0--0.11.0.sql \
-            sql/pg_tide--0.11.0--0.12.0.sql \
-            sql/pg_tide--0.12.0--0.13.0.sql \
-            sql/pg_tide--0.13.0--0.14.0.sql \
-            sql/pg_tide--0.14.0--0.15.0.sql \
-            sql/pg_tide--0.15.0--0.16.0.sql \
-            sql/pg_tide--0.16.0--0.17.0.sql \
-            sql/pg_tide--0.17.0--0.18.0.sql \
-            sql/pg_tide--0.18.0--0.19.0.sql \
-            sql/pg_tide--0.19.0--0.20.0.sql \
-            sql/pg_tide--0.20.0--0.21.0.sql \
-            sql/pg_tide--0.21.0--0.22.0.sql \
-            sql/pg_tide--0.22.0--0.23.0.sql \
-            sql/pg_tide--0.23.0--0.24.0.sql \
-            sql/pg_tide--0.24.0--0.25.0.sql \
-            sql/pg_tide--0.25.0--0.26.0.sql \
-            sql/pg_tide--0.26.0--0.27.0.sql \
-            sql/pg_tide--0.27.0--0.28.0.sql \
-            sql/pg_tide--0.28.0--0.29.0.sql \
-            sql/pg_tide--0.29.0--0.30.0.sql \
-            sql/pg_tide--0.30.0--0.31.0.sql \
-            sql/pg_tide--0.31.0--0.32.0.sql; do
+          # v0.40.0: Derive the ordered upgrade chain from the repository files.
+          for f in $(ls sql/pg_tide--*--*.sql | sort -V); do
             psql -h 127.0.0.1 -U postgres -d upgrade_schema -f "$f"
           done
 

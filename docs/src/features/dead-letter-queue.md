@@ -29,11 +29,12 @@ Failed messages are inserted into `tide.relay_dlq` with full context: the pipeli
 DLQ is configured per-pipeline:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-pipeline',
-    'order_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-pipeline',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "orders",
         "dlq": {
@@ -43,6 +44,7 @@ SELECT tide.relay_set_outbox(
             "retention_days": 30
         }
     }'::jsonb
+  )
 );
 ```
 

@@ -49,13 +49,15 @@ You'll see one pending event waiting to be relayed.
 For this tutorial, we'll use the `stdout` sink (prints messages to the relay's terminal):
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'my-first-pipeline',
-    'my_events',
-    '{
-        "sink_type": "stdout",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'my-first-pipeline',
+    'outbox', 'my_events',
+    'sink_type', 'stdout',
+    'config', '{
         "format": "json_pretty"
     }'::jsonb
+  )
 );
 ```
 

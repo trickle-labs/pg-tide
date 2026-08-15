@@ -9,11 +9,12 @@ Use the Kafka source when other services produce events to Kafka that your Postg
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'payments-from-kafka',
-    'payment_events',
-    '{
-        "source_type": "kafka",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'payments-from-kafka',
+    'inbox', 'payment_events',
+    'source', 'kafka',
+    'config', '{
         "brokers": "${env:KAFKA_BROKERS}",
         "topic": "payment-events",
         "group_id": "pg-tide-payments",
@@ -23,6 +24,7 @@ SELECT tide.relay_set_inbox(
         "sasl_password": "${env:KAFKA_PASS}",
         "tls_enabled": true
     }'::jsonb
+  )
 );
 ```
 

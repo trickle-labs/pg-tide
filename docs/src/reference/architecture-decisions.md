@@ -109,6 +109,25 @@ This page documents the key architectural decisions made in pg_tide's design, th
 - Applications that need exactly-once must implement deduplication
 - The inbox pattern adds complexity for cross-system exactly-once
 
+## ADR-7: Canonical Outbox Storage and Native Relay Polling
+
+**Decision:** The native relay polls the single shared table `tide.tide_outbox_messages` with a static, parameterized query keyed by `outbox_name`, and tracks offsets by `(relay_group_id, pipeline_id, outbox_name)`.
+
+**Context:** The native write path (`tide.outbox_publish()`) always wrote to `tide.tide_outbox_messages`, but the relay's native source historically polled a dynamically-named per-outbox relation (`tide."outbox_<name>"`) that native installs never create. That relation naming belongs to pg_trickle compatibility, not native pg_tide.
+
+**Rationale:**
+- The read and write paths must address the same table
+- A static `WHERE outbox_name = $1 AND id > $2 ORDER BY id LIMIT $3` query with an unconditional `(outbox_name, id)` index needs no per-outbox DDL
+- Per-pipeline offsets make fan-out and restart correct without relying on the global `consumed_at` timestamp
+- pg_trickle compatibility remains available behind an explicit `source_type = "pg_trickle_outbox"` mode
+
+**Trade-offs:**
+- The offset key change (`(relay_group_id, pipeline_id)` → `(relay_group_id, pipeline_id, outbox_name)`) requires a stop-upgrade-start migration
+- Global identity gaps within one outbox are expected; ordering is strictly increasing but not contiguous
+- `consumed_at` and consumer groups remain but are non-authoritative for native delivery
+
+See [ADR-011](https://github.com/trickle-labs/pg-tide/blob/main/docs/adr/adr-011-canonical-outbox-storage-and-relay-polling.md) for the full record.
+
 ## Further Reading
 
 - [Architecture](../evaluate/architecture.md) — System design overview

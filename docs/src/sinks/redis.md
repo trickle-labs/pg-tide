@@ -13,27 +13,28 @@ Choose Redis Streams when you need lightweight, fast message delivery and alread
 ### Minimal Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-redis',
-    'events',
-    'redis-relay',
-    '{
-        "sink_type": "redis",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-redis',
+    'outbox', 'events',
+    'sink_type', 'redis',
+    'config', '{
         "url": "redis://localhost:6379",
         "stream_key": "events:outbox"
     }'::jsonb
+  )
 );
 ```
 
 ### Production Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-redis',
-    'events',
-    'redis-relay',
-    '{
-        "sink_type": "redis",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-redis',
+    'outbox', 'events',
+    'sink_type', 'redis',
+    'config', '{
         "url": "rediss://${env:REDIS_HOST}:6380",
         "password": "${env:REDIS_PASSWORD}",
         "stream_key": "events:{stream_table}",
@@ -41,6 +42,7 @@ SELECT tide.relay_set_outbox(
         "batch_size": 200,
         "tls_enabled": true
     }'::jsonb
+  )
 );
 ```
 

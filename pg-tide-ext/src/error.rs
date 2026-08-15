@@ -22,6 +22,12 @@ pub enum PgTideError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    #[error("role '{role}' is not authorized to publish to outbox '{outbox}'")]
+    PublishDenied { role: String, outbox: String },
+
+    #[error("authorization check failed for outbox '{outbox}': {detail}")]
+    AuthorizationError { outbox: String, detail: String },
+
     #[error("SPI error: {0}")]
     SpiError(String),
 }

@@ -11,12 +11,12 @@ Choose the MQTT sink when you need to deliver events to IoT devices or edge comp
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'telemetry-to-mqtt',
-    'device_commands',
-    'mqtt-relay',
-    '{
-        "sink_type": "mqtt",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'telemetry-to-mqtt',
+    'outbox', 'device_commands',
+    'sink_type', 'mqtt',
+    'config', '{
         "url": "mqtts://${env:MQTT_BROKER}:8883",
         "topic": "devices/{stream_table}/commands",
         "qos": 1,
@@ -25,6 +25,7 @@ SELECT tide.relay_set_outbox(
         "client_id": "pg-tide-relay-01",
         "tls_enabled": true
     }'::jsonb
+  )
 );
 ```
 

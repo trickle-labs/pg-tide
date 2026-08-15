@@ -9,18 +9,19 @@ Choose MongoDB when your downstream consumers use MongoDB as their primary data 
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-mongo',
-    'events',
-    'mongo-relay',
-    '{
-        "sink_type": "mongodb",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-mongo',
+    'outbox', 'events',
+    'sink_type', 'mongodb',
+    'config', '{
         "connection_string": "${env:MONGODB_URI}",
         "database": "events",
         "collection": "outbox_events",
         "batch_size": 500,
         "write_concern": "majority"
     }'::jsonb
+  )
 );
 ```
 

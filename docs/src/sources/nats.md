@@ -5,17 +5,19 @@ The NATS source subscribes to NATS JetStream subjects and delivers messages into
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'events-from-nats',
-    'incoming_events',
-    '{
-        "source_type": "nats",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'events-from-nats',
+    'inbox', 'incoming_events',
+    'source', 'nats',
+    'config', '{
         "url": "nats://localhost:4222",
         "subject": "events.>",
         "durable_name": "pg-tide-consumer",
         "stream": "EVENTS",
         "ack_wait_secs": 30
     }'::jsonb
+  )
 );
 ```
 

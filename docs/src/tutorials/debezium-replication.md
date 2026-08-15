@@ -68,11 +68,12 @@ CREATE TRIGGER orders_cdc
 ## Step 3: Configure Debezium Wire Format
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'cdc-orders',
-    'cdc_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'cdc-orders',
+    'outbox', 'cdc_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "dbserver1.public.orders",
         "wire_format": "debezium",
@@ -82,6 +83,7 @@ SELECT tide.relay_set_outbox(
             "key_strategy": "primary_key"
         }
     }'::jsonb
+  )
 );
 ```
 
@@ -137,11 +139,12 @@ The only visible difference: `source.version` says `"pg-tide"` instead of a Debe
 For Avro-encoded Debezium messages:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'cdc-orders-avro',
-    'cdc_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'cdc-orders-avro',
+    'outbox', 'cdc_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "dbserver1.public.orders",
         "wire_format": "debezium",
@@ -153,6 +156,7 @@ SELECT tide.relay_set_outbox(
             "url": "http://schema-registry:8081"
         }
     }'::jsonb
+  )
 );
 ```
 

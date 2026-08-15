@@ -15,17 +15,19 @@ Singer is a specification for moving data between systems. It defines three mess
 When used as a sink, pg_tide acts as a Singer target — it receives RECORD, SCHEMA, and STATE messages from any Singer tap and writes them into the configured destination:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'hubspot-to-warehouse',
-    'etl_events',
-    '{
-        "sink_type": "singer",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'hubspot-to-warehouse',
+    'outbox', 'etl_events',
+    'sink_type', 'singer',
+    'config', '{
         "target_command": "target-postgres",
         "target_config": {
             "host": "warehouse.example.com",
             "database": "analytics"
         }
     }'::jsonb
+  )
 );
 ```
 
@@ -36,17 +38,19 @@ See [Sinks: Singer](../sinks/singer.md) for full configuration.
 When used as a source, pg_tide runs a Singer tap subprocess and ingests its output into a pg_tide inbox:
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'salesforce-sync',
-    'crm_inbox',
-    '{
-        "source_type": "singer",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'salesforce-sync',
+    'inbox', 'crm_inbox',
+    'source', 'singer',
+    'config', '{
         "tap_command": "tap-salesforce",
         "tap_config": {
             "client_id": "${env:SF_CLIENT_ID}",
             "start_date": "2024-01-01"
         }
     }'::jsonb
+  )
 );
 ```
 

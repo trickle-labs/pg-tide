@@ -74,12 +74,12 @@ The outbox messages table stores all messages from all named outboxes in a singl
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `id` | BIGINT (auto-increment) | Monotonically increasing offset — the relay uses this to track progress |
+| `id` | BIGINT (auto-increment) | Global message ID; per-outbox delivery uses increasing IDs and allows gaps |
 | `outbox_name` | TEXT | Routes messages to the correct pipeline |
 | `payload` | JSONB | Your event data — whatever you want downstream consumers to see |
 | `headers` | JSONB | Metadata: event type, correlation ID, schema version, etc. |
 | `created_at` | TIMESTAMPTZ | When the message was published |
-| `consumed_at` | TIMESTAMPTZ | When the relay successfully delivered it (NULL means pending) |
+| `consumed_at` | TIMESTAMPTZ | Legacy/global-consumer status; not authoritative for native relay delivery |
 | `consumer_group` | TEXT | Which consumer group processed this message |
 
 The auto-incrementing `id` column is crucial: it provides a total ordering of messages within an outbox, which the relay uses to guarantee in-order delivery and to track its position.
@@ -88,17 +88,18 @@ The auto-incrementing `id` column is crucial: it provides a total ordering of me
 
 The pg-tide relay binary continuously:
 
-1. **Polls** for pending messages (`WHERE consumed_at IS NULL AND id > last_committed_offset`)
+1. **Polls** the shared table by logical outbox (`WHERE outbox_name = $1 AND id > last_committed_offset`)
 2. **Delivers** each batch to the configured sink (NATS, Kafka, Redis, webhooks, etc.)
-3. **Commits the offset** — records how far it's read, so it can resume from this position after a restart
-4. **Marks messages consumed** — sets `consumed_at` so they're excluded from future polls
+3. **Commits the scoped offset** — records `(relay_group_id, pipeline_id, outbox_name)` after sink acknowledgment
+4. **Retries uncommitted batches** — native delivery does not write `consumed_at`
 5. **Respects retention** — messages older than `retention_hours` are eligible for cleanup
 
 If the relay crashes at any point in this loop, it restarts from the last committed offset and re-delivers any messages that weren't confirmed. This is why the relay provides **at-least-once delivery** — it never skips a message, but it might deliver one twice.
 
 ### Retention and cleanup
 
-Each outbox has a configurable retention window. After messages have been consumed and their retention period has elapsed, they can be cleaned up to prevent unbounded table growth:
+Each outbox has a configurable retention window. Legacy cleanup uses global `consumed_at`
+state; it must not assume that one native pipeline has delivered a row for every pipeline.
 
 ```sql
 -- Create an outbox with 48-hour retention

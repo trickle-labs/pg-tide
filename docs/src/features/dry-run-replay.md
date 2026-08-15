@@ -14,15 +14,17 @@ In dry-run mode, the relay performs every step of the pipeline (polling, transfo
 ### Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-test',
-    'order_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-test',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "orders",
         "dry_run": true
     }'::jsonb
+  )
 );
 ```
 
@@ -54,11 +56,12 @@ Replay mode reprocesses a range of outbox messages, typically to backfill a new 
 ### Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-backfill',
-    'order_events',
-    '{
-        "sink_type": "kafka",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-backfill',
+    'outbox', 'order_events',
+    'sink_type', 'kafka',
+    'config', '{
         "brokers": "kafka:9092",
         "topic": "orders-v2",
         "replay": {
@@ -66,6 +69,7 @@ SELECT tide.relay_set_outbox(
             "to_offset": 5000
         }
     }'::jsonb
+  )
 );
 ```
 

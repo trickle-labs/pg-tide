@@ -9,17 +9,18 @@ Choose the Slack sink when you want your team to be notified immediately when im
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'alerts-to-slack',
-    'alerts',
-    'slack-relay',
-    '{
-        "sink_type": "slack",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'alerts-to-slack',
+    'outbox', 'alerts',
+    'sink_type', 'slack',
+    'config', '{
         "webhook_url": "${env:SLACK_WEBHOOK_URL}",
         "channel": "#ops-alerts",
         "username": "pg_tide",
         "icon_emoji": ":database:"
     }'::jsonb
+  )
 );
 ```
 

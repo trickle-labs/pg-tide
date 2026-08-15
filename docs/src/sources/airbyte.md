@@ -5,11 +5,12 @@ The Airbyte source runs Airbyte source connectors (as Docker containers) and del
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'salesforce-data',
-    'crm_inbox',
-    '{
-        "source_type": "airbyte",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'salesforce-data',
+    'inbox', 'crm_inbox',
+    'source', 'airbyte',
+    'config', '{
         "source_image": "airbyte/source-salesforce:latest",
         "source_config": {
             "client_id": "${env:SF_CLIENT_ID}",
@@ -18,6 +19,7 @@ SELECT tide.relay_set_inbox(
         },
         "streams": ["contacts", "opportunities"]
     }'::jsonb
+  )
 );
 ```
 

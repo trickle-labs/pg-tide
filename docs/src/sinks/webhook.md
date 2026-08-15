@@ -21,26 +21,27 @@ Consider a dedicated message queue sink (Kafka, NATS, SQS) if you need fan-out t
 ### Minimal Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-webhook',
-    'orders',
-    'webhook-relay',
-    '{
-        "sink_type": "webhook",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-webhook',
+    'outbox', 'orders',
+    'sink_type', 'webhook',
+    'config', '{
         "url": "https://api.example.com/webhooks/orders"
     }'::jsonb
+  )
 );
 ```
 
 ### Production Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'orders-webhook',
-    'orders',
-    'webhook-relay',
-    '{
-        "sink_type": "webhook",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-webhook',
+    'outbox', 'orders',
+    'sink_type', 'webhook',
+    'config', '{
         "url": "${env:WEBHOOK_URL}",
         "headers": {
             "Authorization": "Bearer ${env:WEBHOOK_TOKEN}",
@@ -51,6 +52,7 @@ SELECT tide.relay_set_outbox(
         "signature_scheme": "hmac-sha256",
         "signature_header": "X-Signature-256"
     }'::jsonb
+  )
 );
 ```
 
@@ -166,12 +168,12 @@ COMMIT;
 ### 3. Configure the Pipeline
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'fulfillment-webhook',
-    'fulfillment_events',
-    'webhook-group',
-    '{
-        "sink_type": "webhook",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'fulfillment-webhook',
+    'outbox', 'fulfillment_events',
+    'sink_type', 'webhook',
+    'config', '{
         "url": "https://fulfillment.internal/api/v1/events",
         "headers": {
             "Authorization": "Bearer ${env:FULFILLMENT_API_KEY}",
@@ -181,6 +183,7 @@ SELECT tide.relay_set_outbox(
         "signature_secret": "${env:WEBHOOK_SECRET}",
         "signature_scheme": "hmac-sha256"
     }'::jsonb
+  )
 );
 SELECT tide.relay_enable('fulfillment-webhook');
 ```

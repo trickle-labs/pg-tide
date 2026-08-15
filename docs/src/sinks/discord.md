@@ -9,16 +9,17 @@ Choose the Discord sink for community notifications (open-source project updates
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'events-to-discord',
-    'community_events',
-    'discord-relay',
-    '{
-        "sink_type": "discord",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'events-to-discord',
+    'outbox', 'community_events',
+    'sink_type', 'discord',
+    'config', '{
         "webhook_url": "${env:DISCORD_WEBHOOK_URL}",
         "username": "pg_tide Bot",
         "avatar_url": "https://example.com/bot-avatar.png"
     }'::jsonb
+  )
 );
 ```
 

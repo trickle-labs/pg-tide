@@ -40,41 +40,47 @@ Each consumer group gets its own relay pipeline:
 
 ```sql
 -- Analytics: sends to data warehouse (slow, large batches)
-SELECT tide.relay_set_outbox(
-    'orders-analytics',
-    'order_events',
-    '{
-        "sink_type": "bigquery",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-analytics',
+    'outbox', 'order_events',
+    'sink_type', 'bigquery',
+    'config', '{
         "consumer_group": "analytics",
         "batch_size": 1000,
         "dataset": "raw_events",
         "table": "orders"
     }'::jsonb
+  )
 );
 
 -- Notifications: sends to Slack (fast, small batches)
-SELECT tide.relay_set_outbox(
-    'orders-notifications',
-    'order_events',
-    '{
-        "sink_type": "slack",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-notifications',
+    'outbox', 'order_events',
+    'sink_type', 'slack',
+    'config', '{
         "consumer_group": "notifications",
         "batch_size": 1,
         "webhook_url": "${env:SLACK_WEBHOOK}"
     }'::jsonb
+  )
 );
 
 -- Search: sends to Elasticsearch (medium speed)
-SELECT tide.relay_set_outbox(
-    'orders-search',
-    'order_events',
-    '{
-        "sink_type": "elasticsearch",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'orders-search',
+    'outbox', 'order_events',
+    'sink_type', 'elasticsearch',
+    'config', '{
         "consumer_group": "search-indexer",
         "batch_size": 100,
         "url": "http://elasticsearch:9200",
         "index": "orders"
     }'::jsonb
+  )
 );
 ```
 

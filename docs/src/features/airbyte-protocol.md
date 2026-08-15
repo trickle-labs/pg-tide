@@ -16,11 +16,12 @@ The Airbyte protocol defines how source connectors (extractors) and destination 
 pg_tide can run Airbyte source connectors and ingest their records into an inbox:
 
 ```sql
-SELECT tide.relay_set_inbox(
-    'salesforce-data',
-    'crm_inbox',
-    '{
-        "source_type": "airbyte",
+SELECT tide.relay_set_inbox_v2(
+  jsonb_build_object(
+    'name', 'salesforce-data',
+    'inbox', 'crm_inbox',
+    'source', 'airbyte',
+    'config', '{
         "source_image": "airbyte/source-salesforce:latest",
         "source_config": {
             "client_id": "${env:SF_CLIENT_ID}",
@@ -30,6 +31,7 @@ SELECT tide.relay_set_inbox(
         "streams": ["contacts", "opportunities"],
         "sync_mode": "incremental"
     }'::jsonb
+  )
 );
 ```
 
@@ -40,11 +42,12 @@ See [Sources: Airbyte](../sources/airbyte.md) for full configuration.
 pg_tide can run Airbyte destination connectors and feed them outbox messages:
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'warehouse-sync',
-    'analytics_events',
-    '{
-        "sink_type": "airbyte",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'warehouse-sync',
+    'outbox', 'analytics_events',
+    'sink_type', 'airbyte',
+    'config', '{
         "destination_image": "airbyte/destination-bigquery:latest",
         "destination_config": {
             "project_id": "my-project",
@@ -52,6 +55,7 @@ SELECT tide.relay_set_outbox(
             "credentials_json": "${env:GCP_CREDENTIALS}"
         }
     }'::jsonb
+  )
 );
 ```
 

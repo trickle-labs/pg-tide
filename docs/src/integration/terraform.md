@@ -82,15 +82,17 @@ resource "null_resource" "pipeline_orders_to_kafka" {
   provisioner "local-exec" {
     command = <<-EOT
       psql "${var.postgres_url}" -c "
-        SELECT tide.relay_set_outbox(
-          'orders-to-kafka',
-          'order_events',
-          '${jsonencode({
-            sink_type = "kafka"
-            brokers   = var.kafka_brokers
-            topic     = "orders"
-            wire_format = "debezium"
-          })}'::jsonb
+        SELECT tide.relay_set_outbox_v2(
+          jsonb_build_object(
+            'name', 'orders-to-kafka',
+            'outbox', 'order_events',
+            'sink_type', 'kafka',
+            'config', '${jsonencode({
+              brokers   = var.kafka_brokers
+              topic     = "orders"
+              wire_format = "debezium"
+            })}'::jsonb
+          )
         );
       "
     EOT

@@ -123,14 +123,14 @@ async fn test_relay_set_inbox_config_shape() {
     assert_eq!(stored["sink"]["inbox"].as_str(), Some("notifications"));
 }
 
-/// Verify relay_consumer_offsets can store and retrieve typed offsets (v0.12.0 schema).
+/// Verify the v0.1.0 baseline `relay_consumer_offsets` schema (before the
+/// v0.11→0.12 migration that replaced `last_offset TEXT` with `last_change_id`).
 ///
-/// Note: This test runs against the v0.1.0 baseline schema which still has last_offset TEXT.
-/// The migration test covers the v0.12.0 schema.  Here we verify that the
-/// v0.1.0 schema does NOT have last_change_id (confirming migration is needed).
+/// This uses `start_base_v0_1()` deliberately, since `start()` now installs the
+/// complete current schema where `last_offset` has been dropped.
 #[tokio::test]
 async fn test_relay_consumer_offsets_baseline_schema() {
-    let db = PgTideTestDb::start().await;
+    let db = PgTideTestDb::start_base_v0_1().await;
 
     // The baseline v0.1.0 schema has last_offset TEXT.
     let has_last_offset: bool = db

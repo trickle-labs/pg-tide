@@ -9,15 +9,16 @@ Choose stdout when debugging pipeline configurations, testing JMESPath transform
 ## Configuration
 
 ```sql
-SELECT tide.relay_set_outbox(
-    'debug-pipeline',
-    'orders',
-    'debug-relay',
-    '{
-        "sink_type": "stdout",
+SELECT tide.relay_set_outbox_v2(
+  jsonb_build_object(
+    'name', 'debug-pipeline',
+    'outbox', 'orders',
+    'sink_type', 'stdout',
+    'config', '{
         "format": "json",
         "output_file": null
     }'::jsonb
+  )
 );
 ```
 
