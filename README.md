@@ -22,7 +22,7 @@ configured with plain SQL.
 - **Auditable connector surface** — maturity, ownership, build profiles, and evidence are generated from `connectors.toml`
 - **Pluggable Wire Formats** — native, Debezium, CloudEvents, Maxwell, Canal, and custom CDC JSON
 - **Multi-Tenant** — row-level security, per-tenant Prometheus labels, per-outbox publisher ACLs, and per-tenant advisory-lock namespacing
-- **Outbox Table Partitioning** — declarative daily/weekly/monthly range partitioning with live migration and relay sweep integration
+- **Operational storage controls** — bounded participant-aware cleanup, optional ID-range partitions, and explicit maintenance-window conversion
 - **Replay Workbench** — rewind consumer offsets, preview replays, and manage the DLQ from SQL or CLI
 - **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart; `--self-test` and `--expect-extension-version` flags for Kubernetes readiness probes
 - **Observable** — OpenTelemetry spans, Prometheus metrics, Grafana dashboard, and pre-built alerting rules included
@@ -115,7 +115,7 @@ Diagnostics are labeled separately and are not production integrations.
 |---|---|---|---:|---|---|---|
 | [PostgreSQL native outbox](docs/src/support/connector-compatibility.md#postgresql-outbox) | source | supported | yes | PostgreSQL 18 | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
 | [pg_trickle outbox compatibility](docs/src/support/connector-compatibility.md#pg-trickle-compatibility) | source | preview | no | unknown | @grove | [outbox_source_test.rs](pg-tide-relay/tests/outbox_source_test.rs) |
-| [stdin, stdout, and file diagnostics](docs/src/support/connector-compatibility.md#diagnostics) | bidirectional | supported | yes | local process | @grove | [load_test.rs](pg-tide-relay/tests/load_test.rs) |
+| [stdin, stdout, and file diagnostics](docs/src/support/connector-compatibility.md#diagnostics) | bidirectional | supported | yes | local process | @grove | [postgres_insert_microbenchmark.rs](pg-tide-relay/tests/postgres_insert_microbenchmark.rs) |
 | [PostgreSQL inbox](docs/src/support/connector-compatibility.md#postgresql-inbox) | sink | supported | yes | PostgreSQL 18 | @grove | [pg_inbox_sink_test.rs](pg-tide-relay/tests/pg_inbox_sink_test.rs) |
 | [NATS JetStream](docs/src/support/connector-compatibility.md#nats) | bidirectional | supported | yes | nats:latest with JetStream | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
 | [HTTP webhook](docs/src/support/connector-compatibility.md#webhook) | bidirectional | preview | no | HTTP/1.1 in-process mock | @grove | [webhook_test.rs](pg-tide-relay/tests/webhook_test.rs), [webhook_sig_test.rs](pg-tide-relay/tests/webhook_sig_test.rs) |
@@ -225,13 +225,14 @@ All functions live in the `tide` schema. Key functions by area:
 
 | Function | Description |
 |----------|-------------|
-| `tide.outbox_create(name, retention_hours, max_size, partition_strategy)` | Create a named outbox; `partition_strategy` is `'none'` (default), `'daily'`, `'weekly'`, or `'monthly'` |
-| `tide.outbox_create_if_not_exists(name, retention_hours, max_size, partition_strategy)` | Idempotent create; returns `TRUE` when newly created |
+| `tide.outbox_create(name, retention_hours, inline_threshold)` | Create a named outbox; `inline_threshold` is a deprecated compatibility value |
+| `tide.outbox_create_if_not_exists(name, retention_hours, inline_threshold)` | Idempotent create; returns `TRUE` when newly created |
 | `tide.outbox_publish(name, payload, headers)` | Publish a message atomically |
 | `tide.outbox_status(name)` | Status summary as JSONB |
 | `tide.outbox_grant_publish(outbox, role)` | Grant publish permission to a role |
-| `tide.outbox_truncate_delivered(name)` | Delete consumed rows older than retention window; returns row count |
-| `tide.outbox_convert_to_partitioned(name, strategy, confirm_shared_table_migration)` | Live-migrate an unpartitioned outbox to declarative range partitioning |
+| `tide.outbox_sweep(name, batch_size, dry_run)` | Bounded, participant-aware cleanup; default batch 1,000, maximum 10,000 |
+| `tide.outbox_truncate_delivered(name)` | Deprecated one-batch compatibility wrapper over `outbox_sweep()` |
+| `tide.admin_convert_outbox_storage(span, premake, confirm)` | Blocking global heap-to-ID-range conversion during a maintenance window |
 
 **Inbox**
 
@@ -275,7 +276,17 @@ All functions live in the `tide` schema. Key functions by area:
 | `tide.backfill_pause(job_id)` / `tide.backfill_resume(job_id)` | Pause or resume a backfill job |
 | `tide.backfill_status(job_id)` | Job status JSON; `NULL` for fleet summary |
 
-Views: `tide.outbox_pending` · `tide.consumer_lag` · `tide.inbox_fleet_summary`
+Views: `tide.outbox_retention_status` · `tide.relay_pipeline_lag` ·
+`tide.outbox_cleanup_state` · `tide.inbox_fleet_summary`
+
+## Operational evidence
+
+The v0.43 operational contract is in
+[`benchmarks/operational/`](benchmarks/operational/README.md). Criterion and
+direct PostgreSQL inserts are microbenchmarks only. Capacity guidance must
+come from a named profile using the public SQL API, packaged PostgreSQL 18
+extension, real relay process, and NATS JetStream; the repository does not
+claim universal throughput or latency.
 
 ## Multi-Tenant Support
 
@@ -322,6 +333,12 @@ Key design decisions are documented in `docs/adr/`:
 | [ADR-005](docs/adr/adr-005-feature-gated-binary.md) | Feature-gated binary |
 | [ADR-006](docs/adr/adr-006-outbox-table-partitioning.md) | Declarative outbox table partitioning |
 | [ADR-007](docs/adr/adr-007-shared-partition-table-semantics.md) | Shared partition table semantics |
+| [ADR-008](docs/adr/adr-008-claim-check-native-pathway.md) | Native claim-check pathway |
+| [ADR-009](docs/adr/adr-009-wal-logical-replication-source.md) | WAL logical-replication source |
+| [ADR-010](docs/adr/adr-010-envelope-encryption-kms.md) | Envelope encryption with KMS |
+| [ADR-011](docs/adr/adr-011-canonical-outbox-storage-and-relay-polling.md) | Canonical outbox storage and polling |
+| [ADR-012](docs/adr/adr-012-relay-delivery-acknowledgment-and-offset-state-machine.md) | Relay acknowledgment and offset state machine |
+| [ADR-013](docs/adr/adr-013-retention-partitioning-and-postgresql-cost.md) | Retention, ID-range partitioning, and PostgreSQL cost |
 
 ## Documentation
 

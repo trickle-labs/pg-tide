@@ -42,7 +42,7 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 
 - Maturity: **supported**
 - Owner: @grove
-- [x] contract tests: [load_test.rs](../../../pg-tide-relay/tests/load_test.rs)
+- [x] contract tests: [postgres_insert_microbenchmark.rs](../../../pg-tide-relay/tests/postgres_insert_microbenchmark.rs)
 - [ ] integration tests: —
 - [ ] e2e tests: —
 - [ ] failure before publish tests: —

@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.43.0 — Operational Cost Contract](#0430--operational-cost-contract)
 - [0.42.0 — Crash-Safe Relay Delivery](#0420--crash-safe-relay-delivery)
 - [0.41.0 — Focused Release Metadata](#0410--focused-release-metadata)
 - [0.40.0 — One Real Pipeline: Native Outbox → NATS JetStream](#0400--one-real-pipeline-native-outbox--nats-jetstream)
@@ -49,6 +50,22 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.43.0] — Operational Cost Contract
+
+- Added ADR-013 and offset-aware operational documentation for bounded
+  retention, long-transaction fencing, shared ID-range partitioning, and
+  blocking conversion.
+- Added the machine-readable operational budget contract and standard-library
+  checker. The baseline remains explicitly pending a reproducible PostgreSQL
+  18/NATS reference run; no universal throughput claim is made.
+- Relabeled direct PostgreSQL inserts and Criterion as microbenchmarks only and
+  added scheduled reference/soak workflow scaffolding.
+- Documented `tide.outbox_sweep()`, retention participants, cleanup progress,
+  exact lag, vacuum/WAL inspection, outage disk reservation, and the truthful
+  `inline_threshold` behavior.
 
 ---
 

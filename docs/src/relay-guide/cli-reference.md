@@ -183,15 +183,18 @@ audit-log                      forward    no       0              0
 
 ### `sweep`
 
-Deletes consumed outbox messages that are past their retention window.
+Performs a bounded, participant-aware cleanup sweep.
 
 ```bash
-pg-tide sweep [--outbox <NAME>] [--postgres-url <URL>]
+pg-tide sweep [--outbox <NAME>] [--batch-size <1..10000>]
+              [--max-batches <COUNT>] [--dry-run] [--postgres-url <URL>]
 ```
 
-Calls `tide.outbox_truncate_delivered()` for each outbox. When `--outbox` is
-omitted, all outboxes are swept. Run this on a schedule to prevent unbounded
-growth of the `tide_outbox_messages` table.
+The command calls `tide.outbox_sweep()` in separate transactions. It processes
+at most `--max-batches` per outbox, reports retention blockers and progress,
+and exits non-zero if any outbox fails. `--batch-size` defaults to 1,000 and
+cannot exceed 10,000. Use `--dry-run` to inspect a bounded candidate batch
+without deleting rows. When `--outbox` is omitted, all outboxes are swept.
 
 **Example:**
 
@@ -201,14 +204,18 @@ pg-tide sweep --postgres-url "$DATABASE_URL"
 
 # Sweep a single outbox
 pg-tide sweep --outbox orders --postgres-url "$DATABASE_URL"
+
+# Preview up to five 500-row batches
+pg-tide sweep --batch-size 500 --max-batches 5 --dry-run \
+  --postgres-url "$DATABASE_URL"
 ```
 
 ```
-pg-tide sweep v0.16.0
-  [OK] Swept outbox 'orders': 12408 rows deleted
-  [OK] Swept outbox 'payments': 4891 rows deleted
+pg-tide sweep v0.43.0
+  [OK] Swept outbox 'orders': 1000 rows deleted; 2 batches remain
+  [OK] Swept outbox 'payments': blocked by pipeline payments-nats
 
-pg-tide sweep: 17299 total row(s) deleted from 2 outbox(es).
+pg-tide sweep: 1000 total row(s) deleted from 2 outbox(es).
 ```
 
 **Typical use:** cron job or Kubernetes CronJob running every hour.

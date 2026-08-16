@@ -14,17 +14,19 @@
 - [ ] Run `pg-tide doctor` and confirm: `[OK] TLS connection: TLSv1.2` or `TLSv1.3`.
 - [ ] Cloud-managed PostgreSQL services (RDS, Cloud SQL, Azure Database) behind a TLS proxy work without the `native-tls` feature.
 
-## 2. Outbox Partitioning Strategy
+## 2. Outbox retention and storage
 
-- [ ] Evaluate your event throughput:
-  - **< 100k events/day**: `partition_strategy = 'none'` (default) is sufficient.
-  - **100k–10M events/day**: `partition_strategy = 'daily'` recommended.
-  - **> 10M events/day**: `partition_strategy = 'hourly'` (future) or `'daily'` with short retention.
-- [ ] For partitioned outboxes, set `retention_partitions` based on your SLA window:
-  - 7 days: `retention_partitions = 7` (default for daily strategy)
-  - 30 days: `retention_partitions = 30`
-- [ ] Schedule `pg-tide sweep` to run at least once per partition interval to create future partitions.
-- [ ] Run `pg-tide doctor` and confirm no partition capacity warnings.
+- [ ] Run the named operational profile matching payload size, pipeline count,
+  sink, and PostgreSQL settings; attach its raw JSON result.
+- [ ] Reserve disk for the measured retained-row size, WAL, vacuum headroom,
+  and the configured sink-outage window.
+- [ ] Verify `tide.outbox_retention_status` has no unexplained blockers and
+  `tide.relay_pipeline_lag` is exact and converging.
+- [ ] Run `tide.outbox_sweep(NULL, 1000, TRUE)` and review blockers before
+  scheduling bounded cleanup.
+- [ ] If using partitions, verify `tide.outbox_storage_config` reports
+  `id_range`, the default partition is empty, and the canonical query prunes
+  old children.
 
 ## 3. Consumer Group Setup
 

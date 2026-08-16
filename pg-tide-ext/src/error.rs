@@ -22,6 +22,9 @@ pub enum PgTideError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    #[error("outbox sweep failed for '{outbox}': {detail}")]
+    SweepFailed { outbox: String, detail: String },
+
     #[error("role '{role}' is not authorized to publish to outbox '{outbox}'")]
     PublishDenied { role: String, outbox: String },
 

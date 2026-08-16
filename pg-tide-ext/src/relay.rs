@@ -51,6 +51,9 @@ fn relay_exists(name: &str) -> Result<bool, PgTideError> {
 /// - `batch_size`  INT   (default: 100)
 /// - `enabled`     BOOL  (default: true)
 /// - `wire_format` TEXT  (default: `"native"`)
+///
+/// Disabled native outbox pipelines remain retention participants. Disable
+/// pauses delivery; delete the pipeline to retire its replay history.
 #[pg_extern(schema = "tide")]
 pub fn relay_set_outbox_v2(p_config: pgrx::JsonB) {
     relay_set_outbox_v2_impl(p_config).unwrap_or_else(|e| pgrx::error!("{}", e))
@@ -102,6 +105,11 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
         .cloned()
         .unwrap_or(serde_json::Value::Object(Default::default()));
     let batch_size = obj["batch_size"].as_i64().unwrap_or(100) as i32;
+    if !(1..=10_000).contains(&batch_size) {
+        return Err(PgTideError::InvalidArgument(
+            "relay_set_outbox_v2: batch_size must be between 1 and 10000".to_string(),
+        ));
+    }
     let enabled = obj["enabled"].as_bool().unwrap_or(true);
 
     crate::validation::validate_identifier(name)?;
@@ -183,6 +191,11 @@ fn relay_set_inbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
         .cloned()
         .unwrap_or(serde_json::Value::Object(Default::default()));
     let batch_size = obj["batch_size"].as_i64().unwrap_or(100) as i32;
+    if !(1..=10_000).contains(&batch_size) {
+        return Err(PgTideError::InvalidArgument(
+            "relay_set_inbox_v2: batch_size must be between 1 and 10000".to_string(),
+        ));
+    }
     let enabled = obj["enabled"].as_bool().unwrap_or(true);
     let max_retries = obj["max_retries"].as_i64().unwrap_or(3) as i32;
     let idempotent = obj["idempotent"].as_bool().unwrap_or(true);
@@ -288,6 +301,7 @@ fn relay_delete_impl(name: &str) -> Result<(), PgTideError> {
         "DELETE FROM tide.relay_inbox_config WHERE name = $1",
         &[name.into()],
     );
+    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
     Ok(())
 }
 

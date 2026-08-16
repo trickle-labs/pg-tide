@@ -20,7 +20,7 @@ SELECT tide.outbox_create(
 |-----------|------|---------|-------------|
 | `p_name` | TEXT | (required) | Unique outbox name |
 | `p_retention_hours` | INT | 24 | Hours to retain consumed messages before cleanup |
-| `p_inline_threshold` | INT | 10000 | Maximum pending messages before backpressure signals |
+| `p_inline_threshold` | INT | 10000 | Deprecated compatibility value; native publishing does not enforce a pending-row cap |
 
 **Errors:**
 - Raises an error if an outbox with the same name already exists.
@@ -104,11 +104,43 @@ SELECT tide.outbox_status(p_name TEXT) → JSONB
 {
   "outbox_name": "orders",
   "pending_messages": 42,
-  "total_messages": 1500,
+  "retained_messages": 1500,
+  "native_safe_offset": 1200,
   "oldest_pending_age_seconds": 3.7,
   "retention_hours": 24
 }
 ```
+
+Native status and lag are derived from per-pipeline offsets. `consumed_at` is
+reported only as deprecated compatibility state.
+
+---
+
+## tide.outbox_sweep
+
+Run one bounded retention batch per selected outbox.
+
+```sql
+SELECT tide.outbox_sweep(
+  p_outbox_name TEXT DEFAULT NULL,
+  p_batch_size INTEGER DEFAULT 1000,
+  p_dry_run BOOLEAN DEFAULT FALSE
+) → JSONB;
+```
+
+`p_batch_size` must be between 1 and 10,000. Candidates satisfy both the
+retention cutoff and the minimum checkpoint across all configured native
+pipelines, consumer groups, enabled fan-in members, and overlapping leases.
+Disabled pipelines remain participants. Dry-run examines at most
+`p_batch_size + 1` rows and returns `has_more` without deleting.
+
+The result includes `outbox`, `retention_cutoff`, `safe_offset`,
+`participants`, `blockers`, `eligible_in_batch`, `affected_rows`, `has_more`,
+`highest_deleted_id`, `duration_ms`, and `partition_action`. A failure is a
+PostgreSQL error, not a zero-row success.
+
+`outbox_truncate_delivered(NULL)` is a deprecated compatibility wrapper for
+one 1,000-row sweep.
 
 ---
 
@@ -147,4 +179,17 @@ SELECT * FROM tide.outbox_pending;
 | `outbox_name` | TEXT | Outbox name |
 | `pending_count` | BIGINT | Number of unconsumed messages |
 | `oldest_at` | TIMESTAMPTZ | Timestamp of the oldest pending message |
-| `max_id` | BIGINT | Highest message ID in this outbox |
+| `max_id` | BIGINT | Highest retained message ID in this outbox |
+
+### tide.outbox_retention_status
+
+Offset-aware retention state per outbox: retained row count/bytes, oldest and
+newest retained timestamps, cutoff, participant count, safe offset, bounded
+eligible-row preview, blocker names/offsets, cleanup progress, storage layout,
+and default-partition rows.
+
+### tide.relay_pipeline_lag
+
+Exact lag per relay group, pipeline, and outbox. Lag is computed as
+`COUNT(*) WHERE outbox_name = ... AND id > last_change_id`; it does not subtract
+a globally gapped ID from an offset.

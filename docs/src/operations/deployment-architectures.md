@@ -13,7 +13,8 @@ The simplest deployment: one relay process connected to one PostgreSQL database.
 └─────────────┘       └────────────┘       └──────────┘
 ```
 
-**When to use:** Development, staging, low-throughput production (< 10,000 msg/s), applications where simplicity matters more than redundancy.
+**When to use:** Development, staging, or production whose named operational
+profile fits on one relay and where simplicity matters more than redundancy.
 
 **Pros:** Simple to operate, no coordination overhead, easy to debug.
 

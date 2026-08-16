@@ -86,7 +86,8 @@ Behind the scenes, this created:
 - The `tide` schema
 - Configuration tables for outboxes, inboxes, consumer groups, and relay pipelines
 - The shared `tide.tide_outbox_messages` table where all outbox messages live
-- Views like `tide.outbox_pending` and `tide.consumer_lag` for monitoring
+- Offset-aware views like `tide.outbox_retention_status` and
+  `tide.relay_pipeline_lag` for monitoring
 - SQL functions like `tide.outbox_publish()` for the API
 
 ---
@@ -109,7 +110,9 @@ What do these parameters mean?
 
 - **`'orders'`** — the name of our outbox. This is how you'll refer to it when publishing and when configuring relay pipelines.
 - **`p_retention_hours := 48`** — consumed messages are kept for 48 hours before cleanup. This gives you time to investigate issues and replay if needed.
-- **`p_inline_threshold := 10000`** — if more than 10,000 messages are pending (unconsumed), publishing will pause to create backpressure. This prevents unbounded outbox growth if the relay is down.
+- **`p_inline_threshold := 10000`** — retained compatibility/configuration
+  metadata. Native publishing does not reject transactions based on pending
+  row count; reserve disk and alert on exact lag when a sink is unavailable.
 
 Verify the outbox exists:
 
@@ -184,7 +187,7 @@ COMMIT;
 Let's verify our messages are pending (waiting for delivery):
 
 ```sql
-SELECT * FROM tide.outbox_pending;
+SELECT * FROM tide.outbox_retention_status;
 ```
 
 ```
@@ -287,7 +290,7 @@ If messages were already delivered (relay started before you subscribed), you ca
 
 ```sql
 -- Check that messages are now consumed
-SELECT * FROM tide.outbox_pending;
+SELECT * FROM tide.outbox_retention_status;
 ```
 
 ```
@@ -299,7 +302,7 @@ SELECT * FROM tide.outbox_pending;
 No pending messages — they've all been delivered! Check consumer lag:
 
 ```sql
-SELECT * FROM tide.consumer_lag;
+SELECT * FROM tide.relay_pipeline_lag;
 ```
 
 ```

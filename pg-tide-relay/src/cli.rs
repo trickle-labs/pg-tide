@@ -288,6 +288,18 @@ pub enum Commands {
         #[arg(long)]
         outbox: Option<String>,
 
+        /// Maximum rows considered by each bounded sweep transaction.
+        #[arg(long, default_value = "1000", value_parser = clap::value_parser!(i32).range(1..=10000))]
+        batch_size: i32,
+
+        /// Maximum bounded sweep transactions per outbox.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1000000))]
+        max_batches: Option<u32>,
+
+        /// Inspect candidates without deleting rows.
+        #[arg(long, default_value = "false")]
+        dry_run: bool,
+
         /// PostgreSQL URL.  Overrides --postgres-url.
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
@@ -709,4 +721,45 @@ pub enum DagCommands {
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn sweep_parses_bounded_options() {
+        let cli = Cli::try_parse_from([
+            "pg-tide",
+            "sweep",
+            "--postgres-url",
+            "postgres://localhost/db",
+            "--batch-size",
+            "250",
+            "--max-batches",
+            "4",
+            "--dry-run",
+        ])
+        .expect("valid sweep arguments");
+        match cli.command {
+            Some(Commands::Sweep {
+                batch_size,
+                max_batches,
+                dry_run,
+                ..
+            }) => {
+                assert_eq!(batch_size, 250);
+                assert_eq!(max_batches, Some(4));
+                assert!(dry_run);
+            }
+            other => panic!("expected sweep command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sweep_rejects_batch_size_above_hard_limit() {
+        let result = Cli::try_parse_from(["pg-tide", "sweep", "--batch-size", "10001"]);
+        assert!(result.is_err());
+    }
 }

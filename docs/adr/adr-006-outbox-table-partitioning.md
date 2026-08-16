@@ -1,6 +1,6 @@
 # ADR-006: Outbox Table Partitioning
 
-**Status:** Accepted — Implementation deferred to v0.25.0  
+**Status:** Superseded by [ADR-013](adr-013-retention-partitioning-and-postgresql-cost.md) for v0.43.0
 **Date:** 2026-05-19  
 **Author:** pg_tide Contributors  
 
@@ -33,7 +33,12 @@ outboxes (millions of events per day) two operational problems emerge:
 4. **Per-outbox child tables** — Reverts to the multi-table design rejected in
    ADR-001; breaks the uniform consumer API.
 
-## Decision
+## Decision (historical)
+
+The `created_at` partition-key and per-outbox conversion design below are
+retained as historical context only. They are not a supported v0.43.0 layout.
+ADR-013 replaces them with optional ID-range partitions under the canonical
+shared parent and a single blocking, global conversion operation.
 
 We adopt **Option 2: PostgreSQL declarative range partitioning on `created_at`**
 as an opt-in extension to `tide.outbox_create()`.

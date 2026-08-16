@@ -39,8 +39,9 @@ PublishFailed -> DlqPersisted -> CheckpointCommitted
 
 Errors that do not produce a terminal disposition—decode, transform, schema
 policy, unresolved sink, or DLQ write errors—leave the source checkpoint
-uncommitted. `EligibleForCleanup` is a state-machine consequence only;
-pipeline-aware cleanup is deferred to v0.43.0.
+uncommitted. `EligibleForCleanup` requires every configured retention
+participant to have passed the row and the outbox retention cutoff to have
+elapsed; it is never inferred from one pipeline or `consumed_at`.
 
 ### Connector acknowledgment boundaries
 
@@ -77,7 +78,7 @@ again. The original batch remains uncommitted and is retried.
 | `DlqPersisted` -> `CheckpointCommitted` | Source checkpoint advanced past DLQ batch | Resume after batch | No message redelivery | None | DLQ acknowledgment test |
 | `Prepared` -> `DryRunObserved` | Bounded structured observation emitted | Continue after checkpoint | Not applicable | Operator explicitly chose no sink delivery | Real coordinator dry-run test |
 | `Prepared` -> `IntentionallyFiltered` | Whole input batch was intentionally filtered | Continue after checkpoint | None | None if original checkpoint retained | All-filtered test |
-| `CheckpointCommitted` -> `EligibleForCleanup` | Relevant pipeline offsets eventually pass the row | No relay retry | None | Cleanup is not implemented in v0.42.0 | ADR-only until v0.43.0 |
+| `CheckpointCommitted` -> `EligibleForCleanup` | Every configured participant passes the row and retention age has elapsed | No relay retry | None | `tide.outbox_sweep()` | Bounded, lock-safe cleanup |
 
 ### Filtering, dry-run, DLQ, and replay
 
@@ -171,5 +172,5 @@ outbox-scoped offsets remain authoritative, while delivery receipts are
 auxiliary evidence.
 
 Pipeline-aware retention cannot safely infer completion from one pipeline's
-offset. `EligibleForCleanup` is therefore documented now, but cleanup policy
-and implementation are explicitly deferred to v0.43.0.
+offset. `EligibleForCleanup` therefore uses the minimum safe checkpoint across
+all configured participants plus the retention cutoff, as specified in ADR-013.

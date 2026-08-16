@@ -39,7 +39,10 @@ itself remains at least once.
 
 ### Your throughput fits within PostgreSQL's capacity
 
-For most applications, PostgreSQL can handle 5,000–15,000 outbox publishes per second on a single connection (depending on payload size and hardware). If your event volume fits within this range — which covers the vast majority of OLTP workloads — pg_tide provides simpler operations than dedicated streaming platforms.
+Use the measured `publish-single` and `publish-concurrent` profiles to
+determine whether your workload fits. Payload size, transaction shape,
+PostgreSQL settings, and hardware dominate the result; pg_tide does not
+publish a universal per-connection rate.
 
 ---
 
@@ -49,7 +52,8 @@ For most applications, PostgreSQL can handle 5,000–15,000 outbox publishes per
 
 pg_tide's relay polls the outbox at a configurable interval (it wakes immediately via pg_notify for new messages, but batching introduces slight delays). For use cases that demand microsecond-level propagation — high-frequency trading signals, real-time game state — a dedicated event streaming platform with direct in-memory writes (like NATS Core or Kafka with acks=0) will provide lower latency.
 
-That said, pg_tide's latency is typically under 100ms end-to-end. For most applications (webhook delivery, service coordination, analytics feeds), this is more than adequate.
+Measure end-to-end p50/p95/p99 for the selected sink and poll/batch settings.
+Do not carry a latency number from another environment into a capacity plan.
 
 ### You have no PostgreSQL in your stack
 
@@ -65,7 +69,9 @@ If you need ephemeral fire-and-forget messaging — real-time typing indicators,
 
 ### Your sustained throughput exceeds PostgreSQL's write capacity
 
-pg_tide's throughput ceiling is fundamentally PostgreSQL's INSERT performance. For sustained write rates above ~100,000 messages/second on a single outbox table (very high-volume telemetry, clickstream data, IoT sensor feeds), dedicated log-structured systems (Kafka, Redpanda, Pulsar) are purpose-built for this scale.
+pg_tide's throughput ceiling is fundamentally PostgreSQL's measured publish
+and relay capacity. If the matching operational profile misses its reviewed
+budget, a dedicated log-structured system may be a better fit.
 
 However, before concluding that you need more throughput, consider whether you can partition your events across multiple outboxes, which allows parallel relay consumption.
 
@@ -108,7 +114,7 @@ Typical use cases that pg_tide handles beautifully:
 | **Operational cost** | One binary (~20 MB), no JVM | JVM-based Kafka Connect, requires Kafka cluster |
 | **Flexibility** | Arbitrary events, decoupled from table schema | Automatic but tied to schema changes |
 | **Application changes** | Must call `outbox_publish()` | None (captures changes transparently) |
-| **Latency** | <100ms (notify-driven) | ~1-5s (replication slot lag) |
+| **Latency** | Profile- and sink-dependent | Replication-slot lag dependent |
 
 **Choose pg_tide** when you want explicit, semantic events that are decoupled from your table schema, and you prefer minimal infrastructure. **Choose Debezium** when you need automatic capture of all database changes without modifying application code, and you're willing to operate the Kafka ecosystem.
 
@@ -149,8 +155,8 @@ Typical use cases that pg_tide handles beautifully:
 | **Transactional safety** | Guaranteed (same database transaction) | Dual-write risk (DB commit + broker publish are independent) |
 | **Application complexity** | One SQL call per event | Broker client library, connection management, error handling |
 | **Operational overhead** | Extension + lightweight relay | Broker cluster management, application-side retries |
-| **Throughput ceiling** | PostgreSQL write speed (~15K msg/s per connection) | Broker-native throughput (higher ceiling) |
-| **Latency** | ~50-100ms (poll + delivery) | ~1-5ms (direct publish) |
+| **Throughput ceiling** | Measured PostgreSQL publish/relay budget | Broker-native throughput (higher ceiling) |
+| **Latency** | Profile- and sink-dependent | Broker/client dependent |
 | **Message loss risk** | Zero (transactional guarantee) | Non-zero (crash between DB commit and broker ack) |
 | **Duplicate risk** | Handled by inbox dedup | Application must implement idempotency |
 
@@ -171,7 +177,9 @@ For teams evaluating pg_tide against a full Kafka deployment, here's a practical
 | **On-call complexity** | "Is PostgreSQL healthy? Is the relay running?" | Partition rebalancing, ISR management, disk pressure, GC pauses |
 | **Team expertise** | PostgreSQL DBA + basic ops | Kafka-specialized operations team |
 
-pg_tide's total cost of ownership is dramatically lower for teams whose primary workload is a PostgreSQL-backed application with moderate event volumes (< 50K events/second).
+pg_tide's total cost of ownership is often lower for teams whose primary
+workload is a PostgreSQL-backed application and whose named operational profile
+fits the reviewed budgets.
 
 ---
 
@@ -181,11 +189,12 @@ Ask yourself these questions in order:
 
 1. **Is PostgreSQL your primary data store?** If not → look at Debezium, platform-specific CDC
 2. **Do your events need transactional guarantees?** If not → consider direct broker writes or pg_notify
-3. **Is your throughput under ~50K events/second?** If not → consider Kafka/Redpanda
+3. **Does the matching operational profile fit its reviewed budgets?** If not → consider Kafka/Redpanda
 4. **Do you want to minimize operational overhead?** If yes → pg_tide
 5. **Do you need automatic schema-change capture?** If yes → consider Debezium (or combine both)
 
-If you answered "yes" to questions 1, 2, 3, and 4 — pg_tide is an excellent fit.
+If you answered "yes" to questions 1, 2, 3, and 4 — pg_tide is an excellent
+fit, subject to a reproducible reference run.
 
 ---
 

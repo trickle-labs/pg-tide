@@ -1,12 +1,17 @@
 # ADR-007: Shared Partition Table Semantics
 
-**Status:** Accepted  
+**Status:** Superseded by [ADR-013](adr-013-retention-partitioning-and-postgresql-cost.md) for v0.43.0
 **Date:** 2026-05-20  
 **Relates to:** [ADR-001 Single-Table Outbox](adr-001-single-table-outbox.md), [ADR-006 Outbox Table Partitioning](adr-006-outbox-table-partitioning.md)
 
 ---
 
 ## Context
+
+The global-rename and per-outbox procedures in this historical ADR are no
+longer production procedures. The v0.43 contract keeps
+`tide.tide_outbox_messages` as the public parent and uses ID-range children;
+conversion is one explicitly confirmed maintenance-window operation.
 
 `tide_outbox_messages` is a **single shared table** used by all outboxes in the pg_tide schema
 (per ADR-001).  When ADR-006 introduced declarative range partitioning via
@@ -25,7 +30,7 @@ Prior assessments identified two gaps in the v0.25.0 implementation:
 
 ---
 
-## Decision
+## Decision (historical)
 
 ### Option A: Per-outbox separate tables
 Each outbox gets its own message table (`tide.tide_outbox_messages_<name>`).  Partitioning is

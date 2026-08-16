@@ -1,5 +1,12 @@
 /// `pg-tide status` — print a human-readable status table for all configured relay pipelines.
 use pg_tide_relay::pg_tls;
+use std::collections::HashMap;
+
+#[derive(Debug, Default)]
+struct PipelineLag {
+    outbox_name: String,
+    lag: i64,
+}
 
 /// Print a human-readable status table for all configured relay pipelines.
 ///
@@ -22,31 +29,37 @@ pub async fn run_status(url: &str, inbox_summary: bool) -> Result<(), Box<dyn st
         let _ = conn.await;
     });
 
-    // Forward pipelines.
+    let lag_by_pipeline = load_pipeline_lags(&client).await?;
+
+    // Forward pipelines. Lag comes from relay_pipeline_lag when available and
+    // falls back to the same exact `id > last_change_id` predicate.
     let forward_rows = client
         .query(
             "SELECT
-                roc.name,
+                roc.name::text AS name,
                 'forward'::text AS direction,
                 roc.enabled,
-                COALESCE(rco.last_change_id, 0) AS last_offset,
-                (SELECT COUNT(*) FROM tide.tide_outbox_messages tom
-                 WHERE tom.outbox_name = (roc.config->>'source' ->> 'outbox')
-                   AND tom.consumed_at IS NULL) AS consumer_lag
+                (roc.config->'source'->>'outbox')::text AS outbox_name,
+                COALESCE(rco.last_change_id, 0) AS last_offset
              FROM tide.relay_outbox_config roc
-             LEFT JOIN tide.relay_consumer_offsets rco
-               ON rco.pipeline_id = roc.name
+             LEFT JOIN LATERAL (
+                 SELECT last_change_id
+                   FROM tide.relay_consumer_offsets
+                  WHERE pipeline_id = roc.name
+                    AND outbox_name = (roc.config->'source'->>'outbox')
+                  ORDER BY updated_at DESC NULLS LAST
+                  LIMIT 1
+             ) rco ON true
              ORDER BY roc.name",
             &[],
         )
-        .await
-        .unwrap_or_default();
+        .await?;
 
     // Reverse pipelines.
     let reverse_rows = client
         .query(
             "SELECT
-                ric.name,
+                ric.name::text AS name,
                 'reverse'::text AS direction,
                 ric.enabled,
                 COALESCE(rco.last_change_id, 0) AS last_offset,
@@ -57,8 +70,7 @@ pub async fn run_status(url: &str, inbox_summary: bool) -> Result<(), Box<dyn st
              ORDER BY ric.name",
             &[],
         )
-        .await
-        .unwrap_or_default();
+        .await?;
 
     let all_rows: Vec<_> = forward_rows.iter().chain(reverse_rows.iter()).collect();
 
@@ -77,7 +89,18 @@ pub async fn run_status(url: &str, inbox_summary: bool) -> Result<(), Box<dyn st
             let direction: String = row.get("direction");
             let enabled: bool = row.get("enabled");
             let last_offset: i64 = row.try_get("last_offset").unwrap_or(0);
-            let consumer_lag: i64 = row.try_get("consumer_lag").unwrap_or(0);
+            let consumer_lag = if direction == "forward" {
+                let outbox_name: Option<String> = row.try_get("outbox_name").ok();
+                match outbox_name {
+                    Some(outbox) => match lag_by_pipeline.get(&name) {
+                        Some(lag) if lag.outbox_name == outbox => lag.lag,
+                        _ => exact_lag(&client, &outbox, last_offset).await?,
+                    },
+                    None => 0,
+                }
+            } else {
+                0
+            };
 
             println!(
                 "{:<30} {:<10} {:<8} {:<14} {:<14}",
@@ -100,6 +123,69 @@ pub async fn run_status(url: &str, inbox_summary: bool) -> Result<(), Box<dyn st
     }
 
     Ok(())
+}
+
+async fn load_pipeline_lags(
+    client: &tokio_postgres::Client,
+) -> Result<HashMap<String, PipelineLag>, Box<dyn std::error::Error>> {
+    let exists: bool = client
+        .query_one(
+            "SELECT to_regclass('tide.relay_pipeline_lag') IS NOT NULL",
+            &[],
+        )
+        .await?
+        .get(0);
+    if !exists {
+        return Ok(HashMap::new());
+    }
+
+    let mut lags = HashMap::new();
+    for row in client
+        .query(
+            "SELECT DISTINCT ON (pipeline_id, outbox_name)
+                    pipeline_id, outbox_name, lag
+               FROM tide.relay_pipeline_lag
+              ORDER BY pipeline_id, outbox_name, updated_at DESC NULLS LAST,
+                       relay_group_id DESC",
+            &[],
+        )
+        .await?
+    {
+        let pipeline = row
+            .try_get::<_, String>("pipeline_id")
+            .or_else(|_| row.try_get::<_, String>("pipeline_name"));
+        let outbox = row.try_get::<_, String>("outbox_name");
+        let lag = row
+            .try_get::<_, i64>("lag")
+            .or_else(|_| row.try_get::<_, i64>("lag_count"))
+            .or_else(|_| row.try_get::<_, i64>("consumer_lag"));
+        if let (Ok(pipeline), Ok(outbox), Ok(lag)) = (pipeline, outbox, lag) {
+            lags.insert(
+                pipeline,
+                PipelineLag {
+                    outbox_name: outbox,
+                    lag,
+                },
+            );
+        }
+    }
+    Ok(lags)
+}
+
+async fn exact_lag(
+    client: &tokio_postgres::Client,
+    outbox_name: &str,
+    last_offset: i64,
+) -> Result<i64, Box<dyn std::error::Error>> {
+    Ok(client
+        .query_one(
+            "SELECT COUNT(*)::bigint
+               FROM tide.tide_outbox_messages
+              WHERE outbox_name = $1 AND id > $2",
+            &[&outbox_name, &last_offset],
+        )
+        .await?
+        .get(0))
 }
 
 /// Print the inbox fleet summary table from `tide.inbox_status(NULL)`.
