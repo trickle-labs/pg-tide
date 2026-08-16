@@ -311,7 +311,7 @@ impl Coordinator {
 
         self.metrics
             .ownership_events
-            .with_label_values(&[&self.relay_group_id, "acquired"])
+            .with_label_values(&[self.relay_group_id.as_str(), "acquired"])
             .inc();
         Ok(Some((client, lost_rx)))
     }
@@ -787,7 +787,7 @@ async fn run_pipeline_worker(
             if changed.is_ok() && *ownership_lost_rx.borrow() {
                 metrics
                     .ownership_events
-                    .with_label_values(&[&relay_group_id, "lost"])
+                    .with_label_values(&[relay_group_id.as_str(), "lost"])
                     .inc();
                 mark_pipeline_health(&health, &name, &tenant_label, false).await;
                 tracing::error!(
@@ -1202,7 +1202,7 @@ async fn worker_inner(
                 // sink may see a duplicate on retry; silent loss is forbidden.
                 metrics
                     .delivery_stage_total
-                    .with_label_values(&[&pipeline.name, "sink_acknowledged", "success"])
+                    .with_label_values(&[pipeline.name.as_str(), "sink_acknowledged", "success"])
                     .inc();
                 crate::failpoints::hit("after_sink_ack", &pipeline.name).await?;
                 commit_checkpoint(
@@ -1340,7 +1340,11 @@ async fn worker_inner(
                     DlqOutcome::Written => {
                         metrics
                             .delivery_stage_total
-                            .with_label_values(&[&pipeline.name, "dlq_persisted", "success"])
+                            .with_label_values(&[
+                                pipeline.name.as_str(),
+                                "dlq_persisted",
+                                "success",
+                            ])
                             .inc();
                         crate::failpoints::hit("after_dlq_commit", &pipeline.name).await?;
                         commit_checkpoint(
