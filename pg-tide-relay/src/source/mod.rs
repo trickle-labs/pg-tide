@@ -46,11 +46,12 @@ pub mod singer;
 pub mod airbyte;
 
 // v0.22.0: DuckLake reverse relay source
+#[cfg(feature = "ducklake")]
 pub mod ducklake;
 
 // v0.37.0: RockLake reverse relay source (bounded SQL subset).
 // Enabled with --features rocklake.
-// See plans/ecosystem/rocklake.md for design details.
+// See docs/archive/plans/rocklake.md for historical design details.
 #[cfg(feature = "rocklake")]
 pub mod rocklake;
 

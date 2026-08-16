@@ -4,7 +4,7 @@
 //! These tests verify the relay's database-side guarantees (offset management,
 //! idempotent inbox delivery) without connecting to a live MQTT broker.
 //!
-//! For end-to-end MQTT testing, use eclipse-mosquitto manually:
+//! For MQTT transport testing, use eclipse-mosquitto manually:
 //! ```bash
 //! docker run -it -p 1883:1883 eclipse-mosquitto
 //! cargo test --package pg-tide-relay --test mqtt_test
@@ -125,9 +125,9 @@ async fn test_mqtt_reverse_source_delivers_multiple() {
     db.assert_inbox_received("mqtt-multi-inbox", 6).await;
 }
 
-/// End-to-end: start Mosquitto container, publish messages via MQTT, consume.
+/// Transport integration: start Mosquitto container, publish messages via MQTT, consume.
 #[tokio::test]
-async fn test_mqtt_end_to_end_publish_subscribe() {
+async fn test_mqtt_transport_integration_publish_subscribe() {
     use testcontainers::{core::WaitFor, runners::AsyncRunner, ImageExt};
 
     // Mosquitto v2 requires explicit anonymous access configuration.

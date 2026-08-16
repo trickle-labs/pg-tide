@@ -1,6 +1,6 @@
 //! RockLake Phase 6 integration tests (v0.38.0).
 //!
-//! Verifies end-to-end ingestion, time-travel, and production-hardening
+//! Verifies integration-level ingestion, time-travel, and production-hardening
 //! behaviour of the `RockLakeSink` and `RockLakeSource` against a live
 //! in-process RockLake PG-Wire server provided by `PgWireHarness`.
 //!

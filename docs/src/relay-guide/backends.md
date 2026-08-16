@@ -49,7 +49,7 @@ To build with specific backends:
 cargo build --package pg-tide-relay --features "nats,kafka"
 
 # All backends
-cargo build --package pg-tide-relay --all-features
+cargo build --package pg-tide-relay --no-default-features --features experimental-full
 ```
 
 The official Docker image and GitHub release binaries include all backends.

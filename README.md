@@ -3,7 +3,7 @@
 [![CI](https://github.com/trickle-labs/pg-tide/actions/workflows/ci.yml/badge.svg)](https://github.com/trickle-labs/pg-tide/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Transactional outbox, idempotent inbox, and relay pipelines for PostgreSQL 18+.**
+**Transactional outbox, idempotent inbox, and relay pipelines for PostgreSQL 18.**
 
 pg_tide gives your PostgreSQL database a built-in messaging backbone. Publish events atomically within your existing transactions — no dual-writes, no distributed transactions, no message broker required at the database layer.
 
@@ -15,7 +15,7 @@ When you're ready to fan out to Kafka, NATS, Redis Streams, or any analytics pla
 - **Idempotent Inbox** — deduplication via unique event IDs; exactly-once delivery semantics at the application layer
 - **Consumer Groups** — Kafka-style offset tracking with heartbeats and visibility leases
 - **Relay Binary** — standalone `pg-tide` process; config lives in PostgreSQL and hot-reloads without restart
-- **30 Sink Backends** — streaming, cloud, analytics, notifications, connectors, object storage, and cross-instance pg-tide fan-out; all sinks fully registered and integration-tested
+- **Auditable connector surface** — maturity, ownership, build profiles, and evidence are generated from `connectors.toml`
 - **Pluggable Wire Formats** — native, Debezium, CloudEvents, Maxwell, Canal, and custom CDC JSON
 - **Multi-Tenant** — row-level security, per-tenant Prometheus labels, per-outbox publisher ACLs, and per-tenant advisory-lock namespacing
 - **Outbox Table Partitioning** — declarative daily/weekly/monthly range partitioning with live migration and relay sweep integration
@@ -95,29 +95,55 @@ tar xzf pg-tide-*.tar.gz && sudo mv pg-tide /usr/local/bin/
 # Or via Docker (standard build)
 docker pull ghcr.io/trickle-labs/pg-tide:latest
 
-# Full build with every optional connector enabled
-docker pull ghcr.io/trickle-labs/pg-tide:latest-full
+# Optional evaluation build with every compiling connector
+docker pull ghcr.io/trickle-labs/pg-tide:latest-experimental
 ```
 
 Release artifacts and Docker images are signed with [sigstore/cosign](https://github.com/sigstore/cosign-installer) using keyless OIDC signing.
 
-## Sink Backends
+<!-- BEGIN GENERATED CONNECTORS -->
+## Connector surface
 
-The relay ships with connectors for every major messaging and data platform:
+The registry contains 34 selectable or documented surfaces: 3 supported, 3 preview, and 27 experimental.
+Diagnostics are labeled separately and are not production integrations.
 
-| Category | Sinks |
-|----------|-------|
-| **Streaming** | Apache Kafka, NATS, Redis Streams, RabbitMQ (AMQP) |
-| **Cloud messaging** | AWS SQS, Google Cloud Pub/Sub, AWS Kinesis, Azure Service Bus, Azure Event Hubs |
-| **HTTP** | Webhook (with SSRF protection), Apache Arrow Flight |
-| **Notifications** | Slack, PagerDuty, Twilio SMS, SendGrid Email, Firebase Cloud Messaging |
-| **Analytics** | ClickHouse, MongoDB, Snowflake, BigQuery |
-| **Object storage** | Apache Iceberg v2 (Parquet), Delta Lake v2, DuckLake |
-| **Search** | Elasticsearch, MQTT v5 |
-| **Connectors** | Singer taps/targets, Airbyte sources/destinations, Fivetran connectors |
-| **pg-tide** | pg-inbox (deliver directly into another PostgreSQL inbox) |
-
-Optional connectors are feature-gated. The `latest-full` Docker image and `--all-features` build include all of them.
+| Connector | Direction | Maturity | Core | Tested versions | Owner | Evidence |
+|---|---|---|---:|---|---|---|
+| [PostgreSQL native outbox](docs/src/support/connector-compatibility.md#postgresql-outbox) | source | supported | yes | PostgreSQL 18 | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
+| [pg_trickle outbox compatibility](docs/src/support/connector-compatibility.md#pg-trickle-compatibility) | source | preview | no | unknown | @grove | [outbox_source_test.rs](pg-tide-relay/tests/outbox_source_test.rs) |
+| [stdin, stdout, and file diagnostics](docs/src/support/connector-compatibility.md#diagnostics) | bidirectional | supported | yes | local process | @grove | [load_test.rs](pg-tide-relay/tests/load_test.rs) |
+| [PostgreSQL inbox](docs/src/support/connector-compatibility.md#postgresql-inbox) | sink | supported | yes | PostgreSQL 18 | @grove | [pg_inbox_sink_test.rs](pg-tide-relay/tests/pg_inbox_sink_test.rs) |
+| [NATS JetStream](docs/src/support/connector-compatibility.md#nats) | bidirectional | supported | yes | nats:latest with JetStream | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
+| [HTTP webhook](docs/src/support/connector-compatibility.md#webhook) | bidirectional | preview | no | HTTP/1.1 in-process mock | @grove | [webhook_test.rs](pg-tide-relay/tests/webhook_test.rs), [webhook_sig_test.rs](pg-tide-relay/tests/webhook_sig_test.rs) |
+| [Apache Kafka](docs/src/support/connector-compatibility.md#kafka) | bidirectional | preview | no | unknown | @grove | [kafka_test.rs](pg-tide-relay/tests/kafka_test.rs) |
+| [Redis Streams](docs/src/support/connector-compatibility.md#redis) | bidirectional | experimental | no | unknown | @grove | [redis_test.rs](pg-tide-relay/tests/redis_test.rs) |
+| [Amazon SQS](docs/src/support/connector-compatibility.md#sqs) | bidirectional | experimental | no | unknown | @grove | [sqs_test.rs](pg-tide-relay/tests/sqs_test.rs) |
+| [RabbitMQ](docs/src/support/connector-compatibility.md#rabbitmq) | bidirectional | experimental | no | unknown | @grove | [rabbitmq_test.rs](pg-tide-relay/tests/rabbitmq_test.rs) |
+| [Google Pub/Sub](docs/src/support/connector-compatibility.md#pubsub) | bidirectional | experimental | no | unknown | @grove | [pubsub_test.rs](pg-tide-relay/tests/pubsub_test.rs) |
+| [Amazon Kinesis](docs/src/support/connector-compatibility.md#kinesis) | bidirectional | experimental | no | unknown | @grove | [kinesis_test.rs](pg-tide-relay/tests/kinesis_test.rs) |
+| [Azure Service Bus](docs/src/support/connector-compatibility.md#servicebus) | bidirectional | experimental | no | unknown | @grove | [servicebus_test.rs](pg-tide-relay/tests/servicebus_test.rs) |
+| [MQTT v5](docs/src/support/connector-compatibility.md#mqtt) | bidirectional | experimental | no | unknown | @grove | [mqtt_test.rs](pg-tide-relay/tests/mqtt_test.rs) |
+| [Azure Event Hubs](docs/src/support/connector-compatibility.md#eventhubs) | bidirectional | experimental | no | unknown | @grove | [eventhubs_test.rs](pg-tide-relay/tests/eventhubs_test.rs) |
+| [Elasticsearch](docs/src/support/connector-compatibility.md#elasticsearch) | sink | experimental | no | unknown | @grove | [elasticsearch_test.rs](pg-tide-relay/tests/elasticsearch_test.rs) |
+| [Object storage](docs/src/support/connector-compatibility.md#object-storage) | sink | experimental | no | unknown | @grove | [object_storage_test.rs](pg-tide-relay/tests/object_storage_test.rs) |
+| [Slack](docs/src/support/connector-compatibility.md#slack) | sink | experimental | no | unknown | @grove | [slack_test.rs](pg-tide-relay/tests/slack_test.rs) |
+| [Discord](docs/src/support/connector-compatibility.md#discord) | sink | experimental | no | unknown | @grove | [discord_test.rs](pg-tide-relay/tests/discord_test.rs) |
+| [PagerDuty](docs/src/support/connector-compatibility.md#pagerduty) | sink | experimental | no | unknown | @grove | [pagerduty_test.rs](pg-tide-relay/tests/pagerduty_test.rs) |
+| [Apache Arrow Flight](docs/src/support/connector-compatibility.md#arrow-flight) | sink | experimental | no | unknown | @grove | [arrow_flight_test.rs](pg-tide-relay/tests/arrow_flight_test.rs) |
+| [Singer](docs/src/support/connector-compatibility.md#singer) | bidirectional | experimental | no | unknown | @grove | [singer_test.rs](pg-tide-relay/tests/singer_test.rs) |
+| [Airbyte](docs/src/support/connector-compatibility.md#airbyte) | bidirectional | experimental | no | unknown | @grove | [airbyte_test.rs](pg-tide-relay/tests/airbyte_test.rs) |
+| [ClickHouse](docs/src/support/connector-compatibility.md#clickhouse) | sink | experimental | no | unknown | @grove | [clickhouse_test.rs](pg-tide-relay/tests/clickhouse_test.rs) |
+| [MongoDB](docs/src/support/connector-compatibility.md#mongodb) | sink | experimental | no | unknown | @grove | [mongodb_test.rs](pg-tide-relay/tests/mongodb_test.rs) |
+| [Google BigQuery](docs/src/support/connector-compatibility.md#bigquery) | sink | experimental | no | unknown | @grove | [bigquery_test.rs](pg-tide-relay/tests/bigquery_test.rs) |
+| [Snowflake](docs/src/support/connector-compatibility.md#snowflake) | sink | experimental | no | unknown | @grove | [snowflake_test.rs](pg-tide-relay/tests/snowflake_test.rs) |
+| [Delta Lake](docs/src/support/connector-compatibility.md#delta) | sink | experimental | no | unknown | @grove | [delta_test.rs](pg-tide-relay/tests/delta_test.rs) |
+| [Apache Iceberg](docs/src/support/connector-compatibility.md#iceberg) | sink | experimental | no | unknown | @grove | [iceberg_test.rs](pg-tide-relay/tests/iceberg_test.rs) |
+| [DuckLake](docs/src/support/connector-compatibility.md#ducklake) | sink | experimental | no | unknown | @grove | [ducklake_test.rs](pg-tide-relay/tests/ducklake_test.rs) |
+| [RockLake](docs/src/support/connector-compatibility.md#rocklake) | bidirectional | experimental | no | RockLake v0.27.14 | @grove | [rocklake_test.rs](pg-tide-relay/tests/rocklake_test.rs) |
+| [Fan-in compatibility surface](docs/src/support/connector-compatibility.md#fan-in) | source | experimental | no | disabled | @grove | — |
+| [DuckLake reverse source (unavailable)](docs/src/support/connector-compatibility.md#ducklake-reverse) | unavailable | experimental | no | not registered | @grove | — |
+| [PostgreSQL WAL logical source (groundwork)](docs/src/support/connector-compatibility.md#wal-logical-source) | unavailable | experimental | no | not registered | @grove | — |
+<!-- END GENERATED CONNECTORS -->
 
 ## Wire Formats
 

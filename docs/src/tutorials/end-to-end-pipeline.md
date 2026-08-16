@@ -8,7 +8,7 @@ This demonstrates a realistic pattern: your order service publishes events when 
 
 ## Prerequisites
 
-- PostgreSQL 18+ with pg_tide installed
+- PostgreSQL 18 with pg_tide installed
 - Kafka cluster running (or [Redpanda](https://redpanda.com), which is Kafka-compatible)
 - NATS server running
 - pg-tide relay built with `kafka` and `nats` features

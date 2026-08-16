@@ -8,22 +8,34 @@ on:
   workflow_dispatch:
 
 jobs:
+  connector-registry:
+    name: Connector registry and generated output
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check connector registry
+        run: python3 scripts/generate_connector_surface.py --check
+
+  clean-checkout:
+    name: Clean checkout workspace build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Assert no sibling RockLake checkout
+        run: test ! -e ../rocklake2
+      - name: Build and test the workspace
+        run: |
+          cargo build --workspace --exclude pg-tide-ext --locked
+          cargo test --workspace --exclude pg-tide-ext --locked --no-default-features --features experimental-full
+          cargo package --package pg-tide-relay --locked --allow-dirty
+
   lint:
     name: Format + Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      # v0.38.0: Checkout rocklake at the sibling path expected by the path
-      # dependency in pg-tide-relay/Cargo.toml (../../rocklake2).
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -43,22 +55,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (relay — no PostgreSQL required)
-        run: cargo clippy --package pg-tide-relay --all-targets --all-features -- -D warnings
+        run: cargo clippy --package pg-tide-relay --all-targets --no-default-features --features experimental-full -- -D warnings
 
   lint-ext:
     name: Clippy (pg-tide-ext)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -106,15 +109,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -137,21 +131,10 @@ jobs:
         run: cargo test --package pg-tide-relay --bins -- --test-threads=4
 
   test-integration:
-    name: Relay Integration Tests
+    name: Relay Experimental-full Integration Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      # v0.38.0: Checkout rocklake at the sibling path expected by the path
-      # dependency in pg-tide-relay/Cargo.toml (../../rocklake2).
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Free disk space for integration tests
         run: |
@@ -175,7 +158,7 @@ jobs:
           key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run integration tests (testcontainers)
-        run: cargo test --package pg-tide-relay --test '*' --all-features -- --test-threads=1
+        run: cargo test --package pg-tide-relay --test '*' --no-default-features --features experimental-full -- --test-threads=1
 
   # v0.16.0: Additional parallel integration test job groups by backend category.
   # Splits the 40+ test files into groups to reduce CI wall-clock time.
@@ -184,15 +167,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -228,16 +202,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Checkout rocklake at the sibling path expected by the path dependency.
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -261,15 +225,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -295,15 +250,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -325,15 +271,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -368,15 +305,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -431,15 +359,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -509,15 +428,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -561,22 +471,25 @@ jobs:
           python3 scripts/run_quickstart_sql.py \
             README.md docs/src/getting-started/first-pipeline.md
 
-  # v0.40.0 (Workstream I): Real packaged fresh-install vs upgrade parity.
-  # CREATE EXTENSION '0.40.0' vs CREATE EXTENSION '0.39.0' + ALTER EXTENSION UPDATE.
+  # v0.41.0 (Workstream I): Real packaged fresh-install vs upgrade parity.
+  # CREATE EXTENSION '0.41.0' vs CREATE EXTENSION '0.40.0' + ALTER EXTENSION UPDATE.
   real-extension-parity:
     name: Real Fresh Install vs Upgrade Parity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
+      # v0.40.0 still has a historical path dev-dependency on RockLake.
       - uses: actions/checkout@v6
         with:
           repository: trickle-labs/rocklake
           ref: v0.27.14
           path: rocklake2
 
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
+      - name: Provide historical RockLake dependency path
+        run: |
+          mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
+          ln -s "$(dirname "$GITHUB_WORKSPACE")/rocklake2" "$GITHUB_WORKSPACE/rocklake2"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -603,30 +516,27 @@ jobs:
           cargo install cargo-pgrx --version "=0.18.0" --locked
           cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
 
-      - name: Provide historical RockLake dependency path
-        run: ln -s "$(dirname "$GITHUB_WORKSPACE")/rocklake2" "$GITHUB_WORKSPACE/rocklake2"
-
-      - name: Install packaged v0.39.0 extension
-        run: |
-          sudo chown -R "$(id -u):$(id -g)" \
-            /usr/share/postgresql/18/extension \
-            /usr/lib/postgresql/18/lib
-          git clone --depth 1 --branch v0.39.0 \
-            https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v039-source"
-          (
-            cd "$GITHUB_WORKSPACE/v039-source"
-            cargo pgrx install --package pg-tide-ext \
-              --pg-config /usr/lib/postgresql/18/bin/pg_config
-          )
-
       - name: Install packaged v0.40.0 extension
         run: |
           sudo chown -R "$(id -u):$(id -g)" \
             /usr/share/postgresql/18/extension \
             /usr/lib/postgresql/18/lib
+          git clone --depth 1 --branch v0.40.0 \
+            https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v040-source"
+          (
+            cd "$GITHUB_WORKSPACE/v040-source"
+            cargo pgrx install --package pg-tide-ext \
+              --pg-config /usr/lib/postgresql/18/bin/pg_config
+          )
+
+      - name: Install packaged v0.41.0 extension
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            /usr/share/postgresql/18/extension \
+            /usr/lib/postgresql/18/lib
           cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
-          sudo cp sql/pg_tide--0.39.0--0.40.0.sql \
-            /usr/share/postgresql/18/extension/pg_tide--0.39.0--0.40.0.sql
+          sudo cp sql/pg_tide--0.40.0--0.41.0.sql \
+            /usr/share/postgresql/18/extension/pg_tide--0.40.0--0.41.0.sql
 
       - name: Verify upgrade path exists (chain completeness through workspace version)
         run: bash scripts/check_upgrade_completeness.sh
@@ -642,16 +552,16 @@ jobs:
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           export PGPASSWORD=postgres
           # Fresh install directly at the current version.
-          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS fresh40;"
-          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh40;"
-          psql -h 127.0.0.1 -U postgres -d fresh40 -c "CREATE EXTENSION pg_tide VERSION '0.40.0';"
-          # Upgrade from 0.39.0.
-          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade40;"
-          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade40;"
-          psql -h 127.0.0.1 -U postgres -d upgrade40 -c "CREATE EXTENSION pg_tide VERSION '0.39.0';"
-          psql -h 127.0.0.1 -U postgres -d upgrade40 -c "ALTER EXTENSION pg_tide UPDATE TO '0.40.0';"
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS fresh41;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh41;"
+          psql -h 127.0.0.1 -U postgres -d fresh41 -c "CREATE EXTENSION pg_tide VERSION '0.41.0';"
+          # Upgrade from 0.40.0.
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade41;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade41;"
+          psql -h 127.0.0.1 -U postgres -d upgrade41 -c "CREATE EXTENSION pg_tide VERSION '0.40.0';"
+          psql -h 127.0.0.1 -U postgres -d upgrade41 -c "ALTER EXTENSION pg_tide UPDATE TO '0.41.0';"
           # Normalized schema comparison.
-          for db in fresh40 upgrade40; do
+          for db in fresh41 upgrade41; do
             pg_dump -h 127.0.0.1 -U postgres -d "$db" --schema-only --schema=tide \
               --no-owner --no-privileges \
               | grep -v '^--' \
@@ -660,14 +570,14 @@ jobs:
               | grep -v '^\\unrestrict ' \
               | sort > "/dev/shm/${db}.sql"
           done
-          if diff --ignore-space-change /dev/shm/fresh40.sql /dev/shm/upgrade40.sql; then
-            echo "OK: real fresh install and 0.39.0 -> 0.40.0 upgrade produce identical tide schemas."
+          if diff --ignore-space-change /dev/shm/fresh41.sql /dev/shm/upgrade41.sql; then
+            echo "OK: real fresh install and 0.40.0 -> 0.41.0 upgrade produce identical tide schemas."
           else
-            echo "FAIL: fresh vs upgrade schema drift for v0.40.0."
+            echo "FAIL: fresh vs upgrade schema drift for v0.41.0."
             exit 1
           fi
 
-  # v0.40.0: Fast doc/migration guards (no build required).
+  # v0.41.0: Fast doc/migration guards (no build required).
   docs-migration-guards:
     name: Docs & Migration Guards
     runs-on: ubuntu-latest
@@ -677,7 +587,7 @@ jobs:
       - name: Reject active positional relay API calls in docs
         run: |
           ALLOWLIST='docs/src/operations/v1-migration-guide.md|docs/src/guides/migrating-to-pg-tide.md|docs/src/integration/pg-trickle.md'
-          HITS=$(grep -rn 'SELECT tide.relay_set_outbox(\|SELECT tide.relay_set_inbox(' docs/ examples/ README.md 2>/dev/null \
+          HITS=$(grep -rn 'SELECT tide.relay_set_outbox(\|SELECT tide.relay_set_inbox(' docs/src/ examples/ README.md 2>/dev/null \
             | grep -v '_v2' | grep -vE "^(${ALLOWLIST}):" || true)
           if [ -n "$HITS" ]; then
             echo "ERROR: active positional relay API calls found (use *_v2 JSONB forms):"
@@ -694,15 +604,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2" 
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -784,7 +685,7 @@ jobs:
             echo "No pg_tide_relay_* metrics in dashboard — skipping check."
           fi
 
-  # v0.17.0: Guard against stale PGTRICKLE_RELAY_* env-var references in docs.
+  # Guard against stale PGTRICKLE_RELAY_* env-var references in docs.
   # All references must use the current PG_TIDE_* prefix.
   no-stale-env-vars:
     name: No Stale PGTRICKLE_RELAY_* References
@@ -795,7 +696,7 @@ jobs:
       - name: Assert no docs reference PGTRICKLE_ prefix
         run: |
           # CHANGELOG.md may document the historical rename; check only active docs.
-          if grep -r 'PGTRICKLE_' docs/ README.md 2>/dev/null | grep -v "^Binary file"; then
+          if grep -r 'PGTRICKLE_' docs/src/ README.md 2>/dev/null | grep -v "^Binary file"; then
             echo "ERROR: Found stale PGTRICKLE_ env-var references — rename to PG_TIDE_*"
             exit 1
           fi
@@ -960,15 +861,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/checkout@v6
-        with:
-          repository: trickle-labs/rocklake
-          ref: v0.27.14
-          path: rocklake2
-
-      - name: Move rocklake2 to sibling path (satisfies path dep ../../rocklake2)
-        run: mv "$GITHUB_WORKSPACE/rocklake2" "$(dirname "$GITHUB_WORKSPACE")/rocklake2"
 
       - name: Install Rust nightly toolchain
         uses: dtolnay/rust-toolchain@nightly

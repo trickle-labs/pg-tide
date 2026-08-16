@@ -1,7 +1,7 @@
 //! Benchmarks for pg-tide-relay.
 //!
-//! Measures outbox message throughput, end-to-end delivery latency, and
-//! inbox dedup overhead at scale.
+//! Microbenchmarks serialization, batch construction, template rendering, and
+//! parameter construction. These are not relay end-to-end latency measurements.
 //!
 //! Run with:
 //!

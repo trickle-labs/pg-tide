@@ -5,6 +5,7 @@
 FROM --platform=$BUILDPLATFORM rust:1.88-alpine AS builder
 
 ARG TARGETARCH
+ARG CARGO_FEATURES=core
 
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static git
 
@@ -17,15 +18,10 @@ RUN case "$TARGETARCH" in \
 
 RUN rustup target add "$(cat /rust_target)"
 
-# v0.38.0: rocklake-testkit is a dev-dependency with a path dep (../../rocklake2)
-# relative to pg-tide-relay/Cargo.toml → resolves to /rocklake2 inside the container.
-# Cargo resolves all workspace deps (including dev-deps) even for release builds,
-# so rocklake2 must be present before `cargo build`.
-RUN git clone --depth=1 --branch v0.27.14 \
-    https://github.com/trickle-labs/rocklake.git /rocklake2
-
 WORKDIR /src
 COPY . .
+
+LABEL org.opencontainers.image.pg-tide.features="$CARGO_FEATURES"
 
 # On Alpine, gcc is the native musl gcc. cc-rs (used by ring's build.rs) defaults to
 # looking for "<triple>-gcc" even on native musl targets. Also set AR for link-time tools.
@@ -34,6 +30,7 @@ RUN CC_x86_64_unknown_linux_musl=gcc \
     CC_aarch64_unknown_linux_musl=gcc \
     AR_aarch64_unknown_linux_musl=ar \
     cargo build --package pg-tide-relay --release --target "$(cat /rust_target)" \
+    --no-default-features --features "$CARGO_FEATURES" \
     && strip "target/$(cat /rust_target)/release/pg-tide" \
     && cp "target/$(cat /rust_target)/release/pg-tide" /pg-tide
 

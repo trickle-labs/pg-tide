@@ -1,57 +1,28 @@
-# v1.0.0 Feature Scope
+# v1 scope
 
-> **Status:** Feature freeze announcement — this document defines what is and is not
-> included in v1.0.0 GA and prevents scope creep in the final sprint.
+v1.0.0 is not a feature promise for every connector or every design listed in
+older planning documents. It will be defined only after the focused v0.x
+support policy is proven and the project publishes a reviewed v1 plan.
 
-## What IS in v1.0.0
+## In scope for the supported foundation
 
-- Transactional outbox (forward relay) with all v0.x sinks
-- Idempotent inbox (reverse relay) with all v0.x sources
-- Pipeline dependency DAG with cycle detection (`tide.relay_pipeline_deps`)
-- Full AsyncAPI 3.0 catalog export and validation
-- HA failover via PostgreSQL advisory locks
-- Wire format support: native, Debezium JSON/Avro/Protobuf, Maxwell, Canal, CloudEvents, CDC-JSON, claim-check
-- Schema registry integration (Confluent Schema Registry, Apicurio)
-- Pipeline templates and multi-outbox fan-in — **fan-in is experimental; disabled in v0.40.0 pending canonical shared-table runtime coverage** (see ADR-011)
-- Backfill job scheduling with chunking and progress tracking
-- Config change history and pipeline lifecycle management
-- Delivery receipts with relay integration
-- Per-tenant relay groups with RLS and per-tenant metrics
-- PostgreSQL TLS/mTLS profiles
-- Outbox-level publisher ACLs
-- SSRF guard for webhook sinks
-- Supply-chain hardening (cargo-deny, SBOM, Trivy, cosign)
-- `pg-tide doctor`, `validate-config`, `dag`, `template`, `backfill`, `history` CLI
-- Prometheus metrics + OpenTelemetry tracing
-- Grafana/Perses relay health dashboard
-- Helm chart with Kubernetes deployment support
+- Transactional PostgreSQL outbox.
+- Idempotent PostgreSQL inbox.
+- Relay catalog configuration and the documented `core` relay path.
+- Observable delivery, retry, and failure behavior covered by the release
+  evidence.
 
-## What is NOT in v1.0.0
+## Explicitly outside the current promise
 
-The following features are explicitly deferred to post-v1.0.0 releases:
+- Unproven connector ecosystems and protocol adapters.
+- PostgreSQL 17 support until its complete feasibility gate passes.
+- A stable plugin ABI, broad wire-format compatibility, or a promise that all
+  compiling feature combinations are production-ready.
+- Historical v1 features listed in archived roadmaps without current
+  implementation and evidence.
 
-| Feature | Reason for deferral |
-|---|---|
-| Logical-replication source (PostgreSQL WAL-based CDC) | Requires additional protocol work; tracked separately |
-| Kafka exactly-once delivery (EOS transactions) | Needs producer transaction ID management; post-GA |
-| WASM plugin system for custom transforms | API design not finalized |
-| Web UI for pipeline management | Out of scope for server binary |
-| Additional connector ecosystems (Airbyte v2, Singer v2) | Connector protocol updates needed |
-| KMS envelope encryption | `LocalKeyFile` provider is fully implemented (v0.35.0); cloud providers (AWS KMS, GCP KMS, Vault) implemented before v1.0.0 |
-| Envelope-encrypted inbox replay | Depends on KMS implementation |
+The [support policy](support/support-policy.md),
+[production-supported definition](support/production-supported.md), and
+[focused roadmap](../../plans/pg-tide-roadmap-to-focused-production-grade.md)
+are the authoritative boundaries for v0.41.0.
 
-## Version Compatibility
-
-| Component | Minimum PostgreSQL version |
-|---|---|
-| pg_tide extension | PostgreSQL 18 |
-| pg-tide relay binary | Any; connects to PostgreSQL 18 |
-
-## Stability Guarantees
-
-From v1.0.0:
-- The `tide.*` SQL API (v2 forms) is **stable** — no breaking changes without a major version bump.
-- The relay binary CLI flags and environment variables are **stable**.
-- The AsyncAPI export format (channels, messages, operations) is **stable**.
-- The Prometheus metric names (`pg_tide_relay_*`) are **stable**.
-- The TOML config format is **stable**.

@@ -1,7 +1,7 @@
 //! Integration tests: Google Cloud Pub/Sub source and sink (RELAY-P2-1).
 //!
 //! Uses the GCP Pub/Sub emulator (`gcr.io/google.com/cloudsdktool/cloud-sdk`)
-//! for end-to-end testing without a real GCP project.
+//! for transport integration testing without a real GCP project.
 //!
 //! Run manually:
 //! ```bash
@@ -75,10 +75,10 @@ async fn test_pubsub_sink_failure_preserves_offset() {
     );
 }
 
-/// End-to-end test: starts the GCP Pub/Sub emulator and verifies that
+/// Transport integration test: starts the GCP Pub/Sub emulator and verifies that
 /// messages can be published to a topic and pulled from a subscription.
 #[tokio::test]
-async fn test_pubsub_end_to_end_publish_pull() {
+async fn test_pubsub_transport_integration_publish_pull() {
     use testcontainers::{core::WaitFor, runners::AsyncRunner, ImageExt};
 
     // The GCP Pub/Sub emulator — a lightweight process that implements

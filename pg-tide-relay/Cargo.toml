@@ -14,8 +14,12 @@ name = "pg-tide"
 path = "src/main.rs"
 
 [features]
-# Default: the most common forward sinks + stdout (no cmake build required)
-default = ["nats", "webhook", "stdout"]
+# BEGIN GENERATED CONNECTOR PROFILES
+default = ["core"]
+core = ["nats", "stdout"]
+core-kafka = ["core", "kafka"]
+experimental-full = ["airbyte", "arrow-flight", "bigquery", "canal", "cdc-json", "clickhouse", "debezium", "delta", "discord", "ducklake", "elasticsearch", "eventhubs", "iceberg", "kafka", "kinesis", "kms", "kms-aws", "kms-gcp", "kms-local", "kms-vault", "maxwell", "mongodb", "mqtt", "native-tls", "nats", "object-storage", "otel", "pagerduty", "pubsub", "rabbitmq", "redis", "rocklake", "schema-registry", "servicebus", "singer", "slack", "snowflake", "sqs", "stdout", "wal-source", "webhook"]
+# END GENERATED CONNECTOR PROFILES
 
 # Optional backends (each adds a Cargo dependency)
 nats            = ["dep:async-nats"]
@@ -24,7 +28,6 @@ kafka           = ["dep:rdkafka"]
 stdout          = []
 redis           = ["dep:redis"]
 sqs             = ["dep:aws-sdk-sqs", "dep:aws-config"]
-pg-inbox        = []        # no extra deps — uses tokio-postgres already
 rabbitmq        = ["dep:lapin"]
 # v0.23.0: native-tls — real TLS for sslmode=require/verify-ca/verify-full
 # via the platform OpenSSL stack (postgres-openssl crate).
@@ -60,7 +63,7 @@ ducklake        = ["dep:object_store", "dep:parquet"]
 # v0.37.0: RockLake PG-wire sidecar — bounded SQL subset; no nextval/DDL/ON CONFLICT.
 # Phases 0-5: catalog verification, Parquet write, inlined data, schema evolution,
 # auto-partition via ducklake_metadata.
-# See plans/ecosystem/rocklake.md for design details.
+# See docs/archive/plans/rocklake.md for historical design details.
 rocklake        = ["dep:object_store", "dep:parquet"]
 # v0.11.0: Pluggable wire formats
 debezium        = []
@@ -188,7 +191,7 @@ object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
 parquet = "54"
 # v0.38.0: RockLake testkit for Phase 6 integration tests.
 # Provides PgWireHarness: spins up an in-memory RockLake PG-wire server.
-rocklake-testkit = { path = "../../rocklake2/crates/rocklake-testkit" }
+rocklake-testkit = { git = "https://github.com/trickle-labs/rocklake.git", rev = "f43052917a34e37948fa44f8518db89e1c1f7d18", package = "rocklake-testkit" }
 
 [[bench]]
 name = "throughput"

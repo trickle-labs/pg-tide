@@ -2,6 +2,7 @@ pub mod inbox;
 pub mod pg_outbox;
 /// Sink trait and implementations.
 /// A Sink consumes RelayMessages published by a Source.
+#[cfg(feature = "stdout")]
 pub mod stdout;
 
 #[cfg(feature = "nats")]
@@ -89,7 +90,7 @@ pub mod ducklake;
 
 // v0.37.0: RockLake PG-wire sidecar sink (bounded SQL subset).
 // Enabled with --features rocklake.
-// See plans/ecosystem/rocklake.md for design details.
+// See docs/archive/plans/rocklake.md for historical design details.
 #[cfg(feature = "rocklake")]
 pub mod rocklake;
 

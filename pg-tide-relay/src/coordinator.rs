@@ -2020,6 +2020,7 @@ async fn build_sink(
 ) -> Result<Box<dyn crate::sink::Sink>, RelayError> {
     let sink_type = pipeline.require_str(&["sink_type"])?;
     match sink_type {
+        #[cfg(feature = "stdout")]
         "stdout" => {
             let format = match pipeline.opt_str(&["sink", "format"]).unwrap_or("jsonl") {
                 "pretty" => crate::sink::stdout::StdoutFormat::JsonPretty,
@@ -2028,6 +2029,7 @@ async fn build_sink(
             Ok(Box::new(crate::sink::stdout::StdoutSink::new(format)))
         }
 
+        #[cfg(feature = "stdout")]
         "file" => {
             let path = pipeline.require_str(&["sink", "path"])?;
             let format = match pipeline.opt_str(&["sink", "format"]).unwrap_or("jsonl") {

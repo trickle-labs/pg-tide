@@ -5458,7 +5458,7 @@ dependencies = [
 
 [[package]]
 name = "pg-tide-ext"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "pgrx",
  "pgrx-tests",
@@ -5469,7 +5469,7 @@ dependencies = [
 
 [[package]]
 name = "pg-tide-relay"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "aes-gcm",
  "apache-avro",
@@ -6657,6 +6657,7 @@ dependencies = [
 [[package]]
 name = "rocklake-catalog"
 version = "0.27.14"
+source = "git+https://github.com/trickle-labs/rocklake.git?rev=f43052917a34e37948fa44f8518db89e1c1f7d18#876ab027189b0a643dfac3a3ca6b5e79f045f0d8"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -6679,6 +6680,7 @@ dependencies = [
 [[package]]
 name = "rocklake-core"
 version = "0.27.14"
+source = "git+https://github.com/trickle-labs/rocklake.git?rev=f43052917a34e37948fa44f8518db89e1c1f7d18#876ab027189b0a643dfac3a3ca6b5e79f045f0d8"
 dependencies = [
  "bytes",
  "chrono",
@@ -6696,6 +6698,7 @@ dependencies = [
 [[package]]
 name = "rocklake-pgwire"
 version = "0.27.14"
+source = "git+https://github.com/trickle-labs/rocklake.git?rev=f43052917a34e37948fa44f8518db89e1c1f7d18#876ab027189b0a643dfac3a3ca6b5e79f045f0d8"
 dependencies = [
  "async-trait",
  "base64",
@@ -6725,6 +6728,7 @@ dependencies = [
 [[package]]
 name = "rocklake-sql"
 version = "0.27.14"
+source = "git+https://github.com/trickle-labs/rocklake.git?rev=f43052917a34e37948fa44f8518db89e1c1f7d18#876ab027189b0a643dfac3a3ca6b5e79f045f0d8"
 dependencies = [
  "arrow",
  "bytes",
@@ -6741,6 +6745,7 @@ dependencies = [
 [[package]]
 name = "rocklake-testkit"
 version = "0.27.14"
+source = "git+https://github.com/trickle-labs/rocklake.git?rev=f43052917a34e37948fa44f8518db89e1c1f7d18#876ab027189b0a643dfac3a3ca6b5e79f045f0d8"
 dependencies = [
  "chrono",
  "object_store 0.12.5",

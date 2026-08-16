@@ -1,7 +1,7 @@
 //! Integration tests: Amazon Kinesis Data Streams source and sink (RELAY-P2-2).
 //!
 //! Uses LocalStack — an AWS cloud service emulator — to test the Kinesis
-//! integration end-to-end without a real AWS account.
+//! transport integration without a real AWS account.
 //!
 //! Run manually:
 //! ```bash
@@ -76,10 +76,10 @@ async fn test_kinesis_sink_failure_preserves_offset() {
     );
 }
 
-/// End-to-end test: starts a LocalStack container and verifies that records
+/// Transport integration test: starts a LocalStack container and verifies that records
 /// can be put to and read from a Kinesis stream.
 #[tokio::test]
-async fn test_kinesis_end_to_end_put_get_records() {
+async fn test_kinesis_transport_integration_put_get_records() {
     use testcontainers::{core::WaitFor, runners::AsyncRunner, ImageExt};
 
     let localstack = testcontainers::GenericImage::new("localstack/localstack", "3")

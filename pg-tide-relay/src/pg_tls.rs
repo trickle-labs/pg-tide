@@ -15,7 +15,7 @@
 /// When compiled with `--features native-tls`, the `require`/`verify-ca`/
 /// `verify-full` modes use the platform OpenSSL stack (via `postgres-openssl`)
 /// instead of failing closed.  The `:latest` Docker image and default feature
-/// set remain NoTls-capable (fail-closed on `require`); the `:latest-full`
+/// set remain NoTls-capable (fail-closed on `require`); the experimental
 /// image compiles with `--features native-tls`.
 use std::pin::Pin;
 use std::str::FromStr;

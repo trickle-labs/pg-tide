@@ -10,7 +10,7 @@
 - [ ] Verify `sslmode` is set appropriately for your PostgreSQL deployment:
   - Development: `sslmode=disable` or `sslmode=prefer` (acceptable)
   - Staging/Production: `sslmode=require` or `sslmode=verify-full` (required)
-- [ ] If using `sslmode=require`, compile with `--features native-tls` or use the `:latest-full` Docker image.
+- [ ] If using `sslmode=require`, compile with `--features native-tls` or use the `latest-experimental` Docker image.
 - [ ] Run `pg-tide doctor` and confirm: `[OK] TLS connection: TLSv1.2` or `TLSv1.3`.
 - [ ] Cloud-managed PostgreSQL services (RDS, Cloud SQL, Azure Database) behind a TLS proxy work without the `native-tls` feature.
 

@@ -17,7 +17,7 @@ The relay binary is completely stateless. You can kill it, restart it, replace i
 
 ## Extension Deployment
 
-Install the extension on your PostgreSQL 18+ server:
+Install the extension on your PostgreSQL 18 server:
 
 ```sql
 CREATE EXTENSION pg_tide;
@@ -394,7 +394,7 @@ For capacity planning: a relay instance handling 10 active pipelines at 1,000 me
 
 Before going live, verify each item:
 
-- [ ] PostgreSQL 18+ with `pg_tide` extension installed and verified
+- [ ] PostgreSQL 18 with `pg_tide` extension installed and verified
 - [ ] Relay binary or Docker image available and version-pinned
 - [ ] Pipeline configurations created in the database
 - [ ] Consumer groups created for each forward pipeline

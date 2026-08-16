@@ -1,55 +1,23 @@
-# Feature: Fivetran Destination Support
+# Fivetran webhook compatibility
 
-pg_tide can function as a [Fivetran](https://fivetran.com) destination connector, receiving data from Fivetran's managed extraction pipelines and writing it into a pg_tide inbox. This lets you use Fivetran's 300+ managed connectors while routing the data through your transactional inbox for further processing.
-
-## How It Works
-
-Fivetran manages the extraction side (connecting to sources like Salesforce, Stripe, databases) and pushes data to a destination. pg_tide acts as that destination — receiving Fivetran's standardized output and writing records into your PostgreSQL inbox table.
-
-```
-Fivetran Cloud  →  HTTP Push  →  pg_tide (Fivetran destination)  →  Inbox table
-```
-
-## Configuration
+pg_tide does not expose a `fivetran` source type or a first-class Fivetran
+destination. Fivetran-shaped webhook payloads and signatures can be handled by
+the generic `webhook` source, which remains preview until its full production
+evidence gate is complete. See the [connector matrix](../support/connector-compatibility.md).
 
 ```sql
 SELECT tide.relay_set_inbox_v2(
   jsonb_build_object(
     'name', 'fivetran-crm',
     'inbox', 'crm_inbox',
-    'source', 'fivetran',
-    'config', '{
-        "listen_addr": "0.0.0.0:8080",
-        "api_key": "${env:FIVETRAN_API_KEY}",
-        "api_secret": "${env:FIVETRAN_API_SECRET}"
-    }'::jsonb
+    'source', 'webhook',
+    'config', jsonb_build_object(
+      'signature_scheme', 'fivetran',
+      'signature_secret', '${env:FIVETRAN_API_SECRET}'
+    )
   )
 );
 ```
 
-### Configuration Reference
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `source_type` | string | — | Must be `"fivetran"` |
-| `listen_addr` | string | `"0.0.0.0:8080"` | HTTP server address |
-| `api_key` | string | — | Fivetran API key for authentication |
-| `api_secret` | string | — | Fivetran API secret |
-
-## When to Use Fivetran vs Singer/Airbyte
-
-| Aspect | Fivetran | Singer/Airbyte |
-|--------|----------|----------------|
-| Management | Fully managed (Fivetran Cloud) | Self-hosted |
-| Scheduling | Fivetran handles sync schedule | You manage cron/orchestration |
-| Monitoring | Fivetran dashboard | Your own metrics |
-| Cost | Per-row pricing | Free (compute cost only) |
-| Connector quality | Enterprise-grade, maintained by Fivetran | Community-maintained |
-
-Choose Fivetran when you want zero-maintenance extraction with enterprise SLAs. Choose Singer/Airbyte when you want full control and cost predictability.
-
-## Further Reading
-
-- [Sinks: Fivetran](../sinks/fivetran.md) — Acting as a Fivetran destination
-- [Singer Protocol](singer-protocol.md) — Self-hosted alternative
-- [Airbyte Protocol](airbyte-protocol.md) — Self-hosted alternative with Docker
+This documents the generic webhook compatibility path, not a separate
+connector or support promise.

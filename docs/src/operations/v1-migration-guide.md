@@ -191,8 +191,7 @@ PostgreSQL extension downgrades are not natively supported.
 | Idempotent inbox | ✅ | ✅ | Unchanged |
 | Forward relay (outbox → external sink) | ✅ | ✅ | Unchanged |
 | Reverse relay (external source → inbox) | ✅ | ✅ | Unchanged |
-| All 30 sink backends | ✅ | ✅ | Unchanged |
-| All 16 source backends | ✅ | ✅ | Unchanged |
+| Connector surface | See generated matrix | See generated matrix | Evidence-based |
 | Wire formats (Debezium, Maxwell, Canal, CloudEvents, native) | ✅ | ✅ | Unchanged |
 | DuckLake integration | ✅ | ✅ | Unchanged |
 | Outbox table partitioning | ✅ | ✅ | Unchanged |
@@ -226,7 +225,7 @@ to post-v1.0.0 releases to prevent scope creep.  Key exclusions:
 - Kafka exactly-once via transactions (v1.1.0)
 - WASM transform plugin system (v1.2.0)
 - Web UI control plane (v1.3.0)
-- Additional connector ecosystems beyond the current 30 sinks / 16 sources (v1.1+)
+- Additional connector ecosystems beyond the current generated matrix (v1.1+)
 
 
 1. Replace all calls to the deprecated positional API forms (see above).

@@ -78,14 +78,14 @@ async fn test_elasticsearch_sink_failure_preserves_offset() {
     );
 }
 
-/// End-to-end test: starts an OpenSearch container (Elasticsearch-compatible)
+/// Transport integration test: starts an OpenSearch container (Elasticsearch-compatible)
 /// and verifies that the relay can index documents via the `_bulk` API.
 ///
 /// OpenSearch 2.x is 100% API-compatible with Elasticsearch for the `_bulk`
 /// endpoint. It also runs reliably in Docker on all platforms, including macOS
 /// where Elasticsearch 8.x may require kernel SECCOMP support.
 #[tokio::test]
-async fn test_elasticsearch_end_to_end_bulk_index() {
+async fn test_elasticsearch_transport_integration_bulk_index() {
     use testcontainers::{core::WaitFor, runners::AsyncRunner, ImageExt};
 
     // OpenSearch 2.x: Elasticsearch-compatible, works on macOS Docker without

@@ -4,7 +4,7 @@ This tutorial takes you from zero to a working pg_tide pipeline in 10 minutes. Y
 
 ## Prerequisites
 
-- PostgreSQL 14 or later
+- PostgreSQL 18
 - The pg_tide extension installed (`CREATE EXTENSION pg_tide`)
 - The `pg-tide` relay binary (see [Installation](../getting-started/installation.md))
 
