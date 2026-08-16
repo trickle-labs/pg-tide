@@ -109,6 +109,31 @@ async fn connect(url: &str) -> tokio_postgres::Client {
     client
 }
 
+async fn wait_for_offset(client: &tokio_postgres::Client, minimum: i64) -> i64 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(row) = client
+            .query_opt(
+                "SELECT last_change_id FROM tide.relay_consumer_offsets \
+                 WHERE relay_group_id = 'e2e-a' AND pipeline_id = 'orders-nats' \
+                   AND outbox_name = 'orders'",
+                &[],
+            )
+            .await
+            .expect("offset query")
+        {
+            let offset: i64 = row.get(0);
+            if offset >= minimum {
+                return offset;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("offset did not reach {minimum}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Publish one business event in a single transaction: an application write
 /// plus `tide.outbox_publish()`, both committed atomically.
 async fn publish_business_event(url: &str, order_id: &str, event_type: &str) {
@@ -298,16 +323,7 @@ async fn public_api_outbox_to_nats_e2e() {
     assert_eq!(msg_id, format!("outbox_orders:{source_id}:0"));
 
     // ── Offset keyed by (relay group, pipeline, outbox) ──────────────────
-    let offset: i64 = client
-        .query_one(
-            "SELECT last_change_id FROM tide.relay_consumer_offsets \
-             WHERE relay_group_id = 'e2e-a' AND pipeline_id = 'orders-nats' \
-               AND outbox_name = 'orders'",
-            &[],
-        )
-        .await
-        .expect("offset row")
-        .get(0);
+    let offset = wait_for_offset(&client, source_id).await;
     assert!(offset >= source_id, "offset must cover the delivered event");
 
     // ── Stop A, publish while stopped, restart A ─────────────────────────
@@ -326,16 +342,7 @@ async fn public_api_outbox_to_nats_e2e() {
     let body2: serde_json::Value =
         serde_json::from_slice(&msgs2[0].payload).expect("decode second message");
     assert_eq!(body2["payload"]["order_id"].as_str(), Some("A-2"));
-    let offset2: i64 = client
-        .query_one(
-            "SELECT last_change_id FROM tide.relay_consumer_offsets \
-             WHERE relay_group_id = 'e2e-a' AND pipeline_id = 'orders-nats' \
-               AND outbox_name = 'orders'",
-            &[],
-        )
-        .await
-        .expect("offset row 2")
-        .get(0);
+    let offset2 = wait_for_offset(&client, offset + 1).await;
     assert!(offset2 > offset, "offset must advance for the second event");
 
     // ── Coordinator B replays from offset 0; JetStream dedup by Nats-Msg-Id ─
