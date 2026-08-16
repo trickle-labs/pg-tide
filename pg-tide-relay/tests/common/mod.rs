@@ -360,6 +360,15 @@ impl PgTideTestDb {
             )
             .await
             .expect("failed to create outbox");
+        self.client
+            .execute(
+                "INSERT INTO tide.outbox_cleanup_state (outbox_name)
+                 VALUES ($1)
+                 ON CONFLICT (outbox_name) DO NOTHING",
+                &[&name],
+            )
+            .await
+            .expect("failed to initialize outbox cleanup state");
     }
 
     /// Publish messages to an outbox.
