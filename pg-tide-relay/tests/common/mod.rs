@@ -33,7 +33,7 @@ pub fn strip_extension_comments(sql: &str) -> String {
     result
 }
 
-fn strip_unavailable_v043_bindings(sql: &str) -> String {
+pub fn strip_unavailable_v043_bindings(sql: &str) -> String {
     let Some(start) = sql.find("CREATE OR REPLACE FUNCTION tide.outbox_sweep(") else {
         return sql.to_string();
     };

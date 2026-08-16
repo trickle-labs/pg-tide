@@ -160,7 +160,7 @@ pub async fn run_doctor_with_threshold(
         let exists: bool = client
             .query_one(
                 "SELECT to_regclass($1) IS NOT NULL",
-                &[&format!("tide.{table}")],
+                &[&format!("tide.\"{table}\"")],
             )
             .await
             .map(|row| row.get(0))
@@ -177,7 +177,7 @@ pub async fn run_doctor_with_threshold(
         let exists: bool = client
             .query_one(
                 "SELECT to_regclass($1) IS NOT NULL",
-                &[&format!("tide.{view}")],
+                &[&format!("tide.\"{view}\"")],
             )
             .await
             .map(|row| row.get(0))
@@ -526,7 +526,7 @@ async fn table_exists(client: &tokio_postgres::Client, table: &str) -> bool {
     client
         .query_one(
             "SELECT to_regclass($1) IS NOT NULL",
-            &[&format!("tide.{table}")],
+            &[&format!("tide.\"{table}\"")],
         )
         .await
         .map(|row| row.get(0))

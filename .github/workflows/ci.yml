@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Validate operational budget configuration
-        run: just check-operational-budgets
+        run: python3 scripts/check_operational_budgets.py --check-config
 
   clean-checkout:
     name: Clean checkout workspace build
