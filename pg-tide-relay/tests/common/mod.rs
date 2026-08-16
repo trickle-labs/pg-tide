@@ -33,6 +33,20 @@ pub fn strip_extension_comments(sql: &str) -> String {
     result
 }
 
+fn strip_unavailable_v043_bindings(sql: &str) -> String {
+    let Some(start) = sql.find("CREATE OR REPLACE FUNCTION tide.outbox_sweep(") else {
+        return sql.to_string();
+    };
+    let Some(end) = sql[start..].find("\n\n-- ── ID-range partition maintenance") else {
+        return sql.to_string();
+    };
+    let end = start + end;
+    let replacement = "CREATE OR REPLACE FUNCTION tide.outbox_sweep(\n\
+        TEXT DEFAULT NULL, INTEGER DEFAULT 1000, BOOLEAN DEFAULT FALSE\n\
+    ) RETURNS JSONB LANGUAGE SQL AS $$ SELECT '{}'::jsonb $$;\n";
+    format!("{}{}{}", &sql[..start], replacement, &sql[end..])
+}
+
 use std::time::Duration;
 use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
 use testcontainers_modules::postgres::Postgres;
@@ -207,6 +221,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0.41.0 -> 0.42.0",
         include_str!("../../../sql/pg_tide--0.41.0--0.42.0.sql"),
     ),
+    (
+        "0.42.0 -> 0.43.0",
+        include_str!("../../../sql/pg_tide--0.42.0--0.43.0.sql"),
+    ),
 ];
 
 /// Install the v0.1.0 base schema then apply all migrations through the current
@@ -223,6 +241,11 @@ pub async fn install_full_schema(client: &tokio_postgres::Client) {
         .expect("install v0.1.0 base schema");
     for (label, sql) in MIGRATIONS {
         let processed = strip_extension_comments(sql);
+        let processed = if *label == "0.42.0 -> 0.43.0" {
+            strip_unavailable_v043_bindings(&processed)
+        } else {
+            processed
+        };
         client
             .batch_execute(&processed)
             .await

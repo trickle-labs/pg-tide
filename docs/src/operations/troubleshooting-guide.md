@@ -8,7 +8,7 @@ When something isn't working:
 
 1. **Check relay logs** — Look for ERROR or WARN messages
 2. **Check `/health` endpoint** — Returns 503 if circuit breaker is open
-3. **Check consumer lag** — `pg_tide_consumer_lag` metric or query outbox directly
+3. **Check exact pipeline lag** — query `tide.relay_pipeline_lag` and the matching relay metric
 4. **Check DLQ** — `SELECT count(*) FROM tide.relay_dlq WHERE resolved_at IS NULL`
 5. **Check advisory locks** — `SELECT * FROM pg_locks WHERE locktype = 'advisory'`
 
@@ -39,13 +39,19 @@ WHERE locktype = 'advisory' AND granted = true;
 
 If no locks are held, the relay may have lost its database connection.
 
-**Check 4: Is the circuit breaker open?**
+**Check 4: Is cleanup blocked or the default partition non-empty?**
+```sql
+SELECT outbox_name, blockers, safe_offset, default_partition_rows
+FROM tide.outbox_retention_status;
+```
+
+**Check 5: Is the circuit breaker open?**
 ```bash
 curl http://localhost:9090/health
 # If unhealthy, circuit breaker is open for one or more pipelines
 ```
 
-**Check 5: Is the sink reachable?**
+**Check 6: Is the sink reachable?**
 Test connectivity from the relay host to the sink (Kafka broker, HTTP endpoint, etc.).
 
 ### Symptom: Messages delivered but arriving slowly
@@ -143,7 +149,8 @@ Common issues:
 
 ### Symptom: "too many connections" from PostgreSQL
 
-Each pipeline worker uses one connection. With 50 pipelines, you need 50+ connections.
+Each active pipeline has a measured connection and worker cost. Use the
+`pipeline-density` profile rather than assuming a fixed multiplier.
 
 **Resolution:**
 - Increase `max_connections` in PostgreSQL

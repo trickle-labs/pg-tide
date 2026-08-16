@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "status": "pending_reference_run",
+  "environment": {
+    "schema_version": "pg18-nats-reference-v1",
+    "postgresql_major": 18,
+    "payload_bytes": 1024,
+    "pipeline_count": 1,
+    "batch_size": 100,
+    "poll_interval_ms": 100
+  },
+  "metadata": {
+    "release": "0.43.0",
+    "profile": "relay-core",
+    "source": "scheduled reference benchmark",
+    "note": "Values remain null until the packaged PostgreSQL 18/NATS reference runner records v0.42.0 baseline evidence."
+  },
+  "metrics": {
+    "publish.overhead_p50_us": null,
+    "publish.overhead_p95_us": null,
+    "publish.overhead_p99_us": null,
+    "relay.acknowledged_throughput_msg_s": null,
+    "relay.end_to_end_latency_p99_ms": null,
+    "relay.rss_incremental_per_inflight_bytes": null,
+    "relay.rss_idle_worker_bytes": null,
+    "relay.cpu_seconds_per_message": null,
+    "postgres.catalog_discovery_queries_per_relay_minute": null,
+    "postgres.offset_writes_per_ack_batch": null,
+    "postgres.offset_writes_per_delivered_message": null,
+    "postgres.wal_bytes_per_published_message": null,
+    "postgres.wal_bytes_per_cleaned_message": null,
+    "postgres.table_index_bytes_per_retained_message": null,
+    "cleanup.sweep_p95_ms": null,
+    "cleanup.lock_wait_p95_ms": null,
+    "cleanup.dead_tuple_ratio": null,
+    "recovery.outage_recovery_seconds": null,
+    "recovery.ha_interruption_ms": null,
+    "soak.memory_growth_slope_bytes_per_hour": null,
+    "soak.storage_growth_slope_bytes_per_hour": null
+  }
+}

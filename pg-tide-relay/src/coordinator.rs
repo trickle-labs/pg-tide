@@ -215,6 +215,10 @@ impl Coordinator {
                 )
                 .await?
         };
+        self.metrics
+            .catalog_discovery_queries
+            .with_label_values(&[&self.relay_group_id])
+            .inc();
 
         let mut pipelines = Vec::new();
         for row in rows {
@@ -970,6 +974,10 @@ async fn worker_inner(
         let (batch, checkpoint) = {
             // v0.24.0: Use poll_and_decode() helper for clean separation of
             // poll, replay-filter, and error-classification logic.
+            metrics
+                .source_poll_queries
+                .with_label_values(&[&pipeline.name, source.name()])
+                .inc();
             match poll_and_decode(
                 &mut source,
                 batch_size,
@@ -1554,6 +1562,10 @@ async fn commit_checkpoint(
     );
     match source.acknowledge(checkpoint).instrument(ack_span).await {
         Ok(()) => {
+            metrics
+                .offset_writes
+                .with_label_values(&[pipeline_name, &source_name])
+                .inc();
             metrics
                 .delivery_stage_total
                 .with_label_values(&[pipeline_name, "checkpoint_committed", "success"])
@@ -2446,7 +2458,7 @@ async fn build_sink(
                     return Err(RelayError::InvalidConfig {
                         name: pipeline.name.clone(),
                         reason: format!("unknown object-storage provider: {other}"),
-                    })
+                    });
                 }
             };
 

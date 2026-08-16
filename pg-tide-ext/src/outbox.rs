@@ -16,8 +16,45 @@
 
 use crate::error::PgTideError;
 use pgrx::prelude::*;
+use serde_json::Value;
+use std::time::Instant;
 
 // ── Internal helpers ──────────────────────────────────────────────────────
+
+const MAX_SWEEP_BATCH: i32 = 10_000;
+
+fn lock_outbox(name: &str, shared: bool) -> Result<(), PgTideError> {
+    let lock_fn = if shared {
+        "pg_advisory_xact_lock_shared"
+    } else {
+        "pg_advisory_xact_lock"
+    };
+    let sql = format!("SELECT {lock_fn}(hashtextextended('pg_tide:outbox:' || $1, 0))");
+    Spi::run_with_args(&sql, &[name.into()])
+        .map_err(|e| PgTideError::SpiError(format!("outbox fence for '{name}': {e}")))
+}
+
+fn lock_outbox_session(name: &str) -> Result<(), PgTideError> {
+    Spi::run_with_args(
+        "SELECT pg_advisory_lock(hashtextextended('pg_tide:outbox:' || $1, 0))",
+        &[name.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("outbox maintenance fence for '{name}': {e}")))
+}
+
+fn unlock_outbox_session(name: &str) -> Result<(), PgTideError> {
+    let unlocked = Spi::get_one_with_args::<bool>(
+        "SELECT pg_advisory_unlock(hashtextextended('pg_tide:outbox:' || $1, 0))",
+        &[name.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("release outbox fence for '{name}': {e}")))?;
+    if unlocked != Some(true) {
+        return Err(PgTideError::SpiError(format!(
+            "outbox maintenance fence for '{name}' was not held"
+        )));
+    }
+    Ok(())
+}
 
 /// Check if an outbox with the given name exists in tide_outbox_config.
 pub fn outbox_exists(outbox_name: &str) -> Result<bool, PgTideError> {
@@ -98,6 +135,13 @@ fn outbox_create_impl(
     )
     .map_err(|e| PgTideError::SpiError(format!("INSERT tide_outbox_config: {e}")))?;
 
+    Spi::run_with_args(
+        "INSERT INTO tide.outbox_cleanup_state (outbox_name) VALUES ($1) \
+         ON CONFLICT (outbox_name) DO NOTHING",
+        &[name.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("INSERT outbox_cleanup_state: {e}")))?;
+
     pgrx::log!("[pg_tide] outbox_create: created outbox '{name}' (partition_strategy={strategy})");
     Ok(())
 }
@@ -168,6 +212,13 @@ fn outbox_create_if_not_exists_impl(
         ],
     )
     .map_err(|e| PgTideError::SpiError(format!("INSERT tide_outbox_config: {e}")))?;
+
+    Spi::run_with_args(
+        "INSERT INTO tide.outbox_cleanup_state (outbox_name) VALUES ($1) \
+         ON CONFLICT (outbox_name) DO NOTHING",
+        &[name.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("INSERT outbox_cleanup_state: {e}")))?;
 
     pgrx::log!("[pg_tide] outbox_create_if_not_exists: created outbox '{name}' (partition_strategy={strategy})");
     Ok(true)
@@ -304,6 +355,10 @@ fn outbox_publish_impl(
         }
     }
 
+    // Shared publishers are compatible with one another but conflict with the
+    // exclusive fence used by polling and cleanup.
+    lock_outbox(name, true)?;
+
     let payload_str = serde_json::to_string(&payload.0)
         .map_err(|e| PgTideError::SpiError(format!("payload serialize: {e}")))?;
     let headers_str = serde_json::to_string(&headers.0)
@@ -346,6 +401,8 @@ fn outbox_drop_impl(name: &str, if_exists: bool) -> Result<(), PgTideError> {
         return Err(PgTideError::OutboxNotFound(name.to_string()));
     }
 
+    lock_outbox(name, false)?;
+
     // Delete messages first (FK cascade would also work but let's be explicit).
     Spi::run_with_args(
         "DELETE FROM tide.tide_outbox_messages WHERE outbox_name = $1",
@@ -387,43 +444,23 @@ fn outbox_status_impl(name: &str) -> Result<pgrx::JsonB, PgTideError> {
         return Err(PgTideError::OutboxNotFound(name.to_string()));
     }
 
-    // v0.24.0: Single SPI call using FILTER aggregates — eliminates 2× round-trips
-    // compared to the previous three-query approach.
-    // Drive from config (always 1 row) LEFT JOIN messages so that an empty outbox
-    // still returns a row instead of 0 rows (which would cause an SpiTupleTable
-    // "positioned before start or after end" error when calling .get()).
-    let (pending, total, oldest_age_secs, retention) = Spi::connect(|client| {
+    let status: pgrx::JsonB = Spi::connect(|client| {
         let tup = client.select(
-            "SELECT \
-               COUNT(m.id) FILTER (WHERE m.consumed_at IS NULL)::bigint, \
-               COUNT(m.id)::bigint, \
-               EXTRACT(epoch FROM now() - MIN(m.created_at) FILTER (WHERE m.consumed_at IS NULL))::float8, \
-               COALESCE(c.retention_hours, 24)::int \
-             FROM tide.tide_outbox_config c \
-             LEFT JOIN tide.tide_outbox_messages m ON m.outbox_name = c.outbox_name \
-             WHERE c.outbox_name = $1 \
-             GROUP BY c.retention_hours",
+            "SELECT row_to_json(s)::jsonb \
+               FROM tide.outbox_retention_status s \
+              WHERE s.outbox_name = $1",
             None,
             &[name.into()],
         )?;
         let first = tup.first();
-        let pending: i64 = first.get(1)?.unwrap_or(0);
-        let total: i64 = first.get(2)?.unwrap_or(0);
-        let oldest_age_secs: Option<f64> = first.get(3)?;
-        let retention: i32 = first.get(4)?.unwrap_or(24);
-        Ok::<_, pgrx::spi::SpiError>((pending, total, oldest_age_secs, retention))
+        let value: Option<pgrx::JsonB> = first.get(1)?;
+        Ok::<_, pgrx::spi::SpiError>(
+            value.unwrap_or_else(|| pgrx::JsonB(serde_json::json!({"outbox_name": name}))),
+        )
     })
     .map_err(|e| PgTideError::SpiError(format!("outbox_status SPI error: {e}")))?;
 
-    let status = serde_json::json!({
-        "outbox_name": name,
-        "pending_messages": pending,
-        "total_messages": total,
-        "oldest_pending_age_seconds": oldest_age_secs,
-        "retention_hours": retention,
-    });
-
-    Ok(pgrx::JsonB(status))
+    Ok(status)
 }
 
 // ── TIDE-API: outbox_disable / outbox_enable ──────────────────────────────
@@ -440,7 +477,7 @@ fn outbox_disable_impl(name: &str) -> Result<(), PgTideError> {
          WHERE outbox_name = $1 RETURNING 1) SELECT COUNT(*) FROM u",
         &[name.into()],
     )
-    .unwrap_or(None);
+    .map_err(|e| PgTideError::SpiError(format!("disable outbox '{name}': {e}")))?;
     if updated.unwrap_or(0) == 0 {
         return Err(PgTideError::OutboxNotFound(name.to_string()));
     }
@@ -459,7 +496,7 @@ fn outbox_enable_impl(name: &str) -> Result<(), PgTideError> {
          WHERE outbox_name = $1 RETURNING 1) SELECT COUNT(*) FROM u",
         &[name.into()],
     )
-    .unwrap_or(None);
+    .map_err(|e| PgTideError::SpiError(format!("enable outbox '{name}': {e}")))?;
     if updated.unwrap_or(0) == 0 {
         return Err(PgTideError::OutboxNotFound(name.to_string()));
     }
@@ -487,21 +524,16 @@ pub fn outbox_truncate_delivered(p_outbox_name: default!(Option<&str>, "NULL")) 
 }
 
 fn outbox_truncate_delivered_impl(outbox_name: Option<&str>) -> Result<i64, PgTideError> {
-    let deleted: i64 = Spi::get_one_with_args::<i64>(
-        "WITH deleted AS (
-            DELETE FROM tide.tide_outbox_messages m
-            USING tide.tide_outbox_config c
-            WHERE m.outbox_name = c.outbox_name
-              AND m.consumed_at IS NOT NULL
-              AND m.created_at  < now() - make_interval(hours => c.retention_hours)
-              AND ($1::text IS NULL OR m.outbox_name = $1)
-            RETURNING m.id
-        )
-        SELECT COUNT(*) FROM deleted",
-        &[outbox_name.into()],
-    )
-    .map_err(|e| PgTideError::SpiError(format!("outbox_truncate_delivered: {e}")))?
-    .unwrap_or(0);
+    let result = outbox_sweep_impl(outbox_name, 1_000, false)?;
+    let deleted = result
+        .get("outboxes")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.get("affected_rows").and_then(Value::as_i64))
+                .sum()
+        })
+        .unwrap_or(0);
 
     pgrx::log!(
         "[pg_tide] outbox_truncate_delivered: deleted {deleted} messages{}",
@@ -510,6 +542,286 @@ fn outbox_truncate_delivered_impl(outbox_name: Option<&str>) -> Result<i64, PgTi
             .unwrap_or_default()
     );
     Ok(deleted)
+}
+
+/// Sweep retained messages safely for one or all outboxes.
+#[pg_extern(schema = "tide", create_or_replace)]
+pub fn outbox_sweep(
+    p_outbox_name: default!(Option<&str>, "NULL"),
+    p_batch_size: default!(i32, 1000),
+    p_dry_run: default!(bool, false),
+) -> pgrx::JsonB {
+    pgrx::JsonB(
+        outbox_sweep_impl(p_outbox_name, p_batch_size, p_dry_run)
+            .unwrap_or_else(|e| pgrx::error!("{}", e)),
+    )
+}
+
+fn outbox_sweep_impl(
+    outbox_name: Option<&str>,
+    batch_size: i32,
+    dry_run: bool,
+) -> Result<Value, PgTideError> {
+    if !(1..=MAX_SWEEP_BATCH).contains(&batch_size) {
+        return Err(PgTideError::InvalidArgument(format!(
+            "p_batch_size must be between 1 and {MAX_SWEEP_BATCH}; got {batch_size}"
+        )));
+    }
+
+    let names = match outbox_name {
+        Some(name) => {
+            if !outbox_exists(name)? {
+                return Err(PgTideError::OutboxNotFound(name.to_string()));
+            }
+            vec![name.to_string()]
+        }
+        None => Spi::connect(|client| {
+            let tuples = client.select(
+                "SELECT outbox_name::text FROM tide.tide_outbox_config ORDER BY outbox_name",
+                None,
+                &[],
+            )?;
+            let mut names = Vec::new();
+            for row in tuples {
+                if let Some(name) = row.get::<String>(1)? {
+                    names.push(name);
+                }
+            }
+            Ok::<_, pgrx::spi::SpiError>(names)
+        })
+        .map_err(|e| PgTideError::SpiError(format!("list sweep outboxes: {e}")))?,
+    };
+
+    let mut results = Vec::with_capacity(names.len());
+    for name in names {
+        results.push(sweep_one(&name, batch_size, dry_run)?);
+    }
+    Ok(serde_json::json!({
+        "batch_size": batch_size,
+        "dry_run": dry_run,
+        "outboxes": results,
+    }))
+}
+
+fn sweep_one(name: &str, batch_size: i32, dry_run: bool) -> Result<Value, PgTideError> {
+    lock_outbox_session(name)?;
+    let result = sweep_one_locked(name, batch_size, dry_run);
+    let unlock_result = unlock_outbox_session(name);
+    match (result, unlock_result) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(value), Ok(())) => Ok(value),
+    }
+}
+
+fn sweep_one_locked(name: &str, batch_size: i32, dry_run: bool) -> Result<Value, PgTideError> {
+    let started = Instant::now();
+
+    let (retention_hours, safe_offset, participants, lease_blocked) = Spi::connect(|client| {
+        let config = client.select(
+            "SELECT retention_hours FROM tide.tide_outbox_config WHERE outbox_name = $1",
+            None,
+            &[name.into()],
+        )?;
+        let retention_hours: i32 = config.first().get(1)?.unwrap_or(24);
+
+        let participants = client.select(
+            "WITH relay_participants AS (
+                 SELECT c.name::text AS participant, c.enabled,
+                        COALESCE(MIN(o.last_change_id), 0)::bigint AS safe_offset
+                   FROM tide.relay_outbox_config c
+                   LEFT JOIN tide.relay_consumer_offsets o
+                     ON o.pipeline_id = c.name
+                    AND o.outbox_name = $1
+                  WHERE c.config #>> '{source,outbox}' = $1
+                    AND c.config ->> 'source_type' = 'outbox'
+                  GROUP BY c.name, c.enabled
+               ), group_participants AS (
+                 SELECT g.group_name::text AS participant, true AS enabled,
+                        COALESCE(MIN(o.committed_offset), 0)::bigint AS safe_offset
+                   FROM tide.tide_consumer_groups g
+                   LEFT JOIN tide.tide_consumer_offsets o USING (group_name)
+                  WHERE g.outbox_name = $1
+                  GROUP BY g.group_name
+               ), fanin_participants AS (
+                 SELECT f.name::text || '/' || member::text AS participant,
+                        f.enabled,
+                        COALESCE(MIN(o.last_change_id), 0)::bigint AS safe_offset
+                   FROM tide.relay_fanin_config f
+                   CROSS JOIN LATERAL unnest(f.outbox_names) AS members(member)
+                   LEFT JOIN tide.relay_consumer_offsets o
+                     ON o.pipeline_id = f.name
+                    AND o.outbox_name = member
+                    AND o.fanin_member = member
+                  WHERE f.enabled AND member = $1
+                  GROUP BY f.name, f.enabled, member
+               ), all_participants AS (
+                 SELECT * FROM relay_participants
+                 UNION ALL
+                 SELECT * FROM group_participants
+                 UNION ALL
+                 SELECT * FROM fanin_participants
+               )
+               SELECT MIN(safe_offset)::bigint,
+                      COALESCE(jsonb_agg(jsonb_build_object(
+                          'name', participant,
+                          'enabled', enabled,
+                          'safe_offset', safe_offset
+                      ) ORDER BY participant), '[]'::jsonb)
+                 FROM all_participants",
+            None,
+            &[name.into()],
+        )?;
+        let participant_row = participants.first();
+        let safe_offset: Option<i64> = participant_row.get(1)?;
+        let participants: pgrx::JsonB = participant_row
+            .get(2)?
+            .unwrap_or_else(|| pgrx::JsonB(serde_json::json!([])));
+
+        let lease_blocked: bool = client
+            .select(
+                "SELECT EXISTS(
+                    SELECT 1
+                      FROM tide.tide_consumer_leases l
+                      JOIN tide.tide_consumer_groups g USING (group_name)
+                     WHERE g.outbox_name = $1 AND l.expires_at > now()
+                )",
+                None,
+                &[name.into()],
+            )?
+            .first()
+            .get(1)?
+            .unwrap_or(false);
+        Ok::<_, pgrx::spi::SpiError>((retention_hours, safe_offset, participants.0, lease_blocked))
+    })
+    .map_err(|e| PgTideError::SweepFailed {
+        outbox: name.to_string(),
+        detail: format!("resolve retention participants: {e}"),
+    })?;
+
+    let cutoff = format!("now() - make_interval(hours => {retention_hours})");
+    let candidates = if lease_blocked {
+        Vec::new()
+    } else {
+        Spi::connect(|client| {
+            let query = format!(
+                "SELECT id FROM tide.tide_outbox_messages
+                  WHERE outbox_name = $1
+                    AND created_at < {cutoff}
+                    AND ($2::bigint IS NULL OR id <= $2)
+                  ORDER BY id
+                  LIMIT $3
+                  FOR UPDATE SKIP LOCKED"
+            );
+            let tuples = client.select(
+                &query,
+                None,
+                &[name.into(), safe_offset.into(), (batch_size + 1).into()],
+            )?;
+            let mut ids = Vec::new();
+            for row in tuples {
+                if let Some(id) = row.get::<i64>(1)? {
+                    ids.push(id);
+                }
+            }
+            Ok::<_, pgrx::spi::SpiError>(ids)
+        })
+        .map_err(|e| PgTideError::SweepFailed {
+            outbox: name.to_string(),
+            detail: format!("select candidates: {e}"),
+        })?
+    };
+
+    let has_more = candidates.len() > batch_size as usize;
+    let eligible_in_batch = candidates.len().min(batch_size as usize) as i64;
+    let mut affected_rows = 0_i64;
+    let mut highest_deleted_id = None;
+
+    if !dry_run && eligible_in_batch > 0 {
+        let deleted = Spi::connect(|client| {
+            let query = format!(
+                "WITH candidates AS (
+                     SELECT ctid
+                       FROM tide.tide_outbox_messages
+                      WHERE outbox_name = $1
+                        AND created_at < {cutoff}
+                        AND ($2::bigint IS NULL OR id <= $2)
+                      ORDER BY id
+                      LIMIT $3
+                      FOR UPDATE SKIP LOCKED
+                 ), deleted AS (
+                     DELETE FROM tide.tide_outbox_messages m
+                      USING candidates c
+                      WHERE m.ctid = c.ctid
+                      RETURNING m.id
+                 )
+                 SELECT COUNT(*)::bigint, MAX(id) FROM deleted"
+            );
+            let tuples = client.select(
+                &query,
+                None,
+                &[name.into(), safe_offset.into(), batch_size.into()],
+            )?;
+            let first = tuples.first();
+            Ok::<_, pgrx::spi::SpiError>((first.get::<i64>(1)?.unwrap_or(0), first.get::<i64>(2)?))
+        })
+        .map_err(|e| PgTideError::SweepFailed {
+            outbox: name.to_string(),
+            detail: format!("delete candidates: {e}"),
+        })?;
+        affected_rows = deleted.0;
+        highest_deleted_id = deleted.1;
+    }
+
+    if !dry_run {
+        Spi::run_with_args(
+            "INSERT INTO tide.outbox_cleanup_state
+                 (outbox_name, last_success_at, last_safe_offset, highest_deleted_id,
+                  last_batch_rows, total_rows_deleted, last_duration_ms, last_partition_action)
+             VALUES ($1, now(), $2, COALESCE($3, 0), $4, $4, $5, 'none')
+             ON CONFLICT (outbox_name) DO UPDATE SET
+                 last_success_at = EXCLUDED.last_success_at,
+                 last_safe_offset = EXCLUDED.last_safe_offset,
+                 highest_deleted_id = GREATEST(
+                     tide.outbox_cleanup_state.highest_deleted_id,
+                     EXCLUDED.highest_deleted_id
+                 ),
+                 last_batch_rows = EXCLUDED.last_batch_rows,
+                 total_rows_deleted = tide.outbox_cleanup_state.total_rows_deleted
+                     + EXCLUDED.last_batch_rows,
+                 last_duration_ms = EXCLUDED.last_duration_ms,
+                 last_partition_action = EXCLUDED.last_partition_action",
+            &[
+                name.into(),
+                safe_offset.into(),
+                highest_deleted_id.into(),
+                affected_rows.into(),
+                (started.elapsed().as_secs_f64() * 1000.0).into(),
+            ],
+        )
+        .map_err(|e| PgTideError::SweepFailed {
+            outbox: name.to_string(),
+            detail: format!("record cleanup state: {e}"),
+        })?;
+    }
+
+    Ok(serde_json::json!({
+        "outbox": name,
+        "retention_cutoff": cutoff,
+        "safe_offset": safe_offset,
+        "participants": participants,
+        "blockers": if lease_blocked {
+            serde_json::json!([{"type": "active_lease"}])
+        } else {
+            serde_json::json!([])
+        },
+        "eligible_in_batch": eligible_in_batch,
+        "affected_rows": affected_rows,
+        "has_more": has_more,
+        "highest_deleted_id": highest_deleted_id,
+        "duration_ms": started.elapsed().as_secs_f64() * 1000.0,
+        "partition_action": "none",
+    }))
 }
 
 // ── TIDE-API: Consumer Groups ─────────────────────────────────────────────

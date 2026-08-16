@@ -37,6 +37,12 @@ impl OutboxSourceMode {
 
 const FETCH_BATCH: i64 = 1000;
 
+/// Return the advisory-lock namespace shared by publishers, pollers, and
+/// maintenance operations for one logical outbox.
+pub fn outbox_fence_lock_key(outbox_name: &str) -> String {
+    format!("pg_tide:outbox:{outbox_name}")
+}
+
 /// Decode one outbox row payload into an OutboxBatch.
 ///
 /// v0.15.0: `raw_mode` — when `true`, treats the payload as a native JSONB
@@ -584,16 +590,7 @@ async fn poll_simple_native(
     batch_size: i64,
     pending_cc_oids: &mut Vec<u32>,
 ) -> Result<Vec<RelayMessage>, RelayError> {
-    let rows = db
-        .query(
-            "SELECT id, payload, headers, created_at \
-             FROM tide.tide_outbox_messages \
-             WHERE outbox_name = $1 AND id > $2 \
-             ORDER BY id LIMIT $3",
-            &[&outbox_name, &last_offset, &batch_size],
-        )
-        .await
-        .map_err(RelayError::from)?;
+    let rows = fenced_native_rows(db, outbox_name, last_offset, batch_size).await?;
 
     // The stable logical dedup/subject identifier keeps the `outbox_` prefix
     // (ADR-011 §5); it is a compatibility label, not a physical relation name.
@@ -633,6 +630,60 @@ async fn poll_simple_native(
         messages.extend(batch_msgs);
     }
     Ok(messages)
+}
+
+/// Fetch native rows while holding the short exclusive outbox fence.
+///
+/// Rows are copied out of the transaction before payload decoding, claim-check
+/// reads, transforms, or sink I/O.  This keeps a long-running relay batch from
+/// blocking publishers for the duration of delivery.
+async fn fenced_native_rows(
+    db: &Client,
+    outbox_name: &str,
+    last_offset: i64,
+    batch_size: i64,
+) -> Result<Vec<tokio_postgres::Row>, RelayError> {
+    db.batch_execute("BEGIN").await.map_err(RelayError::from)?;
+
+    let key = outbox_fence_lock_key(outbox_name);
+    if let Err(error) = db
+        .query_one(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            &[&key],
+        )
+        .await
+    {
+        let _ = db.batch_execute("ROLLBACK").await;
+        return Err(RelayError::other(format!(
+            "acquire outbox fence for '{outbox_name}' failed: {error}"
+        )));
+    }
+
+    let rows = match db
+        .query(
+            "SELECT id, payload, headers, created_at \
+             FROM tide.tide_outbox_messages \
+             WHERE outbox_name = $1 AND id > $2 \
+             ORDER BY id LIMIT $3",
+            &[&outbox_name, &last_offset, &batch_size],
+        )
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            let _ = db.batch_execute("ROLLBACK").await;
+            return Err(RelayError::from(error));
+        }
+    };
+
+    if let Err(error) = db.batch_execute("COMMIT").await {
+        let _ = db.batch_execute("ROLLBACK").await;
+        return Err(RelayError::other(format!(
+            "release outbox fence for '{outbox_name}' failed: {error}"
+        )));
+    }
+
+    Ok(rows)
 }
 
 /// pg_trickle compatibility simple mode: dynamic per-outbox relation +
@@ -691,12 +742,40 @@ async fn poll_consumer_group(
     visibility_seconds: i32,
     raw_mode: bool,
 ) -> Result<Vec<RelayMessage>, RelayError> {
-    let rows = db
+    let key = outbox_fence_lock_key(stream_table_name);
+    db.batch_execute("BEGIN").await.map_err(RelayError::from)?;
+    if let Err(error) = db
+        .query_one(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            &[&key],
+        )
+        .await
+    {
+        let _ = db.batch_execute("ROLLBACK").await;
+        return Err(RelayError::other(format!(
+            "acquire outbox fence for '{stream_table_name}' failed: {error}"
+        )));
+    }
+
+    let rows = match db
         .query(
             "SELECT * FROM tide.poll_outbox($1, $2, $3, $4)",
             &[&group, &consumer_id, &batch_size, &visibility_seconds],
         )
-        .await?;
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            let _ = db.batch_execute("ROLLBACK").await;
+            return Err(error.into());
+        }
+    };
+    if let Err(error) = db.batch_execute("COMMIT").await {
+        let _ = db.batch_execute("ROLLBACK").await;
+        return Err(RelayError::other(format!(
+            "release outbox fence for '{stream_table_name}' failed: {error}"
+        )));
+    }
 
     if rows.is_empty() {
         // Heartbeat even when idle.
@@ -1035,6 +1114,15 @@ impl super::Source for FanInSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outbox_fence_key_is_stable_and_namespaced() {
+        assert_eq!(outbox_fence_lock_key("orders"), "pg_tide:outbox:orders");
+        assert_ne!(
+            outbox_fence_lock_key("orders"),
+            outbox_fence_lock_key("payments")
+        );
+    }
 
     #[test]
     fn test_extract_array_present() {

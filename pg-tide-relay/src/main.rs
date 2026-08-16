@@ -127,13 +127,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Sweep {
             outbox,
+            batch_size,
+            max_batches,
+            dry_run,
             postgres_url,
         }) => {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "sweep");
-            return cmd::sweep::run_sweep(&url, outbox.as_deref()).await;
+            return cmd::sweep::run_sweep_with_options(
+                &url,
+                outbox.as_deref(),
+                batch_size,
+                max_batches,
+                dry_run,
+            )
+            .await;
         }
         Some(Commands::Status {
             postgres_url,

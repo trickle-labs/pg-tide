@@ -1,137 +1,136 @@
-# Capacity Planning
+# Capacity planning
 
-This guide helps you estimate the resources needed for pg_tide based on your workload characteristics.
+pg_tide does not publish a universal messages-per-second number. Capacity is
+the result of payload size, PostgreSQL settings, batch size, pipeline count,
+sink acknowledgment behavior, and hardware. The v0.43 reference profiles and
+reviewed budgets live in
+[`benchmarks/operational/`](../../../../benchmarks/operational/README.md).
+The committed baseline is a schema slot until a named reference runner has
+recorded measurements.
 
-## Key Dimensions
+## Profiles and evidence
 
-Capacity planning for pg_tide involves three systems: PostgreSQL (where outbox/inbox tables live), the relay process (CPU and memory), and the network (bandwidth to sinks).
+The required profiles are:
 
-### PostgreSQL
+| Profile | Payload | Pipelines | Measures |
+|---|---:|---:|---|
+| `publish-single` | 1 KiB JSON | 1 | matched transaction overhead and WAL |
+| `publish-concurrent` | 1 KiB JSON | 1 | p50/p95/p99 publish overhead |
+| `relay-core` | 1 KiB JSON | 1 | throughput, latency, CPU, RSS, offsets |
+| `relay-large` | 16/64 KiB JSON | 1 | payload scaling and claim-check guidance |
+| `pipeline-density` | 1 KiB JSON | 1/10/50 | idle and active worker cost |
+| `outage-recovery` | 1 KiB JSON | 1 | backlog growth and drain slope |
+| `retention` | 1 KiB JSON | 2 consumers | safe watermark, sweep, WAL, vacuum |
+| `ha-interruption` | 1 KiB JSON | 1, 2 relays | owner-loss delivery interruption |
 
-The outbox table is the primary bottleneck for most deployments. Key factors:
+Every result records the commit, environment, PostgreSQL/NATS versions,
+payload, batch, poll interval, pipeline count, warmup, duration, and exact
+published/acknowledged/checkpointed identities. Never substitute the Criterion
+or direct-insert microbenchmarks for these profiles.
 
-| Factor | Impact | Mitigation |
-|--------|--------|------------|
-| Write throughput | INSERT rate into outbox tables | Connection pooling, partitioning |
-| Table size | Unrelayed rows waiting for delivery | Tune batch size and poll interval |
-| Index maintenance | Outbox has sequential ID index | Minimal — append-only workload |
-| Disk I/O | WAL writes for each INSERT | Fast storage, WAL tuning |
+## Sizing formulas
 
-**Rule of thumb:** A single PostgreSQL instance handles 10,000-50,000 outbox inserts/second depending on row size and hardware. The relay processes rows faster than most applications can generate them.
+Let `r` be application messages/second, `s` the measured total bytes per
+retained message (heap plus indexes), and `w` the outage window in seconds:
 
-### Relay Process
-
-The relay is CPU-light and memory-light for most workloads:
-
-| Workload | CPU | Memory | Bottleneck |
-|----------|-----|--------|------------|
-| 1,000 msg/s, JSON, Kafka | 0.1 core | 50 MB | Network to Kafka |
-| 10,000 msg/s, JSON, Kafka | 0.5 core | 100 MB | Kafka ack latency |
-| 10,000 msg/s, Avro, Schema Registry | 1 core | 200 MB | Avro serialization |
-| 50,000 msg/s, JSON, NATS | 0.3 core | 80 MB | Network |
-| 1,000 msg/s, HTTP webhook | 0.1 core | 50 MB | Webhook response time |
-
-**Rule of thumb:** Start with 0.5 CPU and 256 MB memory. Monitor actual usage and adjust.
-
-### Network
-
-Bandwidth depends on message size and throughput:
-
-```
-Bandwidth = messages_per_second × average_message_size_bytes
-```
-
-Example: 10,000 msg/s × 1 KB/msg = 10 MB/s = 80 Mbps
-
-## Sizing Formulas
-
-### Outbox Table Growth
-
-If the relay is down (or slower than production), the outbox grows:
-
-```
-Rows pending = (insert_rate - relay_rate) × downtime_seconds
-Disk usage = rows_pending × average_row_size
+```text
+outage disk reservation = r × w × s
+steady retained storage = r × retention_seconds × s
+network bytes/second = r × measured encoded payload bytes
+recovery seconds = backlog / (acknowledged_rate - application_rate)
 ```
 
-Example: 5,000 inserts/s with relay down for 5 minutes:
-- Rows: 5,000 × 300 = 1,500,000
-- Disk: 1,500,000 × 500 bytes = 750 MB
+Use the measured values from the matching profile, not values from a different
+payload or sink. Reserve additional space for WAL, vacuum headroom, backups,
+and conversion's temporary copy. A sink outage accumulates committed rows;
+relay backoff protects the sink but does not reject application transactions.
 
-### Consumer Lag Recovery Time
+## Message sizes and claim-check
 
-After an outage, how long to drain the backlog:
+The reference matrix tests 1, 16, and 64 KiB JSON. Measure larger payloads
+before adopting them. Native large-object claim-check can reduce row and index
+growth for large payloads, but the large object is retained until the outbox
+row is safely cleaned; it is not an independent retention policy. Verify
+cleanup permissions and large-object storage in the same outage reservation.
 
-```
-Recovery time = pending_rows / (relay_rate - insert_rate)
-```
+## PostgreSQL cost and vacuum
 
-Example: 1.5M pending rows, relay at 20,000/s, inserts at 5,000/s:
-- Recovery: 1,500,000 / 15,000 = 100 seconds
-
-### Relay Instance Count
-
-For active-active HA with balanced load:
-
-```
-Instances = ceil(total_pipelines / pipelines_per_instance)
-```
-
-Most pipelines consume negligible resources. Start with 2 instances (for HA) and scale based on actual throughput needs.
-
-## Batch Size Tuning
-
-Batch size affects both throughput and latency:
-
-| Batch Size | Throughput | Latency | Use Case |
-|-----------|-----------|---------|----------|
-| 1 | Lowest | Lowest | Real-time notifications |
-| 10-50 | Medium | Low | General event streaming |
-| 100-500 | High | Medium | Analytics, data lake loading |
-| 1000+ | Highest | Higher | Bulk ETL, backfill |
-
-Configure per-pipeline:
-```json
-{ "batch_size": 100 }
-```
-
-Or set a process-wide default:
-```bash
-pg-tide --default-batch-size 100
-```
-
-## PostgreSQL Configuration
-
-Key PostgreSQL settings for outbox-heavy workloads:
+Inspect the measured relation and WAL deltas with:
 
 ```sql
--- Connection handling
-max_connections = 200          -- Enough for app + relay + monitoring
-shared_buffers = '4GB'         -- 25% of RAM
+SELECT pg_size_pretty(pg_relation_size('tide.tide_outbox_messages')),
+       pg_size_pretty(pg_indexes_size('tide.tide_outbox_messages')),
+       pg_size_pretty(pg_total_relation_size('tide.tide_outbox_messages'));
 
--- WAL configuration (important for high-insert workloads)
-wal_buffers = '64MB'
-max_wal_size = '4GB'
-checkpoint_completion_target = 0.9
+SELECT wal_bytes, stats_reset
+FROM pg_stat_wal;
 
--- Vacuuming (outbox rows are deleted after relay)
-autovacuum_vacuum_scale_factor = 0.01  -- Vacuum more aggressively
-autovacuum_naptime = '10s'
+SELECT relname, n_live_tup, n_dead_tup, last_autovacuum,
+       autovacuum_count, vacuum_count
+FROM pg_stat_user_tables
+WHERE schemaname = 'tide';
 ```
 
-## Monitoring for Capacity
+Use per-table autovacuum storage parameters for high-churn installations,
+derived from the retention profile rather than copied as universal settings:
 
-Set alerts on these metrics to detect capacity issues early:
+```sql
+ALTER TABLE tide.tide_outbox_messages SET (
+  autovacuum_vacuum_scale_factor = 0.01,
+  autovacuum_analyze_scale_factor = 0.01,
+  autovacuum_vacuum_cost_limit = 2000
+);
+```
 
-| Metric | Warning Threshold | Action |
-|--------|-------------------|--------|
-| `pg_tide_consumer_lag` | > 10,000 | Increase batch size or add relay instances |
-| CPU usage (relay) | > 70% sustained | Add CPU or split pipelines |
-| PostgreSQL connections | > 80% of max | Increase max_connections or use pgBouncer |
-| Disk usage growth | > 1 GB/hour unrelayed | Investigate relay health |
+Bounded sweeps are preferred to one large delete: they cap lock duration and
+WAL per transaction and give autovacuum regular work. Check
+`n_dead_tup / greatest(n_live_tup, 1)`, relation growth after vacuum, and
+`pg_stat_statements` query counts. If dead tuples or total bytes grow after
+delivery and cleanup have stabilized, vacuum is behind or the retention
+contract is blocked.
 
-## Further Reading
+## Partitioning
 
-- [Scaling](scaling.md) — Strategies for increasing throughput
-- [Deployment Architectures](deployment-architectures.md) — Choosing your topology
-- [Monitoring](../relay-guide/monitoring.md) — Setting up observability
+Heap storage is sufficient when measured retained rows, vacuum, and index
+growth fit the disk reservation and query-plan budgets. Choose ID-range
+partitioning when retained ID ranges make maintenance or vacuum too expensive,
+not because a generic throughput threshold says so. The shared parent remains
+`tide.tide_outbox_messages`; children are numeric `RANGE (id)` partitions.
+Choose the span from measured retained IDs and maintenance duration, keeping
+the child count bounded by retained ranges plus the premade and default
+children. The default span is 10,000,000 IDs and premake count is two.
+
+Verify the canonical query and pruning with:
+
+```sql
+EXPLAIN (FORMAT JSON)
+SELECT id, outbox_name, payload
+FROM tide.tide_outbox_messages
+WHERE outbox_name = 'orders' AND id > 1000
+ORDER BY id
+LIMIT 100;
+```
+
+Conversion is a blocking maintenance-window copy. Run its dry-run preflight,
+reserve temporary disk, drain relays, and keep a rollback plan. The old
+per-outbox/time-partition procedure is not supported.
+
+## Pipeline density and HA
+
+Ten or fifty pipelines are separate measured profiles, not a linear capacity
+promise. Compare idle worker RSS, catalog discovery queries, active throughput,
+and offset writes against the budget. Run at least two relays for HA and size
+the interruption budget from the measured owner-loss-to-resumed-delivery
+interval.
+
+## Alerts
+
+Alert on:
+
+- exact lag from `tide.relay_pipeline_lag`;
+- blocked participants and safe offset from `tide.outbox_retention_status`;
+- default-partition rows and storage-layout mismatch;
+- WAL rate, dead-tuple ratio, and relation growth;
+- disk remaining after the configured outage reservation.
+
+Do not use a fixed lag or throughput threshold copied from another environment.

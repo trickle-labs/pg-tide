@@ -52,7 +52,7 @@ cargo_feature = "stdout"
 default_build = true
 tested_versions = ["local process"]
 docs = ["docs/src/sources/stdin.md", "docs/src/sinks/stdout.md"]
-contract_tests = ["pg-tide-relay/tests/load_test.rs"]
+contract_tests = ["pg-tide-relay/tests/postgres_insert_microbenchmark.rs"]
 metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 
 [[connector]]

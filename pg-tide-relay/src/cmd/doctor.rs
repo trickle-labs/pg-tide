@@ -155,6 +155,172 @@ pub async fn run_doctor_with_threshold(
         println!("  [WARN] tide.outbox_truncate_delivered() missing — upgrade to v0.15.0");
     }
 
+    // v0.43.0: Retention state and shared-parent layout checks.
+    for table in ["outbox_cleanup_state", "outbox_storage_config"] {
+        let exists: bool = client
+            .query_one(
+                "SELECT to_regclass($1) IS NOT NULL",
+                &[&format!("tide.{table}")],
+            )
+            .await
+            .map(|row| row.get(0))
+            .unwrap_or(false);
+        if exists {
+            println!("  [OK] Table tide.{table}");
+        } else {
+            println!("  [FAIL] Table tide.{table} missing — upgrade to v0.43.0");
+            all_ok = false;
+        }
+    }
+
+    for view in ["outbox_retention_status", "relay_pipeline_lag"] {
+        let exists: bool = client
+            .query_one(
+                "SELECT to_regclass($1) IS NOT NULL",
+                &[&format!("tide.{view}")],
+            )
+            .await
+            .map(|row| row.get(0))
+            .unwrap_or(false);
+        if exists {
+            println!("  [OK] View tide.{view}");
+        } else {
+            println!("  [FAIL] View tide.{view} missing — upgrade to v0.43.0");
+            all_ok = false;
+        }
+    }
+
+    let has_sweep_v43: bool = client
+        .query_one(
+            "SELECT to_regprocedure('tide.outbox_sweep(text,integer,boolean)') IS NOT NULL",
+            &[],
+        )
+        .await
+        .map(|row| row.get(0))
+        .unwrap_or(false);
+    if has_sweep_v43 {
+        println!("  [OK] tide.outbox_sweep(text,integer,boolean) present");
+    } else {
+        println!("  [FAIL] tide.outbox_sweep(text,integer,boolean) missing — upgrade to v0.43.0");
+        all_ok = false;
+    }
+
+    let has_partition_maintenance: bool = client
+        .query_one(
+            "SELECT to_regprocedure('tide.outbox_maintain_partitions(integer,boolean)') IS NOT NULL",
+            &[],
+        )
+        .await
+        .map(|row| row.get(0))
+        .unwrap_or(false);
+    if has_partition_maintenance {
+        println!("  [OK] tide.outbox_maintain_partitions(integer,boolean) present");
+    } else {
+        println!(
+            "  [WARN] partition maintenance helper missing — ID-range maintenance unavailable"
+        );
+    }
+
+    if table_exists(&client, "outbox_cleanup_state").await {
+        let stale: i64 = client
+            .query_one(
+                "SELECT COUNT(*)::bigint
+                   FROM tide.outbox_cleanup_state
+                  WHERE last_success_at IS NULL
+                    OR last_success_at < now() - interval '24 hours'",
+                &[],
+            )
+            .await
+            .map(|row| row.get(0))
+            .unwrap_or(0);
+        if stale == 0 {
+            println!("  [OK] Cleanup state is current");
+        } else {
+            println!(
+                "  [WARN] {stale} outbox cleanup state row(s) are stale — run 'pg-tide sweep'"
+            );
+        }
+    }
+
+    let default_rows: i64 = client
+        .query_one(
+            "SELECT COALESCE(SUM(c.reltuples::bigint), 0)
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'tide' AND c.relname LIKE '%default%'",
+            &[],
+        )
+        .await
+        .map(|row| row.get(0))
+        .unwrap_or(0);
+    if default_rows > 0 {
+        println!(
+            "  [WARN] approximately {default_rows} row(s) in default-named partition(s) — \
+             run 'pg-tide sweep'"
+        );
+    } else {
+        println!("  [OK] No rows reported in default-named partitions");
+    }
+
+    let cleanup_index_count: i64 = client
+        .query_one(
+            "SELECT COUNT(*)::bigint
+               FROM pg_indexes
+              WHERE schemaname = 'tide'
+                AND tablename = 'tide_outbox_messages'
+                AND indexdef ILIKE '%outbox_name%'
+                AND indexdef ILIKE '%id%'",
+            &[],
+        )
+        .await
+        .map(|row| row.get(0))
+        .unwrap_or(0);
+    if cleanup_index_count > 0 {
+        println!("  [OK] Native outbox polling/cleanup index present");
+    } else {
+        println!("  [FAIL] Native outbox polling/cleanup index missing");
+        all_ok = false;
+    }
+
+    let storage_layout = client
+        .query_opt(
+            "SELECT storage_layout::text
+               FROM tide.outbox_storage_config
+              LIMIT 1",
+            &[],
+        )
+        .await
+        .ok()
+        .flatten()
+        .and_then(|row| row.try_get::<_, String>(0).ok());
+    let is_partitioned: bool = client
+        .query_one(
+            "SELECT EXISTS(
+                 SELECT 1
+                   FROM pg_partitioned_table p
+                   JOIN pg_class c ON c.oid = p.partrelid
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                  WHERE n.nspname = 'tide'
+                    AND c.relname = 'tide_outbox_messages'
+             )",
+            &[],
+        )
+        .await
+        .map(|row| row.get(0))
+        .unwrap_or(false);
+    if let Some(layout) = storage_layout {
+        let expected = if is_partitioned { "id_range" } else { "heap" };
+        if layout == expected {
+            println!("  [OK] Storage config matches physical layout ({layout})");
+        } else {
+            println!("  [FAIL] Storage config says '{layout}' but physical layout is '{expected}'");
+            all_ok = false;
+        }
+    } else {
+        println!("  [FAIL] Storage layout could not be read from tide.outbox_storage_config");
+        all_ok = false;
+    }
+
     // v0.17.0: Check (a) DLQ INSERT privilege.
     let dlq_writable: bool = client
         .query_one(
@@ -352,6 +518,17 @@ pub async fn run_doctor_with_threshold(
         Ok(())
     } else {
         println!("\npg-tide doctor: one or more checks failed.");
-        std::process::exit(1);
+        Err("doctor found one or more failed checks".into())
     }
+}
+
+async fn table_exists(client: &tokio_postgres::Client, table: &str) -> bool {
+    client
+        .query_one(
+            "SELECT to_regclass($1) IS NOT NULL",
+            &[&format!("tide.{table}")],
+        )
+        .await
+        .map(|row| row.get(0))
+        .unwrap_or(false)
 }

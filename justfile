@@ -223,6 +223,15 @@ audit:
 bench:
     cargo bench --package pg-tide-relay
 
+# Validate the reviewed operational budget contract without requiring PostgreSQL.
+check-operational-budgets:
+    python3 scripts/check_operational_budgets.py --check-config
+
+# Check one recorded operational benchmark result against the reviewed budgets.
+# Usage: just check-operational-result target/operational-benchmarks/result.json
+check-operational-result RESULT:
+    python3 scripts/check_operational_budgets.py --result "{{RESULT}}"
+
 # Default: fmt + lint + test-unit
 all: fmt lint test-unit
 
@@ -422,9 +431,9 @@ check-no-positional-api:
 check-docs-positional:
     #!/usr/bin/env bash
     set -euo pipefail
-    ALLOWLIST='docs/src/operations/v1-migration-guide.md|docs/src/guides/migrating-to-pg-tide.md|docs/src/integration/pg-trickle.md'
+    ALLOWLIST='docs/archive/|docs/src/operations/v1-migration-guide.md|docs/src/guides/migrating-to-pg-tide.md|docs/src/integration/pg-trickle.md'
     HITS=$(grep -rn 'SELECT tide.relay_set_outbox(\|SELECT tide.relay_set_inbox(' docs/ examples/ README.md 2>/dev/null \
-        | grep -v '_v2' | grep -vE "^($ALLOWLIST):" || true)
+        | grep -v '_v2' | grep -vE "^($ALLOWLIST)" || true)
     if [[ -n "$HITS" ]]; then
         echo "ERROR: active positional relay API calls found (use relay_set_outbox_v2 / relay_set_inbox_v2):"
         echo "$HITS"

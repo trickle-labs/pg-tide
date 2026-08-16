@@ -16,6 +16,14 @@ jobs:
       - name: Check connector registry
         run: python3 scripts/generate_connector_surface.py --check
 
+  operational-contract:
+    name: Operational budget and benchmark contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate operational budget configuration
+        run: just check-operational-budgets
+
   clean-checkout:
     name: Clean checkout workspace build
     runs-on: ubuntu-latest
@@ -243,9 +251,11 @@ jobs:
           cargo test --package pg-tide-relay --test dag_test -- --test-threads=1
           cargo test --package pg-tide-relay --test ha_failover_test -- --test-threads=1
 
-  # v0.30.0: Sustained-throughput load test.
+  # v0.43.0: Direct PostgreSQL insert microbenchmark. This is not relay
+  # throughput evidence; the operational reference job runs on a scheduled
+  # PostgreSQL/NATS environment.
   test-load:
-    name: Sustained-Throughput Load Test (v0.30.0)
+    name: PostgreSQL Insert Microbenchmark
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -262,9 +272,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-load-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run load test (50k messages, ≥ 10k msg/s)
+      - name: Run PostgreSQL insert microbenchmark
         run: |
-          cargo test --package pg-tide-relay --test load_test -- --test-threads=1
+          cargo test --package pg-tide-relay --test postgres_insert_microbenchmark -- --test-threads=1
 
   test-integration-relay:
     name: Integration Tests — Relay (coordinator, circuit breaker, DLQ)

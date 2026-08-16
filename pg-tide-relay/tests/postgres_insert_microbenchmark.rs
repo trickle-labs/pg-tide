@@ -1,9 +1,9 @@
-/// Sustained-throughput load test.
+/// PostgreSQL direct-insert microbenchmark.
 ///
 /// Inserts 50 000 messages across 10 concurrent PostgreSQL outboxes.
 ///
-/// Asserts: throughput ≥ 10 000 messages / second on the CI runner.
-/// Does not write into the checkout; CI enforces the single threshold below.
+/// This measures database insert cost only. It does not start pg-tide, publish
+/// to a sink, or provide relay capacity evidence.
 mod common;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,10 +14,6 @@ use tokio_postgres::NoTls;
 
 const TOTAL_MESSAGES: u64 = 50_000;
 const OUTBOX_COUNT: u64 = 10;
-// GitHub Actions runners are slow; 2 000 msg/s is the CI-safe lower bound.
-// On developer hardware with a local Postgres, typical throughput is 20 000+.
-const MIN_THROUGHPUT_MSG_PER_SEC: f64 = 2_000.0;
-
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
     let mut attempt = 0u32;
     loop {
@@ -40,7 +36,7 @@ async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
 }
 
 #[tokio::test]
-async fn test_postgresql_insert_load_50k_messages() {
+async fn postgres_insert_microbenchmark_50k_messages() {
     use testcontainers::{runners::AsyncRunner, ImageExt};
     use testcontainers_modules::postgres::Postgres;
 
@@ -136,10 +132,4 @@ async fn test_postgresql_insert_load_50k_messages() {
     );
 
     assert_eq!(inserted, TOTAL_MESSAGES, "all messages must be inserted");
-    assert!(
-        throughput >= MIN_THROUGHPUT_MSG_PER_SEC,
-        "throughput {:.0} msg/s is below minimum {:.0} msg/s",
-        throughput,
-        MIN_THROUGHPUT_MSG_PER_SEC
-    );
 }

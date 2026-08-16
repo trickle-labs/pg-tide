@@ -35,6 +35,12 @@ pub const METRIC_DELIVERY_STAGE: &str = "pg_tide_relay_delivery_stage_total";
 pub const METRIC_CHECKPOINT_ERRORS: &str = "pg_tide_relay_checkpoint_commit_errors_total";
 pub const METRIC_OWNERSHIP_EVENTS: &str = "pg_tide_relay_ownership_events_total";
 pub const METRIC_FORCED_SHUTDOWN: &str = "pg_tide_relay_forced_shutdown_total";
+/// v0.43.0: Source poll query count for the operational cost contract.
+pub const METRIC_SOURCE_POLL_QUERIES: &str = "pg_tide_relay_source_poll_queries_total";
+/// v0.43.0: Durable source offset writes.
+pub const METRIC_OFFSET_WRITES: &str = "pg_tide_relay_offset_writes_total";
+/// v0.43.0: Coordinator catalog discovery query count.
+pub const METRIC_CATALOG_DISCOVERY_QUERIES: &str = "pg_tide_relay_catalog_discovery_queries_total";
 
 /// Shared relay metrics.
 pub struct RelayMetrics {
@@ -77,6 +83,9 @@ pub struct RelayMetrics {
     pub ownership_events: IntCounterVec,
     /// v0.42.0: Forced shutdowns with in-flight work.
     pub forced_shutdown: IntCounterVec,
+    pub source_poll_queries: IntCounterVec,
+    pub offset_writes: IntCounterVec,
+    pub catalog_discovery_queries: IntCounterVec,
     registry: Registry,
 }
 
@@ -289,6 +298,33 @@ impl RelayMetrics {
         )?;
         registry.register(Box::new(forced_shutdown.clone()))?;
 
+        let source_poll_queries = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_SOURCE_POLL_QUERIES,
+                "Source poll queries issued by the relay"
+            ),
+            &["pipeline", "source"],
+        )?;
+        registry.register(Box::new(source_poll_queries.clone()))?;
+
+        let offset_writes = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_OFFSET_WRITES,
+                "Durable source offset writes issued by the relay"
+            ),
+            &["pipeline", "source"],
+        )?;
+        registry.register(Box::new(offset_writes.clone()))?;
+
+        let catalog_discovery_queries = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_CATALOG_DISCOVERY_QUERIES,
+                "Coordinator pipeline catalog discovery queries"
+            ),
+            &["relay_group"],
+        )?;
+        registry.register(Box::new(catalog_discovery_queries.clone()))?;
+
         Ok(Arc::new(Self {
             messages_published,
             messages_consumed,
@@ -312,6 +348,9 @@ impl RelayMetrics {
             checkpoint_commit_errors,
             ownership_events,
             forced_shutdown,
+            source_poll_queries,
+            offset_writes,
+            catalog_discovery_queries,
             registry,
         }))
     }
@@ -424,11 +463,26 @@ mod tests {
             .pipeline_errors_total
             .with_label_values(&["test-pipeline", "transient"])
             .inc();
+        metrics
+            .source_poll_queries
+            .with_label_values(&["test-pipeline", "outbox"])
+            .inc();
+        metrics
+            .offset_writes
+            .with_label_values(&["test-pipeline", "outbox"])
+            .inc();
+        metrics
+            .catalog_discovery_queries
+            .with_label_values(&["test-group"])
+            .inc();
         let rendered = metrics.render().unwrap();
         assert!(rendered.contains(METRIC_MESSAGES_PUBLISHED));
         // v0.16.0: verify new coordinator metrics are registered.
         assert!(rendered.contains(METRIC_OWNED_PIPELINES));
         assert!(rendered.contains(METRIC_RECONCILE_DURATION));
+        assert!(rendered.contains(METRIC_SOURCE_POLL_QUERIES));
+        assert!(rendered.contains(METRIC_OFFSET_WRITES));
+        assert!(rendered.contains(METRIC_CATALOG_DISCOVERY_QUERIES));
         // v0.17.0: verify DLQ write errors metric is registered.
         metrics
             .dlq_write_errors

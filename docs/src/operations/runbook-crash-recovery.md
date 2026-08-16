@@ -28,19 +28,19 @@ batch is re-read and re-delivered.
 
 ```sql
 -- Inspect the current offset for each pipeline:
-SELECT name, last_change_id, updated_at
+SELECT relay_group_id, pipeline_id, outbox_name, last_change_id, updated_at
 FROM   tide.relay_consumer_offsets
-ORDER  BY name;
+ORDER  BY relay_group_id, pipeline_id, outbox_name;
 ```
 
 ---
 
 ## Identifying a Stuck Pipeline
 
-A stuck pipeline is one where the consumer lag is not decreasing despite the
+A stuck pipeline is one where exact pipeline lag is not decreasing despite the
 relay running.  Signs include:
 
-- `pg_tide_relay_consumer_lag{pipeline="..."}` is high and flat in Grafana.
+- `pg_tide_relay_pipeline_lag{pipeline="..."}` is high and flat in Grafana.
 - `pg-tide status` shows the pipeline as owned but not progressing.
 - Repeated error log entries for the same pipeline.
 
@@ -87,7 +87,8 @@ SELECT pg_terminate_backend(<pid>);
 1. Verify the relay process has fully stopped (no ghost connections).
 2. Restart the relay: `docker restart pg-tide` or `kubectl rollout restart deployment/pg-tide`.
 3. Watch logs for ownership acquisition and checkpoint transitions confirming pipelines resume.
-4. Check `pg-tide status --postgres-url $PG_TIDE_POSTGRES_URL` for lag convergence.
+4. Check `pg-tide status --postgres-url $PG_TIDE_POSTGRES_URL` and
+   `tide.relay_pipeline_lag` for lag convergence.
 
 ---
 

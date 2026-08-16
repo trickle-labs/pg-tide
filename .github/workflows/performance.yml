@@ -1,0 +1,107 @@
+name: Operational performance
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: "Reference/soak duration in seconds"
+        required: false
+        default: "1800"
+      run_soak:
+        description: "Run the sustained soak profile"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operational-performance
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Validate budget contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate operational budget configuration
+        run: just check-operational-budgets
+
+  reference:
+    name: Reference operational profiles
+    needs: contract
+    # The reference runner has PostgreSQL 18, the packaged extension, NATS
+    # JetStream, and /proc resource sampling. Hosted runner latency is not
+    # comparable with the committed baseline.
+    runs-on: [self-hosted, pg-tide-reference]
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - publish-single
+          - publish-concurrent
+          - relay-core
+          - relay-large
+          - pipeline-density
+          - outage-recovery
+          - retention
+          - ha-interruption
+        repetition: [1, 2, 3]
+    env:
+      PG_TIDE_BENCH_SCENARIO: ${{ matrix.profile }}
+      PG_TIDE_BENCH_DURATION_SECS: ${{ inputs.duration_seconds || '1800' }}
+      PG_TIDE_BENCH_OUTPUT: target/operational-benchmarks/${{ matrix.profile }}-${{ matrix.repetition }}.json
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build relay binary
+        run: cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core
+      - name: Run reference profile
+        run: |
+          mkdir -p target/operational-benchmarks
+          cargo test --package pg-tide-relay --test operational_benchmark \
+            --no-default-features --features core -- --ignored --nocapture
+      - name: Check reference result
+        run: python3 scripts/check_operational_budgets.py --result "$PG_TIDE_BENCH_OUTPUT"
+      - name: Upload raw result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-${{ matrix.profile }}-${{ matrix.repetition }}
+          path: target/operational-benchmarks/
+          if-no-files-found: error
+
+  soak:
+    name: Nightly operational soak
+    needs: contract
+    if: ${{ github.event_name == 'schedule' || inputs.run_soak }}
+    runs-on: [self-hosted, pg-tide-reference]
+    env:
+      PG_TIDE_BENCH_SCENARIO: soak
+      PG_TIDE_BENCH_DURATION_SECS: ${{ inputs.duration_seconds || '1800' }}
+      PG_TIDE_BENCH_OUTPUT: target/operational-benchmarks/soak.json
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build relay binary
+        run: cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core
+      - name: Run soak profile
+        run: |
+          mkdir -p target/operational-benchmarks
+          cargo test --package pg-tide-relay --test operational_soak \
+            --no-default-features --features core -- --ignored --nocapture
+      - name: Check soak result
+        run: python3 scripts/check_operational_budgets.py --result "$PG_TIDE_BENCH_OUTPUT"
+      - name: Upload soak diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-soak
+          path: target/operational-benchmarks/
+          if-no-files-found: error

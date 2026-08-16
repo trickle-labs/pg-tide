@@ -21,3 +21,4 @@ including the context, the decision, and the consequences.
 | [ADR-010](adr-010-envelope-encryption-kms.md) | Envelope Encryption with KMS | Accepted |
 | [ADR-011](adr-011-canonical-outbox-storage-and-relay-polling.md) | Canonical Outbox Storage and Relay Polling | Accepted |
 | [ADR-012](adr-012-relay-delivery-acknowledgment-and-offset-state-machine.md) | Relay Delivery Acknowledgment and Offset State Machine | Accepted |
+| [ADR-013](adr-013-retention-partitioning-and-postgresql-cost.md) | Retention, ID-Range Partitioning, and PostgreSQL Cost Contract | Accepted |

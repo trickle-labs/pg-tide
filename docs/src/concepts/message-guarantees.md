@@ -115,7 +115,11 @@ state; it must not assume that one native pipeline has delivered a row for every
 SELECT tide.outbox_create('orders', p_retention_hours := 48);
 ```
 
-The `inline_threshold` parameter provides backpressure: if the number of pending (unconsumed) messages exceeds this threshold, subsequent publishes will pause, preventing your outbox from growing unboundedly if the relay is down.
+The `inline_threshold` parameter is retained compatibility/configuration
+metadata. Native publishing does not enforce it as a pending-row cap. A sink
+outage therefore accumulates committed rows; reserve disk, alert on exact
+pipeline lag, and add application-level admission control when a hard outage
+window is required.
 
 ---
 

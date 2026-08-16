@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-15
 **Author:** pg_tide Contributors
-**Supersedes:** none
+**Supersedes:** none; partition and cleanup details are extended by [ADR-013](adr-013-retention-partitioning-and-postgresql-cost.md)
 **Refines:** [ADR-001](adr-001-single-table-outbox.md)
 
 ## Context
@@ -135,6 +135,23 @@ offset table already provides the required state.
 When an outbox is converted to a partitioned layout, `tide.tide_outbox_messages`
 remains the addressable parent relation. Native polling continues to read from
 the parent; partition routing is transparent to the relay.
+
+### 9.1 v0.43 long-transaction fence
+
+Publishing acquires a transaction-scoped shared advisory lock derived from the
+logical outbox. Native polling, bounded cleanup, partition removal, and
+conversion acquire the matching exclusive lock only while fetching or changing
+rows. Polling copies rows and releases the fence before decoding, claim-check
+reads, sink I/O, or offset writes. This prevents a committed lower identity
+from becoming invisible after a relay has advanced its checkpoint.
+
+### 9.2 v0.43 partition and cleanup contract
+
+Optional partitioning is `RANGE (id)` on this shared parent; it is not a
+`created_at` or per-outbox parent layout. Native cleanup requires both the
+outbox retention cutoff and the minimum checkpoint of every configured native
+pipeline, consumer group, and active lease. `consumed_at` and delivery
+receipts remain non-authoritative.
 
 ### 10. Explicit pg_trickle compatibility mode
 

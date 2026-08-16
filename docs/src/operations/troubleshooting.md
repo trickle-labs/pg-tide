@@ -35,7 +35,7 @@ The relay retries with exponential backoff indefinitely.
 ### Check pending messages exist
 
 ```sql
-SELECT * FROM tide.outbox_pending;
+SELECT * FROM tide.outbox_retention_status;
 ```
 
 If empty, no messages have been published yet.
@@ -80,7 +80,7 @@ If the inbox receives duplicates, the `UNIQUE(event_id)` constraint should preve
 ## High Consumer Lag
 
 ```sql
-SELECT * FROM tide.consumer_lag WHERE lag > 1000;
+SELECT * FROM tide.relay_pipeline_lag ORDER BY lag DESC;
 ```
 
 Possible causes:
@@ -130,4 +130,9 @@ SELECT * FROM pg_locks WHERE locktype = 'advisory';
 
 -- Relay offset tracking
 SELECT * FROM tide.relay_consumer_offsets;
+
+-- Retention blockers and progress
+SELECT * FROM tide.outbox_retention_status;
+SELECT * FROM tide.outbox_cleanup_state;
+SELECT * FROM tide.outbox_storage_config;
 ```

@@ -1,0 +1,153 @@
+schema_version = 1
+benchmark_schema_version = 1
+environment_schema_version = "pg18-nats-reference-v1"
+
+required_metrics = [
+  "publish.overhead_p50_us",
+  "publish.overhead_p95_us",
+  "publish.overhead_p99_us",
+  "relay.acknowledged_throughput_msg_s",
+  "relay.end_to_end_latency_p99_ms",
+  "relay.rss_incremental_per_inflight_bytes",
+  "relay.rss_idle_worker_bytes",
+  "relay.cpu_seconds_per_message",
+  "postgres.catalog_discovery_queries_per_relay_minute",
+  "postgres.offset_writes_per_ack_batch",
+  "postgres.offset_writes_per_delivered_message",
+  "postgres.wal_bytes_per_published_message",
+  "postgres.wal_bytes_per_cleaned_message",
+  "postgres.table_index_bytes_per_retained_message",
+  "cleanup.sweep_p95_ms",
+  "cleanup.lock_wait_p95_ms",
+  "cleanup.dead_tuple_ratio",
+  "recovery.outage_recovery_seconds",
+  "recovery.ha_interruption_ms",
+  "soak.memory_growth_slope_bytes_per_hour",
+  "soak.storage_growth_slope_bytes_per_hour",
+]
+
+[metrics."publish.overhead_p50_us"]
+unit = "us"
+direction = "lower_is_better"
+max = 2000
+max_regression_pct = 15
+
+[metrics."publish.overhead_p95_us"]
+unit = "us"
+direction = "lower_is_better"
+max = 5000
+max_regression_pct = 15
+
+[metrics."publish.overhead_p99_us"]
+unit = "us"
+direction = "lower_is_better"
+max = 10000
+max_regression_pct = 15
+
+[metrics."relay.acknowledged_throughput_msg_s"]
+unit = "messages/s"
+direction = "higher_is_better"
+min = 1000
+max_regression_pct = 15
+
+[metrics."relay.end_to_end_latency_p99_ms"]
+unit = "ms"
+direction = "lower_is_better"
+max = 1000
+max_regression_pct = 15
+
+[metrics."relay.rss_incremental_per_inflight_bytes"]
+unit = "bytes/message"
+direction = "lower_is_better"
+max = 262144
+max_regression_pct = 20
+
+[metrics."relay.rss_idle_worker_bytes"]
+unit = "bytes/worker"
+direction = "lower_is_better"
+max = 67108864
+max_regression_pct = 20
+
+[metrics."relay.cpu_seconds_per_message"]
+unit = "cpu-seconds/message"
+direction = "lower_is_better"
+max = 0.01
+max_regression_pct = 20
+
+[metrics."postgres.catalog_discovery_queries_per_relay_minute"]
+unit = "queries/relay/minute"
+direction = "lower_is_better"
+max = 120
+max_regression_pct = 10
+
+[metrics."postgres.offset_writes_per_ack_batch"]
+unit = "writes/batch"
+direction = "lower_is_better"
+max = 1
+max_regression_pct = 10
+
+[metrics."postgres.offset_writes_per_delivered_message"]
+unit = "writes/message"
+direction = "lower_is_better"
+max = 0.1
+max_regression_pct = 10
+
+[metrics."postgres.wal_bytes_per_published_message"]
+unit = "bytes/message"
+direction = "lower_is_better"
+max = 4096
+max_regression_pct = 20
+
+[metrics."postgres.wal_bytes_per_cleaned_message"]
+unit = "bytes/message"
+direction = "lower_is_better"
+max = 4096
+max_regression_pct = 20
+
+[metrics."postgres.table_index_bytes_per_retained_message"]
+unit = "bytes/message"
+direction = "lower_is_better"
+max = 4096
+max_regression_pct = 20
+
+[metrics."cleanup.sweep_p95_ms"]
+unit = "ms"
+direction = "lower_is_better"
+max = 5000
+max_regression_pct = 20
+
+[metrics."cleanup.lock_wait_p95_ms"]
+unit = "ms"
+direction = "lower_is_better"
+max = 500
+max_regression_pct = 20
+
+[metrics."cleanup.dead_tuple_ratio"]
+unit = "ratio"
+direction = "lower_is_better"
+max = 0.2
+max_regression_pct = 20
+
+[metrics."recovery.outage_recovery_seconds"]
+unit = "seconds"
+direction = "lower_is_better"
+max = 600
+max_regression_pct = 20
+
+[metrics."recovery.ha_interruption_ms"]
+unit = "ms"
+direction = "lower_is_better"
+max = 5000
+max_regression_pct = 20
+
+[metrics."soak.memory_growth_slope_bytes_per_hour"]
+unit = "bytes/hour"
+direction = "lower_is_better"
+max = 1048576
+max_regression_pct = 20
+
+[metrics."soak.storage_growth_slope_bytes_per_hour"]
+unit = "bytes/hour"
+direction = "lower_is_better"
+max = 10485760
+max_regression_pct = 20

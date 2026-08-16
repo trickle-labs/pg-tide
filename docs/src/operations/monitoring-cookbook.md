@@ -96,42 +96,48 @@ sum(rate(pg_tide_delivery_latency_seconds_bucket{le="1.0"}[5m]))
     summary: "Pipeline {{ $labels.pipeline }} P99 latency exceeds 5 seconds"
 ```
 
-## Recipe: Consumer Lag Monitoring
+## Recipe: Pipeline Lag and Retention Monitoring
 
 **Goal:** Detect growing backlogs before they become critical.
 
 ### Key Queries
 
 ```promql
-# Current lag (pending messages)
-pg_tide_consumer_lag
+# Exact lag is exported from tide.relay_pipeline_lag through PostgreSQL exporter.
+# Use labels for relay group, pipeline, and outbox.
+pg_tide_relay_pipeline_lag
 
 # Lag growth rate (positive = growing, negative = draining)
 deriv(pg_tide_consumer_lag[5m])
 
 # Estimated time to drain at current rate
-pg_tide_consumer_lag / rate(pg_tide_messages_published_total[5m])
+pg_tide_relay_pipeline_lag / rate(pg_tide_messages_published_total[5m])
 ```
 
 ### Alert: Growing Lag
 
 ```yaml
 - alert: PgTideGrowingLag
-  expr: pg_tide_consumer_lag > 10000
+  expr: deriv(pg_tide_relay_pipeline_lag[10m]) > 0
   for: 10m
   labels:
     severity: warning
   annotations:
-    summary: "Pipeline {{ $labels.pipeline }} has {{ $value }} pending messages"
+    summary: "Pipeline {{ $labels.pipeline }} lag is growing"
 
-- alert: PgTideCriticalLag
-  expr: pg_tide_consumer_lag > 100000
+- alert: PgTideCleanupBlocked
+  expr: pg_tide_outbox_retention_blocked > 0
   for: 5m
   labels:
     severity: critical
   annotations:
-    summary: "Pipeline {{ $labels.pipeline }} has critical backlog: {{ $value }} messages"
+    summary: "Outbox {{ $labels.outbox }} retention is blocked"
 ```
+
+Use `tide.outbox_retention_status` for the blocker name, participant offset,
+retention cutoff, retained bytes, and default-partition rows. Choose alert
+thresholds from the outage reservation and measured reference profile, not a
+fixed message count.
 
 ## Recipe: Error Rate Monitoring
 
