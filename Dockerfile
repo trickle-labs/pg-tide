@@ -2,7 +2,7 @@
 # Final image: Alpine-based, ~20 MB. Supports linux/amd64 and linux/arm64.
 
 # ── Build stage ────────────────────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM rust:1.88-alpine AS builder
+FROM --platform=$BUILDPLATFORM rust:1.91.1-alpine AS builder
 
 ARG TARGETARCH
 ARG CARGO_FEATURES=core
