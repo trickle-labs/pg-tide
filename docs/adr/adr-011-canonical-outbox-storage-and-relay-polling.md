@@ -216,3 +216,12 @@ role membership).
 ADR-001 remains **Accepted**. It is the original single-table storage decision.
 ADR-011 does not replace it; it clarifies the relay polling, offset, delivery,
 and compatibility consequences of that single-table choice.
+
+## Relationship to ADR-012
+
+[ADR-012](adr-012-relay-delivery-acknowledgment-and-offset-state-machine.md)
+defines the batch state machine around this storage contract. `last_change_id`
+means the greatest source row whose batch reached a durable terminal
+disposition: downstream acknowledgment precedes the monotonic checkpoint.
+Administrative rewind is the only supported offset decrease. Delivery receipts
+are auxiliary evidence, not authoritative relay state.

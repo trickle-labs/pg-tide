@@ -17,6 +17,7 @@ pub mod ducklake_common;
 pub mod encryption;
 pub mod envelope;
 pub mod error;
+pub mod failpoints;
 pub mod http_util;
 pub mod jmespath_transform;
 pub mod metrics;

@@ -1,6 +1,8 @@
 # Tutorial: End-to-End Pipeline
 
-This tutorial builds a complete bidirectional messaging system: order events flow *out* from PostgreSQL to Kafka (forward pipeline), and payment confirmations flow *in* from NATS back into PostgreSQL (reverse pipeline). By the end, you'll have both directions working with exactly-once delivery guarantees.
+This tutorial builds a complete bidirectional messaging system: order events flow *out* from PostgreSQL to Kafka (forward pipeline), and payment confirmations flow *in* from NATS back into PostgreSQL (reverse pipeline). By the end, you'll have both directions working with at-least-once relay
+transport and, for the PostgreSQL inbox path, an effectively exactly-once
+processing outcome through durable deduplication.
 
 This demonstrates a realistic pattern: your order service publishes events when orders are created, and a payment service (running elsewhere) confirms payments by publishing to NATS, which pg_tide relays back into your database for processing.
 

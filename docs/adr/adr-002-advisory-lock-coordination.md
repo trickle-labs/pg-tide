@@ -52,3 +52,14 @@ Rationale:
   will claim the pipeline before the original's in-flight batch is confirmed.
   This creates a brief dedup window where the DLQ or idempotent inbox
   `ON CONFLICT DO NOTHING` absorbs duplicates.
+
+## v0.42.0 clarification
+
+The ownership lock is held by the exact dedicated PostgreSQL session used by
+the pipeline worker. Pooled metadata connections must not acquire or release
+session-level ownership locks. Losing the ownership session cancels the worker
+before another instance takes over; graceful shutdown drains or terminates the
+worker before the session is released. The canonical lock identity is
+`(relay_group_id, tenant_name, direction, pipeline_name)`, derived by one
+shared helper. Mixed v0.41.0/v0.42.0 relay ownership is unsupported during the
+lock-identity transition.

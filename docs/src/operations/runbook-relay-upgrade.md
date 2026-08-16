@@ -8,10 +8,10 @@ multiple relay instances.
 
 ## Overview
 
-The pg-tide relay is stateless between reconcile cycles.  Pipeline ownership
-is coordinated via PostgreSQL advisory locks, so multiple relay instances can
-run simultaneously without split-brain.  This makes rolling upgrades possible
-without any downtime to message delivery.
+The pg-tide relay keeps durable source offsets in PostgreSQL. Pipeline ownership
+is coordinated via worker-held PostgreSQL advisory-lock sessions. For v0.42.0,
+mixed relay ownership with v0.41.0 is unsupported because the canonical lock
+identity and delivery contract changed.
 
 ---
 
@@ -25,16 +25,25 @@ without any downtime to message delivery.
    pg-tide status --postgres-url "$PG_TIDE_POSTGRES_URL"
    pg-tide doctor --postgres-url "$PG_TIDE_POSTGRES_URL"
    ```
-4. **Upgrade the PostgreSQL extension first** (if the target relay version
-   requires a newer extension schema):
+4. **Stop all old relays before upgrading the v0.42.0 extension and binary.**
+   Back up the database, then run:
    ```sql
    ALTER EXTENSION pg_tide UPDATE;
    ```
-   The old relay is forward-compatible with the new schema; the new relay is
-   backward-compatible with the old schema.  Upgrading the extension first
-   is always safe.
+   Do not start a v0.41.0 relay after the migration. Start only v0.42.0
+   relays after verifying offsets and pipeline ownership.
 
 ---
+
+## v0.42.0 Stop-Upgrade-Start Procedure
+
+1. Disable or stop every v0.41.0 relay and verify its ownership sessions are gone.
+2. Back up PostgreSQL and apply the extension migration.
+3. Deploy v0.42.0 relays.
+4. Verify scoped offsets, ownership, health, and duplicate handling.
+
+An in-flight batch whose sink succeeded before shutdown may be redelivered with
+the same stable identity. This is expected at-least-once transport behavior.
 
 ## Rolling Upgrade Procedure (Kubernetes)
 
@@ -85,9 +94,8 @@ pg-tide status --postgres-url "$PG_TIDE_POSTGRES_URL"
 
 For single-instance or manual deployments:
 
-1. **Start the new relay** alongside the old one (different container name or
-   port is fine; both will contend for advisory locks and share pipeline
-   ownership gracefully).
+1. For versions before v0.42.0, do not start the new relay alongside the old
+   one. Stop all old instances first, then deploy the new image.
 
    ```bash
    docker run -d --name pg-tide-new \
@@ -145,7 +153,9 @@ If the new relay is unhealthy after the upgrade:
 2. Stop the new relay.
 3. Investigate logs from the new relay for the root cause.
 
-Because pipeline state lives in PostgreSQL, no data is lost during rollback.
+Rollback across the v0.42.0 lock/offset contract is not automatic. Keep the
+database backup and follow the release-specific rollback procedure; do not run
+mixed relay versions against the migrated catalog.
 
 ---
 

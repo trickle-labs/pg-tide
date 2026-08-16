@@ -21,6 +21,9 @@ core-kafka = ["core", "kafka"]
 experimental-full = ["airbyte", "arrow-flight", "bigquery", "canal", "cdc-json", "clickhouse", "debezium", "delta", "discord", "ducklake", "elasticsearch", "eventhubs", "iceberg", "kafka", "kinesis", "kms", "kms-aws", "kms-gcp", "kms-local", "kms-vault", "maxwell", "mongodb", "mqtt", "native-tls", "nats", "object-storage", "otel", "pagerduty", "pubsub", "rabbitmq", "redis", "rocklake", "schema-registry", "servicebus", "singer", "slack", "snowflake", "sqs", "stdout", "wal-source", "webhook"]
 # END GENERATED CONNECTOR PROFILES
 
+# Internal crash-test instrumentation. Never included in a production profile.
+test-failpoints = []
+
 # Optional backends (each adds a Cargo dependency)
 nats            = ["dep:async-nats"]
 webhook         = ["dep:hmac"]

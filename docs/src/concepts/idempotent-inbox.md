@@ -1,6 +1,9 @@
 # Concept: The Idempotent Inbox Pattern
 
-The idempotent inbox is the receiving counterpart to the transactional outbox. While the outbox ensures events are reliably published, the inbox ensures events are reliably received and processed exactly once — even when the same message arrives multiple times due to network retries, relay restarts, or at-least-once delivery semantics.
+The idempotent inbox is the receiving counterpart to the transactional
+outbox. It durably deduplicates repeated deliveries and can support an
+effectively exactly-once processing outcome when application work and
+`inbox_mark_processed()` share one transaction.
 
 ## The Problem
 
@@ -85,15 +88,17 @@ SELECT tide.inbox_mark_failed('payment_events', 42, 'Insufficient funds');
 SELECT tide.inbox_mark_processed('payment_events', 42);
 ```
 
-## Exactly-Once Processing
+## Effectively exactly-once processing
 
-The inbox provides exactly-once *processing* (not delivery) through this mechanism:
+The inbox provides a transactional, effectively exactly-once *processing
+outcome* (not transport delivery) through this mechanism:
 
 1. **At-least-once delivery:** The source may deliver the same message multiple times
 2. **Deduplication on write:** The inbox's unique constraint prevents duplicate storage
 3. **Atomic processing:** Business logic + mark-processed in one transaction
 
-The combination ensures each unique message is processed exactly once, regardless of how many times it's delivered.
+The combination makes each unique message eligible for one transactional
+processing outcome, regardless of how many times the relay delivers it.
 
 ## When to Use the Inbox
 

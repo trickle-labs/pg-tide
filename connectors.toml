@@ -24,7 +24,7 @@ tls_tests = ["pg-tide-relay/tests/tls_test.rs"]
 redaction_tests = ["pg-tide-relay/src/config.rs"]
 metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 runbooks = ["docs/src/operations/runbook-crash-recovery.md"]
-upgrade_tests = ["pg-tide-relay/tests/v040_validation_test.rs"]
+upgrade_tests = ["pg-tide-relay/tests/v042_validation_test.rs"]
 
 [[connector]]
 id = "pg-trickle-compatibility"
@@ -79,7 +79,7 @@ tls_tests = ["pg-tide-relay/tests/tls_test.rs"]
 redaction_tests = ["pg-tide-relay/src/config.rs"]
 metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 runbooks = ["docs/src/operations/runbook-relay-upgrade.md"]
-upgrade_tests = ["pg-tide-relay/tests/v040_validation_test.rs"]
+upgrade_tests = ["pg-tide-relay/tests/v042_validation_test.rs"]
 
 [[connector]]
 id = "nats"
@@ -106,7 +106,7 @@ tls_tests = ["pg-tide-relay/tests/tls_test.rs"]
 redaction_tests = ["pg-tide-relay/src/config.rs"]
 metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 runbooks = ["docs/src/operations/runbook-crash-recovery.md"]
-upgrade_tests = ["pg-tide-relay/tests/v040_validation_test.rs"]
+upgrade_tests = ["pg-tide-relay/tests/v042_validation_test.rs"]
 
 [[connector]]
 id = "webhook"

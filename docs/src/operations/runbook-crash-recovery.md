@@ -12,17 +12,19 @@ crashes between polling messages from the outbox and acknowledging delivery to
 the sink, the un-acknowledged messages will be re-delivered after restart
 because the consumer offset has not advanced.
 
-**No manual intervention is required in the normal case.** Simply restart the
-relay and it will resume from the last committed offset.
+**No manual intervention is required in the normal case.** Restart the relay
+and it resumes from the last committed offset. A crash after sink success but
+before that commit may produce a duplicate; stable event identity and
+destination deduplication determine the outcome.
 
 ---
 
 ## How the Relay Commits Offsets
 
 The relay tracks its position in the outbox via `tide.relay_consumer_offsets`.
-After each successful batch delivery, it advances the `last_change_id` for the
-pipeline.  If the relay crashes before this write, the batch is re-read and
-re-delivered.
+After a complete batch reaches a durable terminal disposition, it advances the
+`last_change_id` for the pipeline. If the relay crashes before this write, the
+batch is re-read and re-delivered.
 
 ```sql
 -- Inspect the current offset for each pipeline:
@@ -84,7 +86,7 @@ SELECT pg_terminate_backend(<pid>);
 
 1. Verify the relay process has fully stopped (no ghost connections).
 2. Restart the relay: `docker restart pg-tide` or `kubectl rollout restart deployment/pg-tide`.
-3. Watch logs for `acquired lock — spawning worker` messages confirming pipelines resume.
+3. Watch logs for ownership acquisition and checkpoint transitions confirming pipelines resume.
 4. Check `pg-tide status --postgres-url $PG_TIDE_POSTGRES_URL` for lag convergence.
 
 ---
@@ -94,8 +96,7 @@ SELECT pg_terminate_backend(<pid>);
 Duplicate delivery to the sink is possible after a crash.  Ensure your
 sink consumers are **idempotent**:
 
-- Use the `event_id` (UUID) field present in all pg-tide messages as an
-  idempotency key.
+- Use the stable `event_id`/`dedup_key` field as an idempotency key.
 - For inbox targets, pg-tide automatically deduplicates via the `event_id`
   primary key with `ON CONFLICT DO NOTHING`.
 

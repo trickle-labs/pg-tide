@@ -47,7 +47,10 @@ INFO [orders-test] dry-run: msg[1] key="ORD-002" size=287 bytes
 ...
 ```
 
-Messages are still acknowledged from the source after logging — so the pipeline advances through the outbox even in dry-run mode. This means you can run dry-run temporarily to see what's flowing, then disable it to start real delivery from the current position.
+Messages are still acknowledged from the source after logging — so dry-run is
+an explicit **consuming** mode and the pipeline advances through the outbox.
+Checkpoint errors remain visible and unhealthy. Disable dry-run only after
+accepting that messages observed by it will not be sent by that pipeline.
 
 ## Replay Mode
 
@@ -75,9 +78,11 @@ SELECT tide.relay_set_outbox_v2(
 
 ### Replay Behavior
 
-- Messages outside the offset range are skipped (not published, not acknowledged)
+- Messages outside the offset range are skipped
 - When the range is exhausted, the pipeline exits cleanly
 - Replay pipelines can run alongside live pipelines — they don't interfere
+- Replay never advances or rewinds the live checkpoint; it uses its explicit
+  range and is one-shot
 - Combine with transforms to replay with different filtering or reshaping
 
 ### Use Cases
@@ -105,7 +110,9 @@ You can use both together to preview what a replay would produce without actuall
 }
 ```
 
-This is useful for estimating replay volume and validating transform behavior on historical messages.
+This is useful for estimating replay volume and validating transform behavior
+on historical messages. It still consumes the replay range, not the live
+checkpoint.
 
 ## Further Reading
 

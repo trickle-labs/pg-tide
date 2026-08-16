@@ -25,7 +25,9 @@ Each relay instance:
 3. Only starts worker tasks for pipelines where it holds the lock
 4. Periodically re-checks lock ownership during discovery
 
-If Relay #1 crashes:
+The lock is held on the worker's dedicated PostgreSQL session, not a pooled
+metadata connection. If that session ends, the worker is cancelled before
+another instance takes ownership. If Relay #1 crashes:
 - PostgreSQL automatically releases its advisory locks (session locks die with the connection)
 - Relay #2 or #3 acquires locks for pipelines A and B on the next discovery cycle
 - Messages continue flowing within `discovery_interval_secs`
@@ -33,8 +35,9 @@ If Relay #1 crashes:
 ## Advisory Lock Mechanics
 
 pg_tide uses `pg_try_advisory_lock(key1, key2)` where:
-- `key1` = `hashtext(relay_group_id)` — Groups relays into a coordination cluster
-- `key2` = `hashtext(pipeline_name)` — Identifies the specific pipeline
+- `key1` and `key2` are derived by one shared helper from the canonical identity
+`(relay_group_id, tenant_name, direction, pipeline_name)`. The SQL API still
+uses PostgreSQL's two-key advisory-lock form.
 
 `pg_try_advisory_lock` is non-blocking — if another instance holds the lock, it returns false immediately rather than waiting. This means relay instances never deadlock or block each other.
 
@@ -75,7 +78,9 @@ t=10s   Relay #2 spawns worker for pipeline A
 t=10s   Pipeline A resumes processing
 ```
 
-With `discovery_interval = 10`, worst-case failover is 10 seconds. Messages are never lost — they wait safely in the outbox until a relay instance picks them up.
+With `discovery_interval = 10`, worst-case failover is 10 seconds. Committed messages remain eligible from the durable source checkpoint. A crash
+after sink success but before checkpoint commit can produce a duplicate with the
+same stable event ID; it does not silently skip the event.
 
 ## Scaling Patterns
 
@@ -93,16 +98,18 @@ For high-throughput pipelines, use [consumer groups](../concepts/consumer-groups
 When a relay instance receives SIGTERM:
 
 1. Coordinator sends stop signal to all owned workers
-2. Workers complete their current batch (in-flight messages finish)
-3. Workers acknowledge processed messages
-4. Coordinator releases all advisory locks
+2. Workers drain their current batch within the timeout
+3. Workers commit the source checkpoint only after sink/DLQ terminal success
+4. Timed-out workers are aborted, then the ownership session is released
 5. Process exits
 
 Other instances detect released locks on next discovery and take ownership.
 
 ## Monitoring HA
 
-- **Prometheus gauge:** `pg_tide_pipeline_healthy` per instance shows which pipelines each instance owns
+- **Prometheus gauge:** `pg_tide_pipeline_healthy` reports health, not ownership
+- **Ownership metrics:** acquisition, loss, and transfer counters show lock churn
+- **Stage metric:** `pg_tide_relay_delivery_stage_total{pipeline,stage,outcome}`
 - **Advisory locks query:** `SELECT * FROM pg_locks WHERE locktype = 'advisory'` shows current ownership
 - **Health endpoint:** `/health` reports healthy only if the instance owns at least one pipeline
 

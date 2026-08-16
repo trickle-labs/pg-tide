@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.42.0 — Crash-Safe Relay Delivery](#0420--crash-safe-relay-delivery)
 - [0.41.0 — Focused Release Metadata](#0410--focused-release-metadata)
 - [0.40.0 — One Real Pipeline: Native Outbox → NATS JetStream](#0400--one-real-pipeline-native-outbox--nats-jetstream)
 - [0.38.0 — RockLake Native Ingestion, Phase 6 Integration Testing & Phase 7 Production Hardening](#0380--rocklake-native-ingestion-phase-6-integration-testing--phase-7-production-hardening)
@@ -50,6 +51,15 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 <!-- TOC end -->
 
 ---
+
+## [0.42.0] — Crash-Safe Relay Delivery
+
+- Added a shared delivery state machine with original-poll checkpoints,
+  deferred NATS acknowledgments, atomic DLQ terminal disposition, and
+  monotonic offset enforcement.
+- Added worker-held PostgreSQL ownership sessions, audited administrative
+  rewind APIs, crash-test failpoints, delivery-stage metrics, and operational
+  documentation.
 
 ## [0.41.0] — Focused Release Metadata
 

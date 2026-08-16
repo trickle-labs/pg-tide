@@ -30,9 +30,12 @@ If PostgreSQL is your primary data store — and for many teams, it is — pg_ti
 
 This dramatically reduces operational overhead. You already know how to back up PostgreSQL, monitor its performance, manage its connections, and failover between replicas. pg_tide inherits all of that operational maturity.
 
-### You need exactly-once delivery semantics
-
-Many messaging systems provide at-most-once or at-least-once delivery. True exactly-once requires coordination between the sender and receiver. pg_tide achieves this through the combination of transactional publishing (no message loss), consumer offset tracking (no re-processing), and the idempotent inbox (no duplicates). The end-to-end result is effectively exactly-once — each event is processed precisely one time.
+### You need an effectively exactly-once application outcome
+Many messaging systems provide at-most-once or at-least-once delivery. pg_tide
+provides atomic outbox writes and at-least-once relay transport. A PostgreSQL
+inbox adds durable deduplication; with transactional application processing,
+the destination outcome can be effectively exactly once. Cross-system transport
+itself remains at least once.
 
 ### Your throughput fits within PostgreSQL's capacity
 
@@ -80,7 +83,7 @@ Typical use cases that pg_tide handles beautifully:
 
 | Use case | Why pg_tide fits |
 |----------|-----------------|
-| **Order processing pipelines** | Events must never be lost; exactly-once is essential |
+| **Order processing pipelines** | Events must not be silently lost; durable destination deduplication is essential |
 | **Audit event emission** | Every business action must produce a corresponding audit record |
 | **Cross-service synchronization** | Services need consistent views of shared data |
 | **Webhook delivery with retry** | Unreliable endpoints need persistent retry with DLQ |
@@ -101,7 +104,7 @@ Typical use cases that pg_tide handles beautifully:
 | **Message format** | You control the payload — publish exactly what consumers need | Mirrors row-level changes (schema-coupled to table structure) |
 | **Event granularity** | Publish semantic events ("order confirmed") | Captures physical changes ("row updated in orders table") |
 | **Infrastructure** | PostgreSQL + single relay binary | PostgreSQL + Kafka Connect + Kafka + ZooKeeper/KRaft |
-| **Exactly-once** | Built-in via inbox dedup | Requires downstream idempotency |
+| **Effectively exactly once** | Available with inbox dedup and transactional processing | Requires destination durability and idempotency |
 | **Operational cost** | One binary (~20 MB), no JVM | JVM-based Kafka Connect, requires Kafka cluster |
 | **Flexibility** | Arbitrary events, decoupled from table schema | Automatic but tied to schema changes |
 | **Application changes** | Must call `outbox_publish()` | None (captures changes transparently) |
@@ -132,7 +135,7 @@ Typical use cases that pg_tide handles beautifully:
 | **Payload size** | JSONB (up to 1 GB, practically limited by memory) | 8,000 bytes maximum |
 | **Retry** | Built-in with exponential backoff and DLQ | None — if you miss it, it's gone |
 | **Consumer groups** | Independent offset tracking per consumer | No — every listener sees every notification |
-| **Delivery guarantee** | At-least-once (effectively exactly-once with inbox) | At-most-once (zero-once if no listener) |
+| **Delivery guarantee** | At-least-once (effectively exactly once with transactional inbox processing) | At-most-once (zero-once if no listener) |
 | **Cross-network** | Relay bridges to any external system | Only in-process PostgreSQL clients |
 | **Ordering** | Guaranteed within an outbox (by ID) | Guaranteed within a session |
 | **Backpressure** | Configurable threshold | None (notifications queue in memory) |
@@ -195,7 +198,7 @@ If you're currently using `pg_notify` for event delivery and hitting its limitat
 1. Install pg_tide and create outboxes for your event channels
 2. Replace `PERFORM pg_notify(channel, payload)` with `SELECT tide.outbox_publish(outbox, payload, headers)`
 3. Set up relay pipelines to your downstream consumers
-4. Benefit from durability, retry, offset tracking, and exactly-once semantics
+4. Benefit from durability, retry, offset tracking, and destination deduplication
 
 ### Coming from a DIY outbox table
 

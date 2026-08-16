@@ -6,7 +6,10 @@ The current source surface is intentionally narrow and evidence-based. See the [
 
 ## Why Use Sources?
 
-The inbox pattern solves the same reliability problem as the outbox, but in reverse. When your application receives events from an external system, it needs to process them reliably — without losing messages, without processing duplicates, and without inconsistency between the event processing and your database state. By routing external events through a pg_tide inbox, your application processes them within a database transaction, gaining exactly-once semantics for free.
+The inbox pattern solves the same reliability problem as the outbox, but in
+reverse. External sources use at-least-once transport; routing them through a
+pg_tide inbox provides durable deduplication and lets application processing
+share a transaction with `inbox_mark_processed()`.
 
 ## How Sources Work
 
@@ -74,7 +77,10 @@ SELECT tide.relay_set_inbox_v2(
 
 ## Deduplication
 
-Every source implementation extracts or generates a unique event identifier for each message. This ID is used as the inbox's dedup_key, ensuring that even if the same message is delivered multiple times (network retry, consumer rebalance, relay restart), it appears in your inbox exactly once. The deduplication mechanism varies by source:
+Every source implementation extracts or generates a stable event identifier for
+each message. This ID is used as the inbox's dedup_key, ensuring that repeated
+delivery is stored once at the inbox boundary. The deduplication mechanism
+varies by source:
 
 - **Kafka** — Partition + offset combination
 - **NATS** — JetStream sequence number

@@ -20,3 +20,4 @@ including the context, the decision, and the consequences.
 | [ADR-009](adr-009-wal-logical-replication-source.md) | WAL Logical-Replication Source | Accepted |
 | [ADR-010](adr-010-envelope-encryption-kms.md) | Envelope Encryption with KMS | Accepted |
 | [ADR-011](adr-011-canonical-outbox-storage-and-relay-polling.md) | Canonical Outbox Storage and Relay Polling | Accepted |
+| [ADR-012](adr-012-relay-delivery-acknowledgment-and-offset-state-machine.md) | Relay Delivery Acknowledgment and Offset State Machine | Accepted |

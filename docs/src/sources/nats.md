@@ -36,7 +36,10 @@ SELECT tide.relay_set_inbox_v2(
 
 ## Delivery Guarantees
 
-The NATS source acknowledges messages only after they are written to the inbox. JetStream's durable consumer tracks progress, so messages are never lost. The inbox's deduplication mechanism (using JetStream's sequence number as the event ID) prevents duplicates even on redelivery.
+The NATS source acknowledges messages only after they are written to the
+inbox. JetStream's durable consumer retains unacknowledged messages subject to
+stream retention, and the inbox's deduplication mechanism (using the stable
+message identity) makes redelivery safe at the database boundary.
 
 ## Troubleshooting
 

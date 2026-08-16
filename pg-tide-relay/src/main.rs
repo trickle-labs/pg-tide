@@ -395,16 +395,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Give active pipelines time to finish their current batch.
-    if drain_timeout.as_secs() > 0 {
-        tokio::time::timeout(drain_timeout, coordinator.drain())
-            .await
-            .unwrap_or_else(|_| {
-                tracing::warn!(
-                    "drain timeout ({} s) exceeded — forcing shutdown",
-                    drain_timeout.as_secs()
-                );
-            });
-    }
+    coordinator.drain(drain_timeout).await;
 
     coordinator.release_all_locks().await?;
 

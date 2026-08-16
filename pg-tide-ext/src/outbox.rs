@@ -602,21 +602,33 @@ pub fn commit_offset(p_group: &str, p_consumer: &str, p_last_offset: i64) {
 }
 
 fn commit_offset_impl(group: &str, consumer: &str, last_offset: i64) -> Result<(), PgTideError> {
+    if last_offset < 0 {
+        return Err(PgTideError::InvalidArgument(
+            "consumer offset must be non-negative".to_string(),
+        ));
+    }
+
     // v0.23.0: Monotonicity guard — only advance the committed offset, never
     // roll it back.  The WHERE clause on the DO UPDATE prevents a stale or
     // buggy consumer from rewinding an offset that was already committed.
     // Use tide.admin_rewind_offset() for intentional rollback.
-    Spi::run_with_args(
+    let persisted: Option<i64> = Spi::get_one_with_args(
         "INSERT INTO tide.tide_consumer_offsets \
          (group_name, consumer_id, committed_offset, last_heartbeat) \
          VALUES ($1, $2, $3, now()) \
          ON CONFLICT (group_name, consumer_id) DO UPDATE \
          SET committed_offset = EXCLUDED.committed_offset, \
              last_heartbeat = EXCLUDED.last_heartbeat \
-         WHERE tide_consumer_offsets.committed_offset <= EXCLUDED.committed_offset",
+         WHERE tide_consumer_offsets.committed_offset <= EXCLUDED.committed_offset \
+         RETURNING committed_offset",
         &[group.into(), consumer.into(), last_offset.into()],
     )
     .map_err(|e| PgTideError::SpiError(format!("commit_offset: {e}")))?;
+    if persisted.is_none() {
+        return Err(PgTideError::InvalidArgument(format!(
+            "consumer offset {last_offset} is lower than the committed offset"
+        )));
+    }
 
     // Clear lease.
     let _ = Spi::run_with_args(

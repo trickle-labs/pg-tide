@@ -54,6 +54,9 @@ pub enum RelayError {
         inner: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    #[error("source '{src}' decode error: {reason}")]
+    SourceDecode { src: String, reason: String },
+
     // IO errors
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -141,6 +144,7 @@ impl RelayError {
             | Self::SecretReadError { .. }
             | Self::TlsRequired { .. }
             | Self::TlsSetup(_)
+            | Self::SourceDecode { .. }
             | Self::NotImplemented { .. } => false,
             // Transient: network / I/O / temporary backend issues
             _ => true,

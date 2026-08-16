@@ -36,7 +36,10 @@ SELECT tide.relay_set_inbox_v2(
 
 ## Delivery Guarantees
 
-Messages are deleted from SQS only after inbox insertion succeeds. The inbox's deduplication uses the SQS message ID, preventing duplicates from Standard queues (which may deliver messages more than once). FIFO queues provide exactly-once semantics.
+Messages are deleted from SQS only after inbox insertion succeeds. The inbox's
+deduplication uses the SQS message ID, making Standard-queue redelivery safe at
+the database boundary. FIFO deduplication is bounded by the queue's configured
+window; relay transport remains at least once.
 
 ## Further Reading
 

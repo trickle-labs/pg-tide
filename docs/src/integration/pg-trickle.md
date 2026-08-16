@@ -34,13 +34,15 @@ capabilities.
 
 **The critical distinction is durability and the dedup boundary:**
 
-- The inbox→outbox bridge provides **PostgreSQL-strength exactly-once**: the
-  inbox `UNIQUE(event_id)` constraint is the dedup wall. Once a message is in
+- The inbox→outbox bridge provides **PostgreSQL-strength durable
+  deduplication**: the inbox `UNIQUE(event_id)` constraint is the dedup wall.
+  With transactional application processing, the outcome can be effectively
+  exactly once. Once a message is in
   PostgreSQL, it is durable regardless of Kafka retention or downstream sink
   availability. Messages accumulate in the outbox and are delivered in order
   when the sink recovers — even after days of outage.
 
-- pg_tide's reverse pipeline sinks provide **sink-dependent exactly-once**: the
+- pg_tide's reverse pipeline sinks provide **sink-dependent deduplication**: the
   relay routes directly from Kafka to the sink (DuckLake, MongoDB, etc.) using
   `_dedup_key` for idempotency. Durability depends on Kafka retention — if the
   sink is unavailable for longer than the Kafka topic's retention period,
