@@ -28,7 +28,7 @@ async fn install_through_v0_39(client: &tokio_postgres::Client) {
         .expect("base schema");
     for (label, sql) in common::MIGRATIONS {
         if *label == "0.39.0 -> 0.40.0" {
-            continue;
+            break;
         }
         let processed = common::strip_extension_comments(sql);
         client
