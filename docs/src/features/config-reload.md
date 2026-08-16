@@ -68,7 +68,10 @@ When a pipeline configuration changes, the existing worker is drained before the
 5. New worker spawns with updated config
 6. New worker begins polling
 
-This ensures no messages are lost or double-processed during reconfiguration.
+This preserves the source checkpoint during reconfiguration. An in-flight
+batch may be redelivered after a restart or ownership transfer; stable
+deduplication identities make that duplicate observable and safe where the
+destination supports deduplication.
 
 ## Configuration
 

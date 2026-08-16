@@ -1,6 +1,9 @@
 # NATS JetStream
 
-NATS is a lightweight, high-performance messaging system designed for cloud-native applications. JetStream is NATS's built-in persistence layer that adds durable message storage, replay capabilities, and exactly-once delivery semantics to the core NATS protocol. When you connect pg_tide to NATS JetStream, your PostgreSQL outbox messages are delivered with sub-millisecond latency to any service subscribed to the relevant subjects, while JetStream ensures messages are persisted and can be replayed if a consumer was offline.
+NATS is a lightweight, high-performance messaging system designed for
+cloud-native applications. JetStream adds durable message storage and replay
+capabilities. pg_tide's NATS path remains at-least-once transport; stable
+`Nats-Msg-Id` values allow bounded JetStream deduplication when configured.
 
 NATS is particularly well-suited for microservice architectures where you need fast, reliable communication between services without the operational complexity of running a Kafka cluster. Its subject-based addressing model makes routing intuitive, and its lightweight footprint means you can run it anywhere — from a single container in development to a globally distributed supercluster in production.
 

@@ -241,6 +241,10 @@ impl Coordinator {
 
     /// Try to acquire the advisory lock for a pipeline.
     /// Returns true if the lock was acquired (this pod owns the pipeline).
+    ///
+    /// This compatibility helper is retained for the coordinator unit tests.
+    /// Production reconciliation uses `try_acquire_ownership`, which keeps the
+    /// lock-holding session with the worker.
     /// v0.25.0: When tenant_id is set, incorporate it into the lock key pair
     /// so two tenants with identical pipeline names do not collide.
     pub async fn try_acquire_lock(&self, pipeline_id: &str) -> Result<bool, RelayError> {
@@ -265,6 +269,53 @@ impl Coordinator {
         Ok(row.get::<_, bool>(0))
     }
 
+    /// Acquire a pipeline lock on the dedicated PostgreSQL session that will
+    /// be shared by the worker for its entire lifetime.
+    async fn try_acquire_ownership(
+        &self,
+        db_url: &str,
+        pipeline: &PipelineConfig,
+    ) -> Result<Option<(Arc<Client>, watch::Receiver<bool>)>, RelayError> {
+        let (client, connection) = crate::pg_tls::connect(db_url).await?;
+        let client = Arc::new(client);
+        let (lost_tx, lost_rx) = watch::channel(false);
+        let pipeline_name = pipeline.name.clone();
+        tokio::spawn(async move {
+            match connection.await {
+                Ok(()) => tracing::warn!("ownership PostgreSQL connection closed"),
+                Err(error) => tracing::error!(%error, "ownership PostgreSQL connection failed"),
+            }
+            if let Err(error) =
+                crate::failpoints::hit("ownership_connection_lost", &pipeline_name).await
+            {
+                tracing::error!(%error, "ownership loss failpoint failed");
+            }
+            let _ = lost_tx.send(true);
+        });
+
+        let direction = match pipeline.direction {
+            PipelineDirection::Forward => "forward",
+            PipelineDirection::Reverse => "reverse",
+        };
+        let lock_scope = format!("{}:{}:{}", pipeline.tenant_name, direction, pipeline.name);
+        let row = client
+            .query_one(
+                "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2))",
+                &[&self.relay_group_id, &lock_scope],
+            )
+            .await?;
+        if !row.get::<_, bool>(0) {
+            drop(client);
+            return Ok(None);
+        }
+
+        self.metrics
+            .ownership_events
+            .with_label_values(&[&self.relay_group_id, "acquired"])
+            .inc();
+        Ok(Some((client, lost_rx)))
+    }
+
     /// Release the advisory lock for a pipeline.
     pub async fn release_lock(&self, pipeline_id: &str) -> Result<(), RelayError> {
         let client = self
@@ -287,15 +338,16 @@ impl Coordinator {
 
     /// Release all advisory locks held by this coordinator.
     pub async fn release_all_locks(&self) -> Result<(), RelayError> {
-        for pipeline_id in self.owned.keys() {
-            let _ = self.release_lock(pipeline_id).await;
-        }
+        // v0.42.0: Production locks belong to the worker-held sessions. They
+        // are released when those sessions are dropped after drain; unlocking
+        // through an arbitrary pool client cannot release them safely.
         Ok(())
     }
 
     /// Signal all owned pipelines to stop and wait for them to finish their
-    /// current batch.  Called during graceful shutdown before `release_all_locks`.
-    pub async fn drain(&self) {
+    /// current batch. Called during graceful shutdown before
+    /// `release_all_locks`.
+    pub async fn drain(&mut self, timeout: Duration) {
         // Send the stop signal to every owned pipeline.
         for (pipeline_id, (tx, _handle)) in &self.owned {
             if tx.send(true).is_err() {
@@ -303,10 +355,21 @@ impl Coordinator {
             }
         }
 
-        // Wait until every pipeline's receiver is closed (i.e. the task exited).
-        for (pipeline_id, (tx, _handle)) in &self.owned {
-            tx.closed().await;
-            tracing::debug!(pipeline = %pipeline_id, "pipeline drained");
+        let owned = std::mem::take(&mut self.owned);
+        let deadline = Instant::now() + timeout;
+        for (pipeline_id, (_tx, mut handle)) in owned {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if tokio::time::timeout(remaining, &mut handle).await.is_err() {
+                tracing::warn!(pipeline = %pipeline_id, "worker drain timed out — aborting");
+                self.metrics
+                    .forced_shutdown
+                    .with_label_values(&[&pipeline_id])
+                    .inc();
+                handle.abort();
+                let _ = handle.await;
+            } else {
+                tracing::debug!(pipeline = %pipeline_id, "pipeline drained");
+            }
         }
     }
 
@@ -500,15 +563,8 @@ impl Coordinator {
                     Err(e) => tracing::error!(
                         pipeline = %name,
                         panic = ?e,
-                        "worker panicked — releasing lock and cleaning up"
+                        "worker panicked — cleaning up"
                     ),
-                }
-                if let Err(e) = self.release_lock(&name).await {
-                    tracing::warn!(
-                        pipeline = %name,
-                        error = %e,
-                        "failed to release advisory lock after worker panic"
-                    );
                 }
             }
         }
@@ -535,11 +591,20 @@ impl Coordinator {
             .collect();
         for name in &to_stop {
             tracing::info!(pipeline = %name, "pipeline removed/disabled — stopping worker");
-            if let Some((tx, _handle)) = self.owned.remove(name) {
+            if let Some((tx, mut handle)) = self.owned.remove(name) {
                 let _ = tx.send(true);
-            }
-            if let Err(e) = self.release_lock(name).await {
-                tracing::warn!(pipeline = %name, error = %e, "failed to release advisory lock");
+                if tokio::time::timeout(Duration::from_secs(5), &mut handle)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(pipeline = %name, "worker drain timed out — aborting");
+                    self.metrics
+                        .forced_shutdown
+                        .with_label_values(&[name])
+                        .inc();
+                    handle.abort();
+                    let _ = handle.await;
+                }
             }
         }
 
@@ -569,22 +634,6 @@ impl Coordinator {
                 continue;
             }
 
-            let acquired = match self.try_acquire_lock(&pipeline.name).await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(pipeline = %pipeline.name, error = %e, "advisory lock error");
-                    continue;
-                }
-            };
-
-            if !acquired {
-                tracing::debug!(
-                    pipeline = %pipeline.name,
-                    "advisory lock held by another pod — skipping"
-                );
-                continue;
-            }
-
             // RELAY-SEC: resolve ${env:VAR} / ${file:/path} tokens before
             // handing the config to the worker.  A bad secret disables only
             // this pipeline — all others continue running.
@@ -603,11 +652,28 @@ impl Coordinator {
                         ).unwrap_or_else(|_| "{}".to_string()),
                         "secret resolution failed — pipeline disabled"
                     );
-                    if let Err(re) = self.release_lock(&pipeline.name).await {
-                        tracing::warn!(error = %re, "failed to release lock after secret error");
-                    }
                     continue;
                 }
+            };
+
+            let Some((ownership_db, ownership_lost_rx)) =
+                (match self.try_acquire_ownership(db_url, &pipeline).await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        tracing::warn!(
+                            pipeline = %pipeline.name,
+                            %error,
+                            "advisory ownership acquisition failed"
+                        );
+                        continue;
+                    }
+                })
+            else {
+                tracing::debug!(
+                    pipeline = %pipeline.name,
+                    "advisory lock held by another relay — skipping"
+                );
+                continue;
             };
 
             tracing::info!(
@@ -629,9 +695,11 @@ impl Coordinator {
             // v0.15.0: Store JoinHandle for panic detection.
             let handle = tokio::spawn(run_pipeline_worker(
                 resolved_pipeline,
-                db_url.to_string(),
+                ownership_db,
+                ownership_lost_rx,
                 self.relay_group_id.clone(),
                 Arc::clone(&self.metrics),
+                Arc::clone(&self.health),
                 batch_size,
                 stop_rx,
             ));
@@ -651,22 +719,44 @@ impl Coordinator {
 
         // v0.19.0: Update shared HealthState so /healthz reflects live pipeline state.
         let mut h = self.health.write().await;
-        h.healthy_pipelines = self.owned.keys().cloned().collect();
-        // Pipelines are unhealthy once their metric is 0 — for coordinator
-        // purposes we only track ownership; worker errors are reflected by the
-        // pipeline_healthy gauge and visible via the metrics endpoint.
-        h.unhealthy_pipelines.clear();
+        h.unhealthy_pipelines
+            .retain(|pipeline| self.owned.contains_key(pipeline));
+        h.healthy_pipelines = self
+            .owned
+            .keys()
+            .filter(|pipeline| !h.unhealthy_pipelines.contains(*pipeline))
+            .cloned()
+            .collect();
     }
 }
 
 // ── Pipeline worker ───────────────────────────────────────────────────────
 
+async fn mark_pipeline_health(
+    health: &Arc<RwLock<HealthState>>,
+    pipeline: &str,
+    _tenant: &str,
+    healthy: bool,
+) {
+    let mut state = health.write().await;
+    state.healthy_pipelines.retain(|name| name != pipeline);
+    state.unhealthy_pipelines.retain(|name| name != pipeline);
+    if healthy {
+        state.healthy_pipelines.push(pipeline.to_string());
+    } else {
+        state.unhealthy_pipelines.push(pipeline.to_string());
+    }
+}
+
 /// Top-level worker task: wraps `worker_inner` and logs the outcome.
+#[allow(clippy::too_many_arguments)]
 async fn run_pipeline_worker(
     pipeline: PipelineConfig,
-    db_url: String,
+    db: Arc<Client>,
+    mut ownership_lost_rx: watch::Receiver<bool>,
     relay_group_id: String,
     metrics: Arc<RelayMetrics>,
+    health: Arc<RwLock<HealthState>>,
     batch_size: i64,
     mut stop_rx: watch::Receiver<bool>,
 ) {
@@ -678,17 +768,40 @@ async fn run_pipeline_worker(
         .pipeline_healthy
         .with_label_values(&[&name, &tenant_label])
         .set(1);
+    mark_pipeline_health(&health, &name, &tenant_label, true).await;
 
-    match worker_inner(
+    let worker = worker_inner(
         pipeline,
-        db_url,
-        relay_group_id,
+        db,
+        relay_group_id.clone(),
         metrics.clone(),
+        health.clone(),
         batch_size,
         &mut stop_rx,
-    )
-    .await
-    {
+    );
+    tokio::pin!(worker);
+
+    let outcome = tokio::select! {
+        result = &mut worker => result,
+        changed = ownership_lost_rx.changed() => {
+            if changed.is_ok() && *ownership_lost_rx.borrow() {
+                metrics
+                    .ownership_events
+                    .with_label_values(&[&relay_group_id, "lost"])
+                    .inc();
+                mark_pipeline_health(&health, &name, &tenant_label, false).await;
+                tracing::error!(
+                    pipeline = %name,
+                    "ownership session lost — cancelling worker"
+                );
+                Err(RelayError::other("ownership session lost"))
+            } else {
+                Err(RelayError::other("ownership session monitor stopped"))
+            }
+        }
+    };
+
+    match outcome {
         Ok(()) => {
             tracing::info!(pipeline = %name, "worker stopped");
             // Mark as 0 on clean stop.
@@ -696,6 +809,7 @@ async fn run_pipeline_worker(
                 .pipeline_healthy
                 .with_label_values(&[&name, &tenant_label])
                 .set(0);
+            mark_pipeline_health(&health, &name, &tenant_label, false).await;
         }
         Err(e) => {
             tracing::error!(pipeline = %name, error = %e, "worker exited with error");
@@ -704,6 +818,7 @@ async fn run_pipeline_worker(
                 .pipeline_healthy
                 .with_label_values(&[&name, &tenant_label])
                 .set(0);
+            mark_pipeline_health(&health, &name, &tenant_label, false).await;
             // v0.16.0: Record pipeline error by class.
             let error_class = if e.is_transient() {
                 "transient"
@@ -721,22 +836,13 @@ async fn run_pipeline_worker(
 /// Inner worker: open a DB connection, build source + sink, run poll loop.
 async fn worker_inner(
     pipeline: PipelineConfig,
-    db_url: String,
+    db: Arc<Client>,
     relay_group_id: String,
     metrics: Arc<RelayMetrics>,
+    health: Arc<RwLock<HealthState>>,
     default_batch_size: i64,
     stop_rx: &mut watch::Receiver<bool>,
 ) -> Result<(), RelayError> {
-    // Each worker owns its own DB connection so pipelines are isolated.
-    // v0.15.0: Use pg_tls::connect to honour sslmode from the URL.
-    let (db_client, db_conn) = crate::pg_tls::connect(&db_url).await?;
-    let db = Arc::new(db_client);
-    tokio::spawn(async move {
-        if let Err(e) = db_conn.await {
-            tracing::error!("worker DB connection closed with error: {e}");
-        }
-    });
-
     // v0.28.0: Per-tenant DB role — issue SET ROLE when configured.
     // This enforces tenant isolation at the PostgreSQL connection level.
     if let Some(db_role) = pipeline.opt_str(&["db_role"]) {
@@ -824,6 +930,9 @@ async fn worker_inner(
     }
 
     let mut source = build_source(&pipeline, Arc::clone(&db), &relay_group_id).await?;
+    if let Some(from_offset) = replay_from {
+        source.configure_replay(from_offset)?;
+    }
     let mut sink = build_sink(&pipeline, Arc::clone(&db)).await?;
 
     let direction_label = match pipeline.direction {
@@ -854,10 +963,11 @@ async fn worker_inner(
 
     loop {
         if *stop_rx.borrow() {
+            crate::failpoints::hit("during_shutdown", &pipeline.name).await?;
             break;
         }
 
-        let batch = {
+        let (batch, checkpoint) = {
             // v0.24.0: Use poll_and_decode() helper for clean separation of
             // poll, replay-filter, and error-classification logic.
             match poll_and_decode(
@@ -871,10 +981,13 @@ async fn worker_inner(
             )
             .await
             {
-                PollOutcome::Batch(msgs) => {
+                PollOutcome::Batch {
+                    messages: msgs,
+                    checkpoint,
+                } => {
                     // v0.15.0: Reset backoff on successful poll.
                     poll_backoff_ms = poll_interval_ms;
-                    msgs
+                    (msgs, checkpoint)
                 }
                 PollOutcome::Empty => {
                     // Reset backoff when idle (no messages).
@@ -940,6 +1053,7 @@ async fn worker_inner(
                 }
             }
         };
+        crate::failpoints::hit("after_poll", &pipeline.name).await?;
 
         // v0.13.0: Increment consumed counter after successful poll.
         metrics
@@ -963,13 +1077,21 @@ async fn worker_inner(
                 Ok(b) => b,
                 Err(e) => {
                     tracing::warn!(pipeline = %pipeline.name, error = %e, "transform error");
-                    continue;
+                    return Err(e);
                 }
             }
         };
 
         if batch.is_empty() {
             // All messages filtered out — acknowledge the source and continue.
+            commit_checkpoint(
+                &mut source,
+                checkpoint.as_deref(),
+                &metrics,
+                &pipeline.name,
+                "intentionally_filtered",
+            )
+            .await?;
             continue;
         }
 
@@ -978,6 +1100,14 @@ async fn worker_inner(
         // v0.27.0: Extracted into apply_schema_evolution_check() for independent
         // testability and fuzz coverage.
         if apply_schema_evolution_check(&batch, &mut schema_guard, &pipeline.name).await {
+            commit_checkpoint(
+                &mut source,
+                checkpoint.as_deref(),
+                &metrics,
+                &pipeline.name,
+                "intentionally_filtered",
+            )
+            .await?;
             continue;
         }
 
@@ -993,6 +1123,7 @@ async fn worker_inner(
             let _enter = span.enter();
             apply_routing(&routing_config, &mut batch);
         }
+        crate::failpoints::hit("after_prepare", &pipeline.name).await?;
 
         // v0.7.0: Dry-run mode — log what would be published, skip actual publish.
         if dry_run {
@@ -1007,9 +1138,14 @@ async fn worker_inner(
                     "[dry-run] would publish message"
                 );
             }
-            if let Some(last) = batch.last() {
-                let _ = source.acknowledge(last).await;
-            }
+            commit_checkpoint(
+                &mut source,
+                checkpoint.as_deref(),
+                &metrics,
+                &pipeline.name,
+                "dry_run_observed",
+            )
+            .await?;
             metrics
                 .messages_published
                 .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
@@ -1039,6 +1175,9 @@ async fn worker_inner(
         let publish_outcome = publish_with_circuit_breaker(&mut sink, &batch, &mut circuit_breaker)
             .instrument(publish_span)
             .await;
+        if matches!(&publish_outcome, PublishOutcome::Success) {
+            crate::failpoints::hit("after_network_publish", &pipeline.name).await?;
+        }
         let publish_duration = publish_start.elapsed().as_secs_f64();
         metrics
             .sink_publish_duration_seconds
@@ -1061,38 +1200,19 @@ async fn worker_inner(
                 // visible — mark the pipeline unhealthy, skip the success-shaped
                 // delivery receipt, and retry the batch. At-least-once means the
                 // sink may see a duplicate on retry; silent loss is forbidden.
-                if let Some(last) = batch.last() {
-                    // v0.13.0: OTel span around acknowledge.
-                    let ack_span = tracing::info_span!(
-                        "relay.source.acknowledge",
-                        pipeline = %pipeline.name,
-                    );
-                    if let Err(e) = source.acknowledge(last).instrument(ack_span).await {
-                        tracing::error!(
-                            pipeline = %pipeline.name,
-                            relay_group = %relay_group_id,
-                            outbox = %receipt_outbox_name,
-                            attempted_offset = last.outbox_id.unwrap_or(0),
-                            error = %e,
-                            "offset commit failed after sink publish — pipeline unhealthy, \
-                             will retry batch (at-least-once)"
-                        );
-                        metrics
-                            .pipeline_healthy
-                            .with_label_values(&[&pipeline.name, &tenant_label])
-                            .set(0);
-                        metrics
-                            .publish_errors
-                            .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
-                            .inc();
-                        consecutive_failures += 1;
-                        tokio::select! {
-                            _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
-                            _ = stop_rx.changed() => { break; }
-                        }
-                        continue;
-                    }
-                }
+                metrics
+                    .delivery_stage_total
+                    .with_label_values(&[&pipeline.name, "sink_acknowledged", "success"])
+                    .inc();
+                crate::failpoints::hit("after_sink_ack", &pipeline.name).await?;
+                commit_checkpoint(
+                    &mut source,
+                    checkpoint.as_deref(),
+                    &metrics,
+                    &pipeline.name,
+                    "sink_acknowledged",
+                )
+                .await?;
 
                 // v0.13.0: Observe end-to-end delivery latency.
                 let latency_secs = poll_instant.elapsed().as_secs_f64();
@@ -1106,6 +1226,7 @@ async fn worker_inner(
                     .pipeline_healthy
                     .with_label_values(&[&pipeline.name, &tenant_label])
                     .set(1);
+                mark_pipeline_health(&health, &pipeline.name, &tenant_label, true).await;
 
                 metrics
                     .messages_published
@@ -1138,6 +1259,7 @@ async fn worker_inner(
                         .pipeline_healthy
                         .with_label_values(&[&pipeline.name, &tenant_label])
                         .set(0);
+                    mark_pipeline_health(&health, &pipeline.name, &tenant_label, false).await;
                     metrics
                         .publish_errors
                         .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
@@ -1172,6 +1294,7 @@ async fn worker_inner(
                         .pipeline_healthy
                         .with_label_values(&[&pipeline.name, &tenant_label])
                         .set(0);
+                    mark_pipeline_health(&health, &pipeline.name, &tenant_label, false).await;
                     metrics
                         .publish_errors
                         .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
@@ -1203,6 +1326,7 @@ async fn worker_inner(
                     reason = dlq_reason_label,
                 );
                 let _enter = dlq_span.enter();
+                crate::failpoints::hit("during_dlq_write", &pipeline.name).await?;
                 match route_to_dlq(
                     &db,
                     &entries,
@@ -1214,9 +1338,19 @@ async fn worker_inner(
                 .await
                 {
                     DlqOutcome::Written => {
-                        if let Some(last) = batch.last() {
-                            let _ = source.acknowledge(last).await;
-                        }
+                        metrics
+                            .delivery_stage_total
+                            .with_label_values(&[&pipeline.name, "dlq_persisted", "success"])
+                            .inc();
+                        crate::failpoints::hit("after_dlq_commit", &pipeline.name).await?;
+                        commit_checkpoint(
+                            &mut source,
+                            checkpoint.as_deref(),
+                            &metrics,
+                            &pipeline.name,
+                            "dlq_persisted",
+                        )
+                        .await?;
                         consecutive_failures = 0;
                     }
                     DlqOutcome::TransientError => {
@@ -1397,11 +1531,60 @@ async fn write_delivery_receipts(
 
 // ── v0.24.0 worker decomposition helpers ─────────────────────────────────
 
+async fn commit_checkpoint(
+    source: &mut Box<dyn crate::source::Source>,
+    checkpoint: Option<&crate::envelope::RelayMessage>,
+    metrics: &Arc<RelayMetrics>,
+    pipeline_name: &str,
+    terminal_stage: &str,
+) -> Result<(), RelayError> {
+    let Some(checkpoint) = checkpoint else {
+        return Ok(());
+    };
+
+    let source_name = source.name().to_string();
+    let ack_span = tracing::info_span!(
+        "relay.source.acknowledge",
+        pipeline = %pipeline_name,
+        source = %source_name,
+    );
+    match source.acknowledge(checkpoint).instrument(ack_span).await {
+        Ok(()) => {
+            metrics
+                .delivery_stage_total
+                .with_label_values(&[pipeline_name, "checkpoint_committed", "success"])
+                .inc();
+            crate::failpoints::hit("after_checkpoint_commit", pipeline_name).await?;
+            Ok(())
+        }
+        Err(error) => {
+            metrics
+                .checkpoint_commit_errors
+                .with_label_values(&[pipeline_name, &source_name])
+                .inc();
+            metrics
+                .delivery_stage_total
+                .with_label_values(&[pipeline_name, terminal_stage, "checkpoint_error"])
+                .inc();
+            tracing::error!(
+                pipeline = %pipeline_name,
+                source = %source_name,
+                error = %error,
+                "source checkpoint commit failed after terminal disposition"
+            );
+            Err(error)
+        }
+    }
+}
+
 /// Outcome of a `poll_and_decode` call.
 #[derive(Debug)]
 enum PollOutcome {
     /// A non-empty batch of decoded messages ready to process.
-    Batch(Vec<crate::envelope::RelayMessage>),
+    Batch {
+        messages: Vec<crate::envelope::RelayMessage>,
+        checkpoint: Option<Box<crate::envelope::RelayMessage>>,
+    },
     /// The source returned an empty batch; caller should sleep and retry.
     Empty,
     /// A transient error occurred; caller should back off and retry.
@@ -1445,6 +1628,8 @@ async fn poll_and_decode(
         return PollOutcome::Empty;
     }
 
+    let checkpoint = msgs.last().cloned().map(Box::new);
+
     // Apply replay range filter when in replay mode.
     let msgs = if is_replay {
         let filtered = filter_replay_batch(msgs, replay_from, replay_to);
@@ -1456,7 +1641,10 @@ async fn poll_and_decode(
         msgs
     };
 
-    PollOutcome::Batch(msgs)
+    PollOutcome::Batch {
+        messages: msgs,
+        checkpoint,
+    }
 }
 
 /// Outcome of a `publish_with_circuit_breaker` call.

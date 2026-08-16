@@ -45,7 +45,10 @@ SELECT tide.relay_set_inbox_v2(
 
 ## Offset Management
 
-The relay commits Kafka consumer offsets only after messages are successfully written to the inbox. This ensures no messages are lost even if the relay crashes. On restart, Kafka redelivers any uncommitted messages, and the inbox's deduplication prevents duplicates.
+The relay commits Kafka consumer offsets only after messages are successfully
+written to the inbox. A crash before that commit leaves messages eligible for
+redelivery; the inbox's durable deduplication makes the retry safe at the
+database boundary. Kafka retention still bounds recovery.
 
 ## Wire Format Integration
 

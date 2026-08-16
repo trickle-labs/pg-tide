@@ -71,8 +71,10 @@ The `pg-tide` binary is a standalone Rust process that:
 2. **Acquires advisory locks** for each pipeline (enabling multi-relay HA deployments)
 3. **Polls outbox tables** for new messages (forward mode)
 4. **Subscribes to external sources** for incoming messages (reverse mode)
-5. **Delivers messages** to configured sinks with retry and dedup
-6. **Commits offsets** after successful delivery (exactly-once semantics)
+5. **Delivers messages** to configured sinks with retry and stable identities
+6. **Commits offsets** after durable sink acknowledgment (at-least-once
+   transport; destination deduplication can provide an effectively
+   exactly-once outcome)
 7. **Exposes Prometheus metrics** and a health endpoint
 
 The relay supports hot-reload via `LISTEN tide_relay_config` — when you update pipeline config in the database, the relay picks up changes without restart.

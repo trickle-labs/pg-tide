@@ -7,12 +7,16 @@
 
 pg_tide gives your PostgreSQL database a built-in messaging backbone. Publish events atomically within your existing transactions — no dual-writes, no distributed transactions, no message broker required at the database layer.
 
-When you're ready to fan out to Kafka, NATS, Redis Streams, or any analytics platform, the `pg-tide` relay binary bridges the gap: at-least-once delivery with deduplication, hot-reload pipeline config, and HA failover — all configured with plain SQL.
+When you're ready to fan out to Kafka, NATS, Redis Streams, or any analytics
+platform, the `pg-tide` relay binary bridges the gap: at-least-once transport,
+stable event identities, hot-reload pipeline config, and HA failover — all
+configured with plain SQL.
 
 ## Features
 
 - **Transactional Outbox** — publish messages inside any transaction; no 2PC, no dual-writes
-- **Idempotent Inbox** — deduplication via unique event IDs; exactly-once delivery semantics at the application layer
+- **Idempotent Inbox** — durable deduplication via unique event IDs; an
+  effectively exactly-once outcome when application processing is transactional
 - **Consumer Groups** — Kafka-style offset tracking with heartbeats and visibility leases
 - **Relay Binary** — standalone `pg-tide` process; config lives in PostgreSQL and hot-reloads without restart
 - **Auditable connector surface** — maturity, ownership, build profiles, and evidence are generated from `connectors.toml`

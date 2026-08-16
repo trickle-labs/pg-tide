@@ -47,7 +47,7 @@ SELECT tide.relay_set_outbox_v2(jsonb_build_object(
         'data_path',          's3://pg-tide-lake/order-events/',
         'namespace',          'pgtide',
         'table_template',     'order_events',
-        'atomic_lake_writes', true,    -- exactly-once delivery
+        'atomic_lake_writes', true,    -- durable lake-side write boundary
         'partition',          'daily'
     )
 ));

@@ -14,11 +14,11 @@ These sinks deliver messages to traditional message brokers and streaming platfo
 
 | Sink | Best For | Ordering | Delivery Guarantee |
 |------|----------|----------|-------------------|
-| [Apache Kafka](kafka.md) | High-throughput streaming, event sourcing, CDC pipelines | Per-partition | At-least-once (exactly-once with idempotent producer) |
-| [NATS JetStream](nats.md) | Low-latency pub/sub, microservice communication | Per-subject | At-least-once (exactly-once with dedup) |
+| [Apache Kafka](kafka.md) | High-throughput streaming, event sourcing, CDC pipelines | Per-partition | At-least-once; broker deduplication is connector/configuration dependent |
+| [NATS JetStream](nats.md) | Low-latency pub/sub, microservice communication | Per-subject | At-least-once; bounded stream deduplication when configured |
 | [RabbitMQ](rabbitmq.md) | Complex routing, work queues, legacy integration | Per-queue | At-least-once (with publisher confirms) |
 | [Redis Streams](redis.md) | Lightweight streaming, real-time dashboards | Per-stream | At-least-once |
-| [Amazon SQS](sqs.md) | AWS-native queuing, serverless triggers | FIFO optional | At-least-once (exactly-once with FIFO) |
+| [Amazon SQS](sqs.md) | AWS-native queuing, serverless triggers | FIFO optional | At-least-once; FIFO deduplication is bounded |
 | [Amazon Kinesis](kinesis.md) | Real-time analytics on AWS, high-volume ingestion | Per-shard | At-least-once |
 | [Google Cloud Pub/Sub](pubsub.md) | GCP-native messaging, global distribution | Per-ordering-key | At-least-once |
 | [Azure Service Bus](servicebus.md) | Enterprise messaging on Azure, sessions, transactions | Per-session | At-least-once |
@@ -109,9 +109,15 @@ The relay resolves `${env:VAR_NAME}` tokens from environment variables and `${fi
 
 ## Delivery Guarantees
 
-All sinks provide **at-least-once delivery** by default. The relay acknowledges messages in the outbox only after the sink confirms receipt. If the relay crashes between delivering a message and acknowledging it, the message will be delivered again on restart.
+All sinks provide **at-least-once transport** by default. The relay advances
+the source checkpoint only after the sink confirms receipt. If it crashes
+between delivery and checkpoint commit, the message can be delivered again with
+the same stable identity.
 
-For sinks that support it, you can achieve **exactly-once semantics** by combining pg_tide's outbox deduplication key with the sink's native deduplication mechanism. Each sink page documents whether exactly-once is possible and how to configure it.
+For sinks that support it, combining pg_tide's stable deduplication key with
+durable sink deduplication can produce an **effectively exactly-once outcome**.
+Each sink page documents the acknowledgment boundary and any deduplication
+window.
 
 ## Error Handling
 

@@ -93,20 +93,23 @@ This page documents the key architectural decisions made in pg_tide's design, th
 
 ## ADR-6: At-Least-Once Delivery
 
-**Decision:** pg_tide provides at-least-once delivery semantics by default, not exactly-once.
+**Decision:** pg_tide provides at-least-once relay transport by default, not
+unqualified cross-system exactly-once delivery.
 
 **Context:** Distributed systems cannot provide exactly-once delivery without end-to-end coordination.
 
 **Rationale:**
 - At-least-once is achievable without two-phase commit
 - Simpler implementation, more reliable operation
-- The inbox provides application-level deduplication for exactly-once processing
+- The inbox provides destination-side deduplication for effectively exactly-once
+  processing when application work is transactional and idempotent
 - Most sinks (Kafka, NATS) inherently provide at-least-once anyway
 - Idempotent consumers are a well-understood pattern
 
 **Trade-offs:**
 - Consumers may receive duplicate messages (rare, only on failure/recovery)
-- Applications that need exactly-once must implement deduplication
+- Applications that need an effectively exactly-once outcome must implement
+  durable deduplication and idempotent processing
 - The inbox pattern adds complexity for cross-system exactly-once
 
 ## ADR-7: Canonical Outbox Storage and Native Relay Polling
@@ -127,6 +130,21 @@ This page documents the key architectural decisions made in pg_tide's design, th
 - `consumed_at` and consumer groups remain but are non-authoritative for native delivery
 
 See [ADR-011](https://github.com/trickle-labs/pg-tide/blob/main/docs/adr/adr-011-canonical-outbox-storage-and-relay-polling.md) for the full record.
+
+## ADR-012: Relay Delivery Acknowledgment and Offset State Machine
+
+**Decision:** Advance a source checkpoint only after a complete polled batch
+reaches a durable terminal disposition: connector acknowledgment, atomic DLQ
+storage, intentional filtering, or consuming dry-run observation.
+
+The relay is **at-least-once transport**. Downstream success before checkpoint
+commit can duplicate with the same stable event identity, but cannot silently
+lose the event. **Effectively exactly once** requires durable destination
+deduplication and idempotent/transactional application processing.
+
+See [ADR-012](https://github.com/trickle-labs/pg-tide/blob/main/docs/adr/adr-012-relay-delivery-acknowledgment-and-offset-state-machine.md)
+for the transition matrix, connector boundaries, ownership-session lifecycle,
+and observability contract.
 
 ## Further Reading
 

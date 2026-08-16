@@ -9,8 +9,9 @@ for retry, and monitor progress.
 ## What the DLQ Is
 
 When a message cannot be delivered after exhausting retries (permanent error
-or circuit breaker open), pg-tide writes it to `tide.relay_dlq`.  This
-preserves the message for operator review rather than silently dropping it.
+or circuit breaker open), pg-tide writes it to `tide.relay_dlq`. DLQ insertion
+is atomic for the complete failed batch: the source checkpoint advances only
+after every row is durable or already present under its idempotency key.
 
 ```sql
 -- Count DLQ entries per pipeline:
@@ -62,6 +63,10 @@ pg-tide doctor --postgres-url "$PG_TIDE_POSTGRES_URL"
 
 ## Step 3 — Requeue Messages for Retry
 
+Requeue is an explicit operator action. It does not implicitly rewind a live
+relay offset. For a bounded replay, use the one-shot replay command with an
+explicit range and monitor its completion.
+
 ### Via SQL
 
 ```sql
@@ -103,6 +108,12 @@ Key metrics:
 | `pg_tide_relay_dlq_entries_written_total` | Cumulative DLQ writes — should stop growing after root cause is fixed |
 | `pg_tide_relay_messages_published_total` | Should increase as requeued messages are delivered |
 | `pg_tide_relay_consumer_lag` | Should decrease as the pipeline catches up |
+| `pg_tide_relay_delivery_stage_total{stage="dlq_persisted"}` | Confirms durable DLQ terminal dispositions |
+| `pg_tide_relay_delivery_stage_total{stage="dlq_failed"}` | Alerts on retained source checkpoints |
+
+If DLQ persistence succeeds but source checkpointing fails, leave the DLQ rows
+in place and allow the relay to retry. The idempotency key makes the retry
+safe; do not manually advance the offset.
 
 ---
 

@@ -18,6 +18,7 @@ PROFILE_START = "# BEGIN GENERATED CONNECTOR PROFILES"
 PROFILE_END = "# END GENERATED CONNECTOR PROFILES"
 README_START = "<!-- BEGIN GENERATED CONNECTORS -->"
 README_END = "<!-- END GENERATED CONNECTORS -->"
+INTERNAL_FEATURES = {"test-failpoints"}
 MATURITY = {"supported", "preview", "experimental"}
 KINDS = {"connector", "diagnostic", "compatibility"}
 EVIDENCE_FIELDS = (
@@ -155,7 +156,7 @@ def profile_lines(rows: list[dict], features: set[str]) -> str:
             if feature and feature not in core:
                 core.append(feature)
     core.sort()
-    all_features = sorted(features - profile_names)
+    all_features = sorted(features - profile_names - INTERNAL_FEATURES)
     return "\n".join(
         [
             'default = ["core"]',

@@ -4,7 +4,10 @@
 
 pg_tide gives your PostgreSQL database a built-in messaging backbone. Publish events within your existing transactions — no dual-writes, no distributed transactions, no message brokers required at the database layer.
 
-When you're ready to fan out to Kafka, NATS, Redis Streams, or any other system, the `pg-tide` relay binary bridges the gap — reading from outboxes, delivering to external sinks, and writing back to inboxes with exactly-once semantics.
+When you're ready to fan out to Kafka, NATS, Redis Streams, or any other system,
+the `pg-tide` relay binary bridges the gap with at-least-once transport and
+stable event identities. A PostgreSQL inbox can provide an effectively
+exactly-once application outcome through durable deduplication.
 
 ---
 
@@ -52,7 +55,7 @@ pg_tide eliminates this entire class of bugs by implementing the **transactional
 | Feature | What it does |
 |---------|-------------|
 | **Transactional Outbox** | Publish messages within a database transaction. No 2PC, no dual-writes, no data loss. |
-| **Idempotent Inbox** | Exactly-once delivery with automatic deduplication via unique constraints. |
+| **Idempotent Inbox** | Durable deduplication via unique constraints; effectively exactly-once processing when application work is transactional. |
 | **Consumer Groups** | Kafka-style offset tracking with heartbeats, visibility leases, and independent progress per consumer. |
 | **Relay Binary** | Standalone `pg-tide` process that bridges outboxes/inboxes with external systems. |
 | **Multi-Backend** | NATS, Kafka, Redis Streams, RabbitMQ, SQS, HTTP Webhooks — all supported. |
@@ -111,7 +114,7 @@ Key terms used throughout this documentation:
 | Term | Meaning |
 |------|---------|
 | **Outbox** | A named message stream stored in PostgreSQL. Messages are published to an outbox within a transaction. |
-| **Inbox** | A named receiving table with deduplication. External messages are written here with exactly-once semantics. |
+| **Inbox** | A named receiving table with durable deduplication. External messages are written here with at-least-once transport and can be processed transactionally. |
 | **Relay** | The `pg-tide` binary that bridges outboxes/inboxes with external systems. |
 | **Pipeline** | A configured connection between an outbox and a sink (forward) or a source and an inbox (reverse). |
 | **Consumer Group** | A named entity that tracks reading progress through an outbox independently. |

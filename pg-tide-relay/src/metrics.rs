@@ -31,6 +31,10 @@ pub const METRIC_RECEIPTS_WRITTEN: &str = "pg_tide_relay_receipts_written_total"
 pub const METRIC_FANIN_SOURCE_LAG: &str = "pg_tide_relay_fanin_source_lag";
 /// v0.29.0: Fan-in merged messages counter.
 pub const METRIC_FANIN_MESSAGES_MERGED: &str = "pg_tide_relay_fanin_messages_merged_total";
+pub const METRIC_DELIVERY_STAGE: &str = "pg_tide_relay_delivery_stage_total";
+pub const METRIC_CHECKPOINT_ERRORS: &str = "pg_tide_relay_checkpoint_commit_errors_total";
+pub const METRIC_OWNERSHIP_EVENTS: &str = "pg_tide_relay_ownership_events_total";
+pub const METRIC_FORCED_SHUTDOWN: &str = "pg_tide_relay_forced_shutdown_total";
 
 /// Shared relay metrics.
 pub struct RelayMetrics {
@@ -65,6 +69,14 @@ pub struct RelayMetrics {
     pub fanin_source_lag: IntGaugeVec,
     /// v0.29.0: Fan-in merged messages counter (pipeline × outbox).
     pub fanin_messages_merged: IntCounterVec,
+    /// v0.42.0: Fixed-cardinality delivery transition counter.
+    pub delivery_stage_total: IntCounterVec,
+    /// v0.42.0: Source checkpoint commit failures.
+    pub checkpoint_commit_errors: IntCounterVec,
+    /// v0.42.0: Ownership lifecycle transitions.
+    pub ownership_events: IntCounterVec,
+    /// v0.42.0: Forced shutdowns with in-flight work.
+    pub forced_shutdown: IntCounterVec,
     registry: Registry,
 }
 
@@ -247,6 +259,36 @@ impl RelayMetrics {
         )?;
         registry.register(Box::new(fanin_messages_merged.clone()))?;
 
+        let delivery_stage_total = IntCounterVec::new(
+            prometheus::opts!(METRIC_DELIVERY_STAGE, "Delivery state-machine transitions"),
+            &["pipeline", "stage", "outcome"],
+        )?;
+        registry.register(Box::new(delivery_stage_total.clone()))?;
+
+        let checkpoint_commit_errors = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_CHECKPOINT_ERRORS,
+                "Source checkpoint commit failures"
+            ),
+            &["pipeline", "source"],
+        )?;
+        registry.register(Box::new(checkpoint_commit_errors.clone()))?;
+
+        let ownership_events = IntCounterVec::new(
+            prometheus::opts!(METRIC_OWNERSHIP_EVENTS, "Pipeline ownership transitions"),
+            &["relay_group", "event"],
+        )?;
+        registry.register(Box::new(ownership_events.clone()))?;
+
+        let forced_shutdown = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_FORCED_SHUTDOWN,
+                "Workers aborted with in-flight work during shutdown"
+            ),
+            &["pipeline"],
+        )?;
+        registry.register(Box::new(forced_shutdown.clone()))?;
+
         Ok(Arc::new(Self {
             messages_published,
             messages_consumed,
@@ -266,6 +308,10 @@ impl RelayMetrics {
             receipts_written,
             fanin_source_lag,
             fanin_messages_merged,
+            delivery_stage_total,
+            checkpoint_commit_errors,
+            ownership_events,
+            forced_shutdown,
             registry,
         }))
     }

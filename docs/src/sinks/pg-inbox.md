@@ -4,7 +4,9 @@ The PostgreSQL Inbox sink delivers outbox messages from one pg_tide instance to 
 
 ## When to Use This Sink
 
-Choose the PostgreSQL Inbox sink when you need direct database-to-database messaging, when you want to avoid the operational overhead of an external message broker for internal service communication, or when both the sender and receiver are PostgreSQL-based services with pg_tide. This is the simplest possible reverse pipeline — messages flow from outbox in Database A to inbox in Database B with exactly-once deduplication.
+Choose the PostgreSQL Inbox sink when you need direct database-to-database
+messaging. Messages flow from outbox in Database A to inbox in Database B with
+at-least-once transport and durable `event_id` deduplication.
 
 ## Configuration
 
@@ -34,7 +36,11 @@ SELECT tide.relay_set_outbox_v2(
 
 ## Delivery Guarantees
 
-The inbox sink provides **exactly-once delivery** through the inbox's built-in deduplication. Each message's `dedup_key` is used as the inbox message identifier — if the same message is delivered twice (due to relay restart), the inbox's UNIQUE constraint on the dedup_key silently rejects the duplicate.
+The inbox sink provides durable destination deduplication. Each message's
+`dedup_key` is used as the inbox identifier; if the same message is delivered
+twice after a relay restart, the inbox's UNIQUE constraint rejects the
+duplicate. Transactional application processing can therefore be effectively
+exactly once.
 
 ## Troubleshooting
 

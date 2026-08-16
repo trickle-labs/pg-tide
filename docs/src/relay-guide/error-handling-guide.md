@@ -1,12 +1,18 @@
 # Error Handling
 
-The pg-tide relay is designed to be resilient in the face of failures. This page covers how errors are categorized and handled at each stage of the pipeline, the retry strategy, graceful shutdown behavior, dead-letter queue management, and a complete reference of all error codes.
+The pg-tide relay is designed to be resilient in the face of failures. It
+retries uncommitted batches and never treats an uncertain checkpoint as
+success. The transport guarantee is at-least-once; downstream durable
+deduplication is required for an effectively exactly-once outcome.
 
 ---
 
 ## Error Philosophy
 
-pg_tide's error handling follows a simple principle: **transient errors are retried, permanent errors are logged and skipped.** The relay never silently drops messages — every error is logged, counted in Prometheus metrics, and (for inbox-side failures) tracked in the dead-letter queue.
+pg_tide's error handling follows a simple principle: **transient errors are
+retried, and permanent errors receive an explicit terminal disposition.**
+Decode, transform, sink, checkpoint, and DLQ failures retain the source
+checkpoint unless the documented DLQ path succeeds atomically.
 
 The relay distinguishes between:
 
@@ -24,7 +30,7 @@ All transient errors trigger exponential backoff retry with jitter:
 | **Initial delay** | 100ms | Start retrying quickly for brief hiccups |
 | **Maximum delay** | 30 seconds | Cap the backoff to avoid minute-long waits |
 | **Jitter** | ±20% | Prevent thundering herd when multiple relays reconnect simultaneously |
-| **Maximum retries** | Unlimited | The relay retries forever for transient errors — messages are never lost |
+| **Maximum retries** | Unlimited | The relay retries while the source retains the uncommitted batch |
 | **Backoff multiplier** | 2× | Each retry doubles the delay (100ms → 200ms → 400ms → ...) |
 
 The backoff sequence looks like: 100ms, 200ms, 400ms, 800ms, 1.6s, 3.2s, 6.4s, 12.8s, 25.6s, 30s, 30s, 30s...
@@ -45,7 +51,8 @@ Jitter randomizes each delay by ±20%, so the actual sequence might be: 85ms, 22
 3. All pipelines are paused (they can't function without the database)
 4. On reconnect, advisory locks are re-acquired
 5. Pipeline processing resumes from the last committed offset
-6. No messages are lost — they remain pending in the outbox
+6. The source checkpoint remains uncommitted; retry may duplicate a previously
+   acknowledged downstream publish
 
 **Common causes:**
 - PostgreSQL is restarting or failing over
@@ -60,7 +67,7 @@ Jitter randomizes each delay by ±20%, so the actual sequence might be: 85ms, 22
 **Symptoms:** Relay logs `"sink publish error"` or `"sink unhealthy"`, Prometheus counter `pg_tide_relay_publish_errors_total` increases.
 
 **What happens:**
-1. Messages remain pending in the outbox (they are never lost)
+1. The source checkpoint remains pending; a prior sink success may be retried
 2. The relay retries delivery with exponential backoff until the sink recovers
 3. Prometheus metrics track `pg_tide_relay_publish_errors_total{pipeline="..."}`
 4. The health endpoint reports unhealthy (`503`) for affected pipelines
@@ -94,8 +101,8 @@ Jitter randomizes each delay by ±20%, so the actual sequence might be: 85ms, 22
 
 **What happens:**
 1. The error is logged with full context (outbox name, message ID, raw payload excerpt)
-2. The message is **skipped** — it will never succeed regardless of retries
-3. The offset advances past the bad message
+2. The pipeline pauses or routes the complete failed batch to the atomic DLQ
+3. The offset advances only after that terminal disposition is durable
 4. Prometheus tracks the error count
 
 **Common causes:**
@@ -130,7 +137,7 @@ When the relay receives `SIGTERM` or `SIGINT`:
 1. **Stop accepting new work** — no new batches are fetched from the outbox
 2. **Drain in-flight messages** — wait for currently-delivering batches to complete (up to a drain timeout)
 3. **Commit final offsets** — record the last successfully delivered position
-4. **Release advisory locks** — allow other relay instances to take over immediately
+4. **Release the worker's ownership session** — only after the worker exits
 5. **Close connections** — cleanly disconnect from PostgreSQL and sinks
 6. **Exit with code 0** — signal success to the process manager
 

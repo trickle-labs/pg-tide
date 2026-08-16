@@ -25,7 +25,10 @@ When the relay processes a batch of outbox messages destined for Kafka, it perfo
 3. **Encode** — Messages are serialized according to the configured wire format (native JSON, Debezium, or Avro via Schema Registry).
 4. **Route** — The relay determines the target Kafka topic for each message using the configured topic template (static or dynamic based on message content).
 5. **Produce** — Messages are sent to Kafka using the configured producer settings (compression, batching, acknowledgment level).
-6. **Acknowledge** — Once Kafka confirms receipt (based on the `acks` setting), the relay commits the consumer group offset in PostgreSQL, marking those messages as delivered.
+6. **Acknowledge** — Once Kafka confirms receipt (based on the `acks` setting),
+   the relay commits the source checkpoint. This is at-least-once transport;
+   Kafka producer idempotence does not make downstream consumer processing
+   exactly once.
 
 If any step fails, the relay retries with exponential backoff. If retries are exhausted, failed messages are routed to the dead-letter queue.
 
@@ -220,13 +223,17 @@ See the [Debezium Wire Format](../wire-formats/debezium.md) page for details on 
 
 ## Delivery Guarantees
 
-The Kafka sink provides **at-least-once delivery** by default. With the `idempotent` producer enabled, it provides **exactly-once semantics** for the produce operation — Kafka's broker-side deduplication ensures that retried produce requests do not create duplicate records.
+The Kafka sink provides **at-least-once transport** by default. With the
+`idempotent` producer enabled, Kafka can deduplicate retried produce requests
+within the producer/broker contract; this does not make downstream processing
+exactly once.
 
 Combined with pg_tide's consumer group offset tracking, this means:
 
 - A message is published to Kafka at least once (at-least-once from outbox to Kafka)
 - With `idempotent: true`, Kafka deduplicates retried produces (effectively exactly-once on the produce side)
-- If the downstream consumer also uses an idempotent inbox, end-to-end exactly-once is achieved
+- If the downstream consumer also uses an idempotent inbox, the application can
+  achieve an effectively exactly-once outcome
 
 ### Acknowledgment Levels
 

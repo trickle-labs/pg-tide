@@ -1,7 +1,8 @@
 # Migrating from Kafka Connect to pg-tide + DuckLake
 
 This tutorial shows how to migrate a Kafka Connect → S3 pipeline to pg-tide +
-DuckLake, simplifying your stack while gaining exactly-once delivery, richer
+DuckLake, simplifying your stack while gaining durable sink deduplication and
+an effectively exactly-once application outcome, richer
 SQL querying, and lower operational overhead.
 
 ## Why Migrate?
@@ -9,9 +10,9 @@ SQL querying, and lower operational overhead.
 | | Kafka Connect | pg-tide + DuckLake |
 |---|---|---|
 | **Events source** | Kafka topic (separate write + read) | PostgreSQL outbox (atomic with business logic) |
-| **Exactly-once** | Complex, requires Kafka transactions | Built-in via `atomic_lake_writes = true` |
+| **Deduplication** | Complex, requires Kafka transactions | Sink-side via `atomic_lake_writes = true` |
 | **Query engine** | Separate (Spark, Trino, Athena) | DuckDB directly (no extra service) |
-| **Delivery guarantee** | At-least-once by default | Exactly-once with pg-tide |
+| **Delivery guarantee** | At-least-once by default | At-least-once transport with sink-side deduplication |
 | **Schema evolution** | Confluent Schema Registry required | Built-in via DuckLake `ducklake_column` |
 | **Operations** | Kafka cluster + Connect workers + Schema Registry | Existing PostgreSQL |
 

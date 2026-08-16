@@ -63,8 +63,9 @@ pod holds PostgreSQL advisory locks on each pipeline. When a failover occurs:
 3. The relay sidecar on the new primary pod starts and acquires the locks.
 4. Message delivery resumes from the last committed consumer offset.
 
-No messages are lost. In-flight messages from the old primary are re-delivered
-because the consumer offset was not yet advanced.
+In-flight messages from the old primary are re-delivered when their source
+checkpoint was not yet advanced. A downstream publish may therefore duplicate
+with the same stable event ID; it does not silently skip the event.
 
 ## Initialisation SQL
 

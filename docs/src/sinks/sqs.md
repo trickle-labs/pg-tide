@@ -2,11 +2,15 @@
 
 Amazon Simple Queue Service (SQS) is a fully managed message queuing service provided by AWS. It requires zero operational overhead — there are no brokers to provision, no clusters to manage, and no capacity to plan. SQS automatically scales from one message per second to thousands, and you pay only for what you use. When you connect pg_tide to SQS, your outbox messages are delivered to SQS queues where they can trigger Lambda functions, feed ECS services, or be consumed by any AWS service or application that polls SQS.
 
-SQS offers two queue types: Standard queues provide nearly unlimited throughput with at-least-once delivery, while FIFO queues guarantee exactly-once processing with strict message ordering. Both work seamlessly with pg_tide.
+SQS offers two queue types: Standard queues provide nearly unlimited throughput
+with at-least-once delivery, while FIFO queues add strict ordering and bounded
+deduplication. Both work with pg_tide's at-least-once transport.
 
 ## When to Use This Sink
 
-Choose SQS when your infrastructure runs on AWS and you want a zero-maintenance message queue. SQS is particularly valuable for triggering Lambda functions (event-driven serverless), decoupling microservices within AWS, and building reliable work queues where messages must not be lost. The FIFO variant is excellent when you need both ordering and exactly-once delivery without managing broker infrastructure.
+Choose SQS when your infrastructure runs on AWS and you want a zero-maintenance
+message queue. The FIFO variant is useful when you need ordering and a bounded
+deduplication window without managing broker infrastructure.
 
 ## Configuration
 
@@ -66,7 +70,8 @@ The relay uses the standard AWS credential chain: environment variables (`AWS_AC
 ## Delivery Guarantees
 
 - **Standard queues:** At-least-once delivery with best-effort ordering. Messages may occasionally be delivered more than once.
-- **FIFO queues:** Exactly-once processing with strict ordering within a message group. Set `deduplication_id` to `{dedup_key}` for automatic deduplication.
+- **FIFO queues:** Bounded broker deduplication with strict ordering within a
+  message group. Set `deduplication_id` to `{dedup_key}`.
 
 ## Complete Example
 

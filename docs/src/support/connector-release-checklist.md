@@ -18,7 +18,7 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 - [x] redaction tests: [config.rs](../../../pg-tide-relay/src/config.rs)
 - [x] metrics evidence: [metrics.rs](../../../pg-tide-relay/src/metrics.rs)
 - [x] runbooks: [runbook-crash-recovery.md](../operations/runbook-crash-recovery.md)
-- [x] upgrade tests: [v040_validation_test.rs](../../../pg-tide-relay/tests/v040_validation_test.rs)
+- [x] upgrade tests: [v042_validation_test.rs](../../../pg-tide-relay/tests/v042_validation_test.rs)
 
 ## pg_trickle outbox compatibility (`pg-trickle-compatibility`)
 
@@ -72,7 +72,7 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 - [x] redaction tests: [config.rs](../../../pg-tide-relay/src/config.rs)
 - [x] metrics evidence: [metrics.rs](../../../pg-tide-relay/src/metrics.rs)
 - [x] runbooks: [runbook-relay-upgrade.md](../operations/runbook-relay-upgrade.md)
-- [x] upgrade tests: [v040_validation_test.rs](../../../pg-tide-relay/tests/v040_validation_test.rs)
+- [x] upgrade tests: [v042_validation_test.rs](../../../pg-tide-relay/tests/v042_validation_test.rs)
 
 ## NATS JetStream (`nats`)
 
@@ -90,7 +90,7 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 - [x] redaction tests: [config.rs](../../../pg-tide-relay/src/config.rs)
 - [x] metrics evidence: [metrics.rs](../../../pg-tide-relay/src/metrics.rs)
 - [x] runbooks: [runbook-crash-recovery.md](../operations/runbook-crash-recovery.md)
-- [x] upgrade tests: [v040_validation_test.rs](../../../pg-tide-relay/tests/v040_validation_test.rs)
+- [x] upgrade tests: [v042_validation_test.rs](../../../pg-tide-relay/tests/v042_validation_test.rs)
 
 ## HTTP webhook (`webhook`)
 

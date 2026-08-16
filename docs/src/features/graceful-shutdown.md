@@ -1,6 +1,9 @@
 # Feature: Graceful Shutdown
 
-When the relay receives a shutdown signal (SIGTERM or SIGINT), it doesn't abruptly terminate. Instead, it performs a graceful drain: in-flight batches complete, messages are acknowledged, advisory locks are released, and connections are closed cleanly. This ensures no messages are lost or double-processed during deployments, restarts, or scaling events.
+When the relay receives a shutdown signal (SIGTERM or SIGINT), it performs a
+graceful drain. In-flight batches finish or are aborted before the worker's
+dedicated ownership session is released. A batch whose sink succeeded but whose
+checkpoint did not commit may be delivered again with the same stable identity.
 
 ## Shutdown Sequence
 
@@ -8,11 +11,11 @@ When the relay receives a shutdown signal (SIGTERM or SIGINT), it doesn't abrupt
 1. SIGTERM received
 2. Coordinator signals all worker tasks to stop
 3. Each worker:
-   a. Finishes current batch publish (if in progress)
-   b. Acknowledges the batch with the source
+   a. Finishes the current batch publish if possible
+   b. Commits the source checkpoint only after durable terminal disposition
    c. Exits its processing loop
 4. Coordinator waits for all workers to exit
-5. Coordinator releases all advisory locks
+5. Coordinator releases ownership through the same session (or drops it after abort)
 6. Metrics server stops accepting new requests
 7. OpenTelemetry flushes pending traces
 8. Process exits with code 0
@@ -27,14 +30,15 @@ Without graceful shutdown:
 - **Traces** might be lost
 
 With graceful shutdown:
-- Every message is either fully processed (published + acknowledged) or not processed at all
-- Advisory locks are released immediately, enabling instant failover
+- A committed source event is retried when its checkpoint was not committed
+- Advisory locks are released only after the worker is gone, enabling safe failover
 - Final metrics are available for scraping
 - All traces are exported
 
 ## Shutdown Timeout
 
-The relay enforces a maximum shutdown duration. If workers don't exit within the timeout, the process terminates forcefully:
+The relay enforces a maximum shutdown duration. If workers don't exit within the timeout, the worker is aborted before the
+ownership session is released:
 
 ```bash
 # Default: 30 seconds

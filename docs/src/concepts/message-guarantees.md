@@ -1,6 +1,10 @@
 # Message Guarantees
 
-pg_tide provides end-to-end exactly-once delivery semantics by combining three mechanisms that work together as a unified system: the transactional outbox ensures no messages are lost at the source, the relay delivers them reliably to downstream systems, and the idempotent inbox catches any duplicates at the destination. This page explains all three mechanisms in depth, how they interact, and what guarantees you can rely on in production.
+pg_tide separates three guarantees: an **atomic outbox write**, **at-least-once
+relay transport**, and destination-side deduplication. A destination can provide
+an **effectively exactly-once outcome** only when it durably deduplicates the
+stable event ID and application processing is idempotent or transactional.
+There is no unqualified cross-system exactly-once guarantee.
 
 ---
 
@@ -30,7 +34,9 @@ You might think: "I'll just retry the Kafka publish until it succeeds." But cons
 
 What about the reverse order — publish first, then commit? If the database commit fails after a successful publish, you've sent an event about something that never happened.
 
-There is no safe ordering of two independent writes that guarantees exactly-once semantics. The only solution is to eliminate the dual write entirely.
+There is no safe ordering of two independent writes that guarantees
+cross-system exactly-once semantics. The transactional outbox eliminates the
+dual write at the application/database boundary.
 
 ---
 
@@ -54,7 +60,10 @@ COMMIT;
 
 Both the order insert and the message insert succeed or fail together — they're part of the same PostgreSQL transaction. There is no window where one succeeds without the other. If the transaction commits, the message is guaranteed to exist. If it rolls back (for any reason — constraint violation, application crash, network disconnect), the message disappears along with the business data.
 
-A separate **relay process** then reads committed messages from the outbox table and delivers them to whatever downstream system you've configured (Kafka, NATS, webhooks, etc.). The relay runs independently of your application and can retry indefinitely — the message is safely persisted in PostgreSQL until delivery succeeds.
+A separate **relay process** then reads committed messages from the outbox table
+and delivers them to the configured downstream system. The relay retries an
+uncommitted batch; the downstream system's acknowledgment and retention define
+the transport boundary.
 
 This separation of concerns gives you the best of both worlds:
 
@@ -222,9 +231,11 @@ The relay automatically generates appropriate dedup keys based on the source typ
 
 ---
 
-## End-to-End Exactly-Once: The Three Pillars Combined
+## Effectively exactly-once outcomes at a deduplicating destination
 
-When you combine the transactional outbox, the relay's offset tracking, and the idempotent inbox, you get **effectively exactly-once** delivery semantics end-to-end. Here's how the complete flow works:
+When you combine the transactional outbox, relay offset tracking, and an
+idempotent inbox, the destination outcome can be **effectively exactly once**.
+The relay transport still permits redelivery:
 
 ```
 1. Application:  BEGIN; INSERT business_data; outbox_publish(); COMMIT;
@@ -235,7 +246,7 @@ When you combine the transactional outbox, the relay's offset tracking, and the 
        ↓
 4. Relay:        On sink acknowledgment → commit_offset(last_delivered_id)
        ↓
-5. Relay:        Marks outbox messages as consumed
+5. Relay:        Records auxiliary delivery evidence; the scoped offset is authoritative
 ```
 
 Each stage is protected:
@@ -250,11 +261,17 @@ Each stage is protected:
 
 ### Edge cases handled
 
-**Relay crash after delivery, before offset commit:** This is the most important edge case. The relay successfully delivered message #42 to the inbox, then crashed before recording offset 42. On restart, it re-delivers #42. The inbox's UNIQUE constraint on `event_id` catches the duplicate, and the insert is silently skipped. The application sees message #42 exactly once.
+**Relay crash after delivery, before offset commit:** The relay successfully
+delivered message #42 to the inbox, then crashed before recording offset 42.
+On restart, it re-delivers #42. The inbox's UNIQUE constraint catches the
+duplicate, so a transactional application can observe one processing outcome.
 
 **PostgreSQL failover:** If the primary PostgreSQL instance fails over to a replica, the relay's advisory locks are automatically released (they're tied to the session). Another relay instance can acquire the locks and resume from the last committed offset. In-flight messages that weren't committed are re-delivered, and the inbox dedup catches any duplicates.
 
-**Sink temporarily unavailable:** The relay retries with exponential backoff (100ms → 30s with jitter). Messages remain pending in the outbox — they're never lost. Once the sink recovers, delivery resumes automatically.
+**Sink temporarily unavailable:** The relay retries with exponential backoff
+(100ms → 30s with jitter) while the source retains the uncommitted batch.
+Once the sink recovers, delivery resumes; retention and source availability
+still bound recovery.
 
 **Duplicate outbox_publish calls:** If your application accidentally publishes the same logical event twice (due to a retry at the application level), you can include a deterministic `event_id` in the headers. The inbox dedup key will catch duplicates at the receiving end. Alternatively, design your consumers to be naturally idempotent.
 
@@ -262,22 +279,31 @@ Each stage is protected:
 
 | Component | Guarantee | Mechanism |
 |-----------|-----------|-----------|
-| Outbox publish | Exactly-once write | Same PostgreSQL transaction as business data |
+| Outbox publish | Atomic outbox write | Same PostgreSQL transaction as business data |
 | Relay delivery | At-least-once | Retries until sink acknowledges, resumes from last offset |
-| Inbox receive | Exactly-once processing | UNIQUE constraint on event_id |
-| **End-to-end** | **Effectively exactly-once** | All three mechanisms combined |
+| Inbox receive | Durable deduplication | UNIQUE constraint on event_id |
+| **End-to-end** | **Effectively exactly once, when applicable** | Stable ID + durable deduplication + idempotent processing |
 
 ### Limitations and honest caveats
 
-pg_tide's exactly-once guarantee is strong, but it's important to understand the boundaries:
+The boundaries are important:
 
-- **Cross-sink atomicity:** If you configure a single outbox to fan out to multiple sinks (e.g., Kafka *and* a webhook), and one delivery succeeds while the other fails, you'll have partial delivery. Use separate pipelines per sink for independent exactly-once guarantees per destination.
+- **Cross-sink atomicity:** If you configure a single outbox to fan out to
+  multiple sinks (e.g., Kafka *and* a webhook), one delivery can succeed while
+  the other fails. Treat each destination as an independent at-least-once path.
 
-- **External sink semantics:** Exactly-once delivery into pg_tide inboxes is guaranteed because the inbox uses PostgreSQL's UNIQUE constraint. For external sinks (Kafka, NATS, Redis), the guarantee depends on the sink's acknowledgment semantics. If a sink acknowledges delivery but then loses the message internally, pg_tide cannot detect that. Choose sinks with strong durability guarantees for critical workloads.
+- **External sink semantics:** PostgreSQL inboxes durably deduplicate the stable
+  event ID. For external sinks (Kafka, NATS, Redis), the outcome depends on the
+  sink's acknowledgment, durability, and deduplication semantics. If a sink
+  acknowledges delivery but then loses the message internally, pg_tide cannot
+  detect that.
 
 - **Clock skew and retention:** Retention cleanup uses `created_at` timestamps. Extreme clock skew between PostgreSQL nodes could cause premature cleanup of messages that haven't been consumed yet. Always use NTP-synchronized hosts.
 
-- **"Effectively" vs. "truly" exactly-once:** In distributed systems theory, true exactly-once delivery across system boundaries is provably impossible without two-phase commit. pg_tide achieves *effectively* exactly-once by combining at-least-once delivery with idempotent reception — the outcome is the same (each event is processed exactly once), but the mechanism involves potential redelivery that's silently deduplicated.
+- **Transport versus outcome:** A crash after downstream success but before
+  checkpoint commit can produce a duplicate with the same stable identity.
+  Only durable destination deduplication turns at-least-once transport into an
+  effectively exactly-once application outcome.
 
 ---
 
@@ -285,7 +311,10 @@ pg_tide's exactly-once guarantee is strong, but it's important to understand the
 
 The guarantees described above cover the forward path: PostgreSQL outbox → relay → downstream sink. pg_tide also operates in **reverse**: an external source (Kafka, NATS, Redis Streams, SQS, webhook, stdin) delivers messages to a pg_tide-managed sink.
 
-The relay's core loop is direction-agnostic: it always uses **publish-then-acknowledge**. The source offset (Kafka consumer-group position, NATS sequence, Redis XACK, SQS visibility delete) is committed only after the sink confirms receipt. This gives at-least-once delivery from any source to any sink. What determines whether that becomes effectively exactly-once is **sink-side idempotency**.
+The relay's core loop is direction-agnostic: it uses **publish-then-acknowledge**.
+The source checkpoint is committed only after the sink confirms receipt. This
+gives at-least-once transport; sink-side durable idempotency determines whether
+the application outcome is effectively exactly once.
 
 ### The publish-then-acknowledge guarantee
 
@@ -295,7 +324,9 @@ poll source → publish batch to sink → ack source offset
           only on success. On failure: exponential backoff → retry → DLQ
 ```
 
-If the relay crashes after a successful sink publish but before acknowledging the source, messages are re-delivered on restart. The sink must handle this retry idempotently to achieve exactly-once semantics.
+If the relay crashes after a successful sink publish but before acknowledging
+the source, messages are re-delivered on restart. The sink must handle this
+retry idempotently for an effectively exactly-once outcome.
 
 ### The `dedup_key`
 
@@ -316,29 +347,29 @@ The `dedup_key` is always included in the outbound message payload as `_dedup_ke
 
 | Sink | On retry | Effective guarantee |
 |------|----------|---------------------|
-| `inbox` (local pg_tide) | `ON CONFLICT (event_id) DO NOTHING` | **Exactly-once** |
-| `pg_outbox` (remote pg_tide inbox) | `ON CONFLICT (event_id) DO NOTHING` on remote | **Exactly-once** |
-| `mongodb` | `replaceOne` upsert with `dedup_key` as `_id` | **Exactly-once** |
-| `ducklake` (inlined rows) | `_dedup_key` window scan before insert | **Exactly-once** |
-| `ducklake` (Parquet files) | Deterministic filename `snap_{id}_{hash}.parquet`; S3 `put` is idempotent | **Exactly-once** |
-| `delta` | Deterministic Parquet path; Delta Log commit is atomic | **Exactly-once** |
-| `iceberg` | Deterministic manifest paths; REST catalog commit is atomic | **Exactly-once** |
-| `bigquery` | `insertId` field — BigQuery deduplicates within ~1-minute window | **Best-effort exactly-once** |
-| `clickhouse` | `ReplacingMergeTree` engine deduplicates eventually (not query-time) | **Eventually exactly-once** |
-| `kafka` sink | Idempotent producer prevents broker-side duplicates; no consumer dedup | **At-least-once** (exactly-once with idempotent producer) |
+| `inbox` (local pg_tide) | `ON CONFLICT (event_id) DO NOTHING` | **Effectively exactly once** when processing is transactional |
+| `pg_outbox` (remote pg_tide inbox) | `ON CONFLICT (event_id) DO NOTHING` on remote | **Effectively exactly once** when processing is transactional |
+| `mongodb` | `replaceOne` upsert with `dedup_key` as `_id` | **Durable sink deduplication** |
+| `ducklake` (inlined rows) | `_dedup_key` window scan before insert | **Sink-dependent deduplication** |
+| `ducklake` (Parquet files) | Deterministic filename `snap_{id}_{hash}.parquet`; S3 `put` is idempotent | **Sink-dependent deduplication** |
+| `delta` | Deterministic Parquet path; Delta Log commit is atomic | **Sink-dependent deduplication** |
+| `iceberg` | Deterministic manifest paths; REST catalog commit is atomic | **Sink-dependent deduplication** |
+| `bigquery` | `insertId` field — BigQuery deduplicates within a bounded window | **Bounded deduplication** |
+| `clickhouse` | `ReplacingMergeTree` engine deduplicates eventually (not query-time) | **Eventual deduplication** |
+| `kafka` sink | Idempotent producer may reduce broker-side duplicates; no consumer dedup | **At-least-once** |
 | `nats` sink | No native dedup | **At-least-once** |
 | `snowflake` | Snowpipe Streaming has no client-side dedup | **At-least-once** |
 | `redis` | Stream append — duplicates land as separate entries | **At-least-once** |
-| `sqs` | Standard: at-least-once. FIFO with `MessageDeduplicationId`: exactly-once | **At-least-once** (FIFO: **exactly-once**) |
+| `sqs` | Standard: at-least-once; FIFO deduplication is bounded | **At-least-once** |
 | `webhook` | Server-defined; `_dedup_key` is in the payload for server use | **At-most-once** (server-dependent) |
-| `elasticsearch` | Index with `_id` = `dedup_key` — upsert is idempotent | **Exactly-once** |
-| `object-storage` | Deterministic object key per batch; S3/GCS `put` is idempotent | **Exactly-once** |
+| `elasticsearch` | Index with `_id` = `dedup_key` — upsert is idempotent | **Durable sink deduplication** |
+| `object-storage` | Deterministic object key per batch; S3/GCS `put` is idempotent | **Durable sink deduplication** |
 
 ### When to use inbox vs. direct sink
 
 | Use case | Recommended approach |
 |----------|---------------------|
-| Downstream app needs to process each event in a transaction | Use `inbox` — SQL `UNIQUE` constraint + `inbox_mark_processed()` give transactional exactly-once |
+| Downstream app needs to process each event in a transaction | Use `inbox` — SQL `UNIQUE` constraint + `inbox_mark_processed()` give an effectively exactly-once outcome |
 | Fan-out to multiple consumers of the same event | Use `inbox` — multiple consumers read the same inbox table |
 | Analytics ingestion where query-time dedup is acceptable | Use `ducklake`, `clickhouse`, `bigquery`, etc. directly — lower latency, no PostgreSQL write on the hot path |
 | Multi-cluster relay (deliver to a remote pg_tide deployment) | Use `pg_outbox` — writes to a remote inbox via tokio-postgres |
@@ -428,7 +459,8 @@ The reverse pipeline adds zero PostgreSQL writes. The relay reads from the sourc
 
 Use the **inbox→outbox bridge** when:
 
-- You need **PostgreSQL-strength exactly-once** and the sink does not have a strong native dedup mechanism
+- You need PostgreSQL-strength durable deduplication and the sink does not have
+  a strong native dedup mechanism
 - You need **durability beyond the Kafka retention window** — the downstream sink could be unavailable for an extended period
 - You need **SQL transforms, enrichment, or routing** between receipt and publication
 - You need **fan-out** — one incoming event should drive multiple downstream sinks with independent delivery guarantees
@@ -438,7 +470,9 @@ Use the **reverse pipeline sink** when:
 
 - The path is a simple A→B data move with no SQL processing required
 - Kafka retention is long enough (or the topic is compacted) that an extended sink outage is not a data risk
-- The sink has a strong enough native dedup mechanism (`_dedup_key` in DuckLake/MongoDB, idempotent produces in Kafka) that sink-level exactly-once is sufficient
+- The sink has a strong enough native dedup mechanism (`_dedup_key` in
+  DuckLake/MongoDB, idempotent produces in Kafka) for an effectively
+  exactly-once application outcome
 - You want to minimise PostgreSQL write load — e.g. high-throughput analytics ingestion where the PostgreSQL hop is pure overhead with no business value
 
 > **If in doubt, use the inbox→outbox bridge.** It is more expensive but its guarantees are unconditional. The reverse pipeline sink is an explicit trade-off: lower cost and latency in exchange for accepting sink-dependent dedup and Kafka-bounded durability.

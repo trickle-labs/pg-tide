@@ -2,7 +2,10 @@
 
 **Advisory lock** — A PostgreSQL locking mechanism used by pg_tide for high-availability coordination. Each relay instance acquires advisory locks for the pipelines it owns, preventing multiple instances from processing the same pipeline.
 
-**At-least-once delivery** — A delivery guarantee where every message is delivered one or more times. pg_tide provides at-least-once by default — messages may be re-delivered on failure recovery, but are never lost.
+**At-least-once relay transport** — A guarantee that a committed source event
+is retried until a durable terminal disposition. A crash after downstream
+success but before checkpoint commit may cause a duplicate; it does not silently
+skip the event.
 
 **Batch** — A group of messages processed together in a single poll-publish-acknowledge cycle. Larger batches improve throughput at the cost of latency.
 
@@ -10,23 +13,31 @@
 
 **Consumer group** — An independent cursor into an outbox, allowing multiple services to consume the same event stream at their own pace without interfering with each other.
 
-**Dead letter queue (DLQ)** — A PostgreSQL table (`tide.relay_dlq`) that stores messages which failed delivery after all retry attempts. Messages can be inspected and replayed from the DLQ.
+**Dead letter queue (DLQ)** — A PostgreSQL table (`tide.relay_dlq`) that stores
+failed batches after an atomic durable write. The source checkpoint advances
+only after every failed row is present or already present by idempotency key.
 
 **Deduplication key (dedup_key)** — A unique identifier for inbox messages that prevents duplicate processing. If the same dedup_key arrives twice, the second write is silently ignored.
 
 **Discovery** — The process by which the relay coordinator finds and reconciles pipeline configurations from the PostgreSQL catalog.
 
-**Dry-run mode** — A pipeline mode where the relay performs all processing (poll, transform, route) but logs output instead of publishing to the sink.
+**Dry-run mode** — An explicit consuming mode where the relay polls, transforms,
+and routes, logs bounded output instead of publishing, and advances the source
+checkpoint after observation.
 
 **Envelope** — The wire format wrapper around a message payload. Determines how metadata (operation type, timestamps, source info) is encoded alongside the data.
 
-**Exactly-once processing** — Achieved through the combination of at-least-once delivery and inbox deduplication. Each unique message is processed exactly once.
+**Effectively exactly once** — An application outcome, not a transport promise,
+available when the destination durably deduplicates the stable event ID and
+application processing is idempotent or transactional.
 
 **Fan-out** — A pattern where a single event stream is delivered to multiple independent consumers (via consumer groups or multiple pipelines).
 
 **Forward pipeline** — A pipeline that moves messages from an outbox to an external sink (outbox → sink direction).
 
-**Graceful shutdown** — The relay's shutdown sequence: drain in-flight batches, acknowledge processed messages, release advisory locks, then exit.
+**Graceful shutdown** — The relay's shutdown sequence: stop polling, drain or
+abort in-flight work, wait for the worker to exit, release its ownership
+session, then exit.
 
 **Half-open** — The circuit breaker state between open and closed, where a single probe message tests whether the sink has recovered.
 
@@ -46,7 +57,15 @@
 
 **Relay group** — A set of relay instances coordinating via the same `relay_group_id`. Instances within a group distribute pipelines among themselves.
 
-**Replay** — Reprocessing a range of outbox messages, typically to backfill a new consumer or recover from a failure.
+**Replay** — One-shot reprocessing of an explicit range. Replay is checkpoint-
+neutral; changing a live offset requires an authorized administrative rewind.
+
+**Atomic outbox write** — The business row and event row commit exactly once in
+one PostgreSQL transaction.
+
+**Checkpoint** — The durable source position advanced only after a complete
+batch reaches a terminal disposition. Native outbox offsets are scoped by relay
+group, pipeline, and outbox.
 
 **Reverse pipeline** — A pipeline that moves messages from an external source into a pg_tide inbox (source → inbox direction).
 

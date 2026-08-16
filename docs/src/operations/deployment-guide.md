@@ -417,7 +417,8 @@ Upgrading the relay binary requires no downtime:
 3. Gracefully stop old instances (`SIGTERM`)
 4. Old instances drain in-flight messages, commit final offsets, release locks
 5. New instances acquire the released locks and resume processing
-6. No messages are lost or duplicated
+6. Committed events use at-least-once transport: loss is not silent, and
+   duplicates remain possible until the destination deduplicates the stable ID
 
 For Kubernetes rolling updates, this happens automatically:
 

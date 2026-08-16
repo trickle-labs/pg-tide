@@ -285,6 +285,7 @@ pub struct OutboxPollerSource {
     /// Populated during `poll()` for each row whose payload is a native
     /// claim-check envelope (`_cc: true`).  Cleared in `acknowledge()`.
     pending_cc_oids: Vec<u32>,
+    replay_mode: bool,
 }
 
 pub struct ConsumerGroupConfig {
@@ -325,6 +326,7 @@ impl OutboxPollerSource {
             consumer_group: None,
             last_offset,
             pending_cc_oids: Vec::new(),
+            replay_mode: false,
         })
     }
 
@@ -365,6 +367,7 @@ impl OutboxPollerSource {
             consumer_group: None,
             last_offset,
             pending_cc_oids: Vec::new(),
+            replay_mode: false,
         })
     }
 
@@ -405,6 +408,7 @@ impl OutboxPollerSource {
             }),
             last_offset: 0,
             pending_cc_oids: Vec::new(),
+            replay_mode: false,
         })
     }
 }
@@ -422,6 +426,24 @@ fn worker_id() -> String {
 impl super::Source for OutboxPollerSource {
     fn name(&self) -> &str {
         "outbox"
+    }
+
+    fn configure_replay(&mut self, from_offset: i64) -> Result<(), RelayError> {
+        if self.consumer_group.is_some() {
+            return Err(RelayError::InvalidConfig {
+                name: self.pipeline_id.clone(),
+                reason: "inline replay does not support consumer-group sources".to_string(),
+            });
+        }
+        if from_offset < 0 {
+            return Err(RelayError::InvalidConfig {
+                name: self.pipeline_id.clone(),
+                reason: "replay from_offset must be non-negative".to_string(),
+            });
+        }
+        self.replay_mode = true;
+        self.last_offset = from_offset.saturating_sub(1);
+        Ok(())
     }
 
     async fn poll(&mut self, batch_size: i64) -> Result<Vec<RelayMessage>, RelayError> {
@@ -472,15 +494,17 @@ impl super::Source for OutboxPollerSource {
                 // v0.40.0 (ADR-011): The offset write is monotonic and scoped by
                 // outbox. It only advances the in-memory position after the DB
                 // commit is confirmed, so an ack failure is visible to the worker.
-                update_simple_offset(
-                    &self.db,
-                    &self.relay_group_id,
-                    &self.pipeline_id,
-                    &self.outbox_name,
-                    offset_i64,
-                    &self.worker_id,
-                )
-                .await?;
+                if !self.replay_mode {
+                    update_simple_offset(
+                        &self.db,
+                        &self.relay_group_id,
+                        &self.pipeline_id,
+                        &self.outbox_name,
+                        offset_i64,
+                        &self.worker_id,
+                    )
+                    .await?;
+                }
                 // In-memory position never rewinds (mirrors the DB GREATEST upsert).
                 self.last_offset = self.last_offset.max(offset_i64);
             }
@@ -738,6 +762,12 @@ async fn update_simple_offset(
     last_change_id: i64,
     worker_id: &str,
 ) -> Result<(), RelayError> {
+    if last_change_id < 0 {
+        return Err(RelayError::other(format!(
+            "relay offset for pipeline '{pipeline_id}' must be non-negative"
+        )));
+    }
+
     let row = db
         .query_opt(
             "INSERT INTO tide.relay_consumer_offsets
@@ -772,6 +802,7 @@ async fn update_simple_offset(
                      {last_change_id}"
                 )));
             }
+            crate::failpoints::hit("after_offset_db_commit", pipeline_id).await?;
             Ok(())
         }
         None => Err(RelayError::other(format!(
@@ -830,8 +861,9 @@ impl FanInSource {
                      FROM tide.relay_consumer_offsets \
                      WHERE relay_group_id = $1 \
                        AND pipeline_id    = $2 \
-                       AND fanin_member   = $3",
-                    &[&relay_group_id, &pipeline_name, &outbox_name],
+                       AND outbox_name    = $3 \
+                       AND fanin_member   = $4",
+                    &[&relay_group_id, &pipeline_name, &outbox_name, &outbox_name],
                 )
                 .await
                 .map_err(|e| {
@@ -852,6 +884,7 @@ impl FanInSource {
                 consumer_group: None,
                 last_offset,
                 pending_cc_oids: Vec::new(),
+                replay_mode: false,
             };
             // Override the last_offset on the source so it starts from the
             // correct position for this member.
@@ -928,16 +961,23 @@ impl super::Source for FanInSource {
         let members: Vec<String> = max_by_member.keys().cloned().collect();
         let offsets: Vec<i64> = members
             .iter()
-            .map(|m| *max_by_member.get(m).unwrap())
-            .collect();
+            .map(|member| {
+                max_by_member.get(member).copied().ok_or_else(|| {
+                    RelayError::other(format!("fanin offset missing for member '{member}'"))
+                })
+            })
+            .collect::<Result<_, _>>()?;
 
-        self.db
+        let affected = self
+            .db
             .execute(
                 "INSERT INTO tide.relay_consumer_offsets
-                     (relay_group_id, pipeline_id, fanin_member, last_change_id, worker_id, updated_at)
+                     (relay_group_id, pipeline_id, outbox_name, fanin_member,
+                      last_change_id, worker_id, updated_at)
                  SELECT
                      unnest($1::text[]),
                      unnest($2::text[]),
+                     unnest($3::text[]),
                      unnest($3::text[]),
                      unnest($4::bigint[]),
                      unnest($5::text[]),
@@ -966,6 +1006,13 @@ impl super::Source for FanInSource {
                     self.pipeline_name
                 ))
             })?;
+        if affected != members.len() as u64 {
+            return Err(RelayError::other(format!(
+                "fanin offset upsert for pipeline '{}' affected {affected} rows, expected {}",
+                self.pipeline_name,
+                members.len()
+            )));
+        }
 
         // Update the last_offset on each sub-source so the next poll advances correctly.
         for (member, max_offset) in &max_by_member {

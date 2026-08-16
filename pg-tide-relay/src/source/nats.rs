@@ -82,6 +82,16 @@ impl super::Source for NatsSource {
     }
 
     async fn poll(&mut self, batch_size: i64) -> Result<Vec<RelayMessage>, RelayError> {
+        if !self.pending.is_empty() {
+            return Err(RelayError::source_poll(
+                "nats",
+                std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "previous batch is awaiting acknowledgement",
+                ),
+            ));
+        }
+
         let batch = self
             .messages
             .fetch()
@@ -105,8 +115,17 @@ impl super::Source for NatsSource {
                         .map(|v| v.to_string())
                         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-                    let payload: serde_json::Value =
-                        serde_json::from_slice(&msg.payload).unwrap_or(serde_json::Value::Null);
+                    let payload: serde_json::Value = match serde_json::from_slice(&msg.payload) {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            raw_msgs.push(msg);
+                            self.pending = raw_msgs;
+                            return Err(RelayError::SourceDecode {
+                                src: "nats".to_string(),
+                                reason: error.to_string(),
+                            });
+                        }
+                    };
 
                     let event_type = payload
                         .get("event_type")
@@ -120,21 +139,30 @@ impl super::Source for NatsSource {
                     messages.push(relay_msg);
                 }
                 Err(e) => {
-                    tracing::warn!("nats message error: {e}");
+                    self.pending = raw_msgs;
+                    return Err(RelayError::SourcePoll {
+                        src: "nats".to_string(),
+                        inner: e,
+                    });
                 }
             }
         }
 
-        // Ack all messages inline (NATS ack is cheap).
-        for raw_msg in raw_msgs {
-            let _ = raw_msg.ack().await;
-        }
-
+        self.pending = raw_msgs;
         Ok(messages)
     }
 
     async fn acknowledge(&mut self, _last_message: &RelayMessage) -> Result<(), RelayError> {
-        // Messages are acked inline in poll().
+        let pending = std::mem::take(&mut self.pending);
+        for (index, raw_msg) in pending.iter().enumerate() {
+            if let Err(error) = raw_msg.ack().await {
+                self.pending = pending.into_iter().skip(index).collect();
+                return Err(RelayError::SourcePoll {
+                    src: "nats".to_string(),
+                    inner: error,
+                });
+            }
+        }
         Ok(())
     }
 
