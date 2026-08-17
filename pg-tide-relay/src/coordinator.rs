@@ -976,7 +976,7 @@ async fn worker_inner(
             // poll, replay-filter, and error-classification logic.
             metrics
                 .source_poll_queries
-                .with_label_values(&[&pipeline.name, source.name()])
+                .with_label_values(&[pipeline.name.as_str(), source.name()])
                 .inc();
             match poll_and_decode(
                 &mut source,
