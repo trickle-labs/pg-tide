@@ -109,6 +109,19 @@ async fn connect(url: &str) -> tokio_postgres::Client {
     client
 }
 
+async fn connect_nats_with_retry(url: &str) -> async_nats::Client {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        match async_nats::connect(url).await {
+            Ok(client) => return client,
+            Err(error) if tokio::time::Instant::now() >= deadline => {
+                panic!("connect nats after readiness retries: {error}")
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
+        }
+    }
+}
+
 async fn wait_for_offset(client: &tokio_postgres::Client, minimum: i64) -> i64 {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
@@ -217,7 +230,7 @@ async fn public_api_outbox_to_nats_e2e() {
     let nats_port = nats.get_host_port_ipv4(4222).await.expect("nats port");
     let nats_url = format!("nats://127.0.0.1:{nats_port}");
 
-    let nats_client = async_nats::connect(&nats_url).await.expect("connect nats");
+    let nats_client = connect_nats_with_retry(&nats_url).await;
     let js = async_nats::jetstream::new(nats_client);
     // Deterministic, generous dedup window so the coordinator-B replay below is
     // deduplicated within the test lifetime.
@@ -395,7 +408,7 @@ async fn public_api_orders_only_ignores_other_outbox() {
         .expect("start NATS with JetStream");
     let nats_port = nats.get_host_port_ipv4(4222).await.expect("nats port");
     let nats_url = format!("nats://127.0.0.1:{nats_port}");
-    let js = async_nats::jetstream::new(async_nats::connect(&nats_url).await.expect("nats"));
+    let js = async_nats::jetstream::new(connect_nats_with_retry(&nats_url).await);
     js.create_stream(async_nats::jetstream::stream::Config {
         name: STREAM.to_string(),
         subjects: vec!["orders.>".to_string()],
