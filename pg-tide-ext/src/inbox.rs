@@ -13,8 +13,8 @@ fn inbox_exists(name: &str) -> Result<bool, PgTideError> {
         "SELECT EXISTS(SELECT 1 FROM tide.tide_inbox_config WHERE inbox_name = $1)",
         &[name.into()],
     )
-    .map(|r| r.unwrap_or(false))
-    .map_err(|e| PgTideError::SpiError(format!("inbox_exists SPI error: {e}")))
+    .map_err(|e| PgTideError::SpiError(format!("inbox_exists SPI error: {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("inbox_exists returned NULL for '{name}'")))
 }
 
 // ── TIDE-API: inbox_create ────────────────────────────────────────────────
@@ -112,11 +112,12 @@ fn inbox_drop_impl(name: &str, if_exists: bool) -> Result<(), PgTideError> {
         "SELECT inbox_schema FROM tide.tide_inbox_config WHERE inbox_name = $1",
         &[name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or_else(|| "tide".to_string());
+    .map_err(|e| PgTideError::SpiError(format!("read inbox schema '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("inbox schema is NULL for '{name}'")))?;
 
     let drop_table = format!(r#"DROP TABLE IF EXISTS "{schema}"."{name}_inbox" CASCADE"#);
-    let _ = Spi::run(&drop_table);
+    Spi::run(&drop_table)
+        .map_err(|e| PgTideError::SpiError(format!("drop inbox table '{name}': {e}")))?;
 
     Spi::run_with_args(
         "DELETE FROM tide.tide_inbox_config WHERE inbox_name = $1",
@@ -145,8 +146,8 @@ fn inbox_mark_processed_impl(name: &str, event_id: &str) -> Result<(), PgTideErr
         "SELECT inbox_schema FROM tide.tide_inbox_config WHERE inbox_name = $1",
         &[name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or_else(|| "tide".to_string());
+    .map_err(|e| PgTideError::SpiError(format!("read inbox schema '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("inbox schema is NULL for '{name}'")))?;
 
     let sql = format!(
         r#"UPDATE "{schema}"."{name}_inbox"
@@ -176,8 +177,8 @@ fn inbox_mark_failed_impl(name: &str, event_id: &str, error: &str) -> Result<(),
         "SELECT inbox_schema FROM tide.tide_inbox_config WHERE inbox_name = $1",
         &[name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or_else(|| "tide".to_string());
+    .map_err(|e| PgTideError::SpiError(format!("read inbox schema '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("inbox schema is NULL for '{name}'")))?;
 
     let sql = format!(
         r#"UPDATE "{schema}"."{name}_inbox"
@@ -210,15 +211,15 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
             "SELECT inbox_schema FROM tide.tide_inbox_config WHERE inbox_name = $1",
             &[n.into()],
         )
-        .unwrap_or(None)
-        .unwrap_or_else(|| "tide".to_string());
+        .map_err(|e| PgTideError::SpiError(format!("read inbox schema '{n}': {e}")))?
+        .ok_or_else(|| PgTideError::SpiError(format!("inbox schema is NULL for '{n}'")))?;
 
         let pending: i64 = Spi::get_one_with_args::<i64>(
             &format!(r#"SELECT COUNT(*) FROM "{schema}"."{n}_inbox" WHERE processed_at IS NULL"#),
             &[],
         )
-        .unwrap_or(None)
-        .unwrap_or(0);
+        .map_err(|e| PgTideError::SpiError(format!("count pending inbox '{n}': {e}")))?
+        .ok_or_else(|| PgTideError::SpiError(format!("pending count is NULL for '{n}'")))?;
 
         let dlq_count: i64 = Spi::get_one_with_args::<i64>(
             &format!(
@@ -228,8 +229,8 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
             ),
             &[n.into()],
         )
-        .unwrap_or(None)
-        .unwrap_or(0);
+        .map_err(|e| PgTideError::SpiError(format!("count DLQ inbox '{n}': {e}")))?
+        .ok_or_else(|| PgTideError::SpiError(format!("DLQ count is NULL for '{n}'")))?;
 
         let status = serde_json::json!({
             "inbox_name": n,
@@ -248,13 +249,17 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
     let rows: Vec<(String, String)> = Spi::connect(|client| {
         let mut entries = Vec::new();
         let tup = client.select(
-            "SELECT inbox_name, inbox_schema FROM tide.tide_inbox_config ORDER BY inbox_name",
+            "SELECT inbox_name::text, inbox_schema::text FROM tide.tide_inbox_config ORDER BY inbox_name",
             None,
             &[],
         )?;
         for row in tup {
-            let iname: String = row.get(1)?.unwrap_or_default();
-            let ischema: String = row.get(2)?.unwrap_or_else(|| "tide".to_string());
+            let iname: String = row
+                .get(1)?
+                .ok_or(pgrx::spi::SpiError::NoTupleTable)?;
+            let ischema: String = row
+                .get(2)?
+                .ok_or(pgrx::spi::SpiError::NoTupleTable)?;
             entries.push((iname, ischema));
         }
         Ok::<_, pgrx::spi::SpiError>(entries)
@@ -287,8 +292,8 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
     Spi::connect(|client| {
         let tup = client.select(&union_sql, None, &[])?;
         for row in tup {
-            let iname: String = row.get(1)?.unwrap_or_default();
-            let pending: i64 = row.get(2)?.unwrap_or(0);
+            let iname: String = row.get(1)?.ok_or(pgrx::spi::SpiError::NoTupleTable)?;
+            let pending: i64 = row.get(2)?.ok_or(pgrx::spi::SpiError::NoTupleTable)?;
             pending_map.insert(iname, pending);
         }
         Ok::<_, pgrx::spi::SpiError>(())
@@ -297,14 +302,16 @@ fn inbox_status_impl(name: Option<&str>) -> Result<pgrx::JsonB, PgTideError> {
 
     let summaries: Vec<serde_json::Value> = rows
         .iter()
-        .map(|(iname, _)| {
-            let pending = pending_map.get(iname).copied().unwrap_or(0);
-            serde_json::json!({
+        .map(|(iname, _)| -> Result<serde_json::Value, PgTideError> {
+            let pending = pending_map.get(iname).copied().ok_or_else(|| {
+                PgTideError::SpiError(format!("missing pending count for inbox '{iname}'"))
+            })?;
+            Ok(serde_json::json!({
                 "inbox_name": iname,
                 "pending": pending,
-            })
+            }))
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
 
     Ok(pgrx::JsonB(serde_json::json!({ "inboxes": summaries })))
 }
@@ -326,8 +333,8 @@ fn replay_inbox_messages_impl(name: &str, event_ids: Vec<String>) -> Result<i64,
         "SELECT inbox_schema FROM tide.tide_inbox_config WHERE inbox_name = $1",
         &[name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or_else(|| "tide".to_string());
+    .map_err(|e| PgTideError::SpiError(format!("read inbox schema '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("inbox schema is NULL for '{name}'")))?;
 
     let mut replayed: i64 = 0;
     for event_id in &event_ids {
@@ -341,8 +348,8 @@ fn replay_inbox_messages_impl(name: &str, event_ids: Vec<String>) -> Result<i64,
             &format!("WITH u AS ({sql}) SELECT COUNT(*) FROM u"),
             &[event_id.as_str().into()],
         )
-        .unwrap_or(None)
-        .unwrap_or(0);
+        .map_err(|e| PgTideError::SpiError(format!("replay inbox event '{event_id}': {e}")))?
+        .ok_or_else(|| PgTideError::SpiError(format!("replay count is NULL for '{event_id}'")))?;
         replayed += count;
     }
     Ok(replayed)

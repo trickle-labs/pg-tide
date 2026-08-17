@@ -6,7 +6,10 @@ This guide covers security best practices for deploying pg_tide in production, i
 
 ### Environment Variable Substitution
 
-pg_tide supports `${env:VARIABLE_NAME}` syntax in pipeline configurations. Secrets are resolved at runtime from the relay process's environment — they never appear in the PostgreSQL catalog:
+pg_tide supports the strict `${env:VARIABLE_NAME}` syntax in pipeline
+configurations. `${ENV:VARIABLE_NAME}` is accepted for one compatibility release
+with a deprecation warning. Malformed, nested, unknown, or unresolved references
+fail validation.
 
 ```sql
 SELECT tide.relay_set_outbox_v2(
@@ -35,42 +38,41 @@ For secrets stored on disk (Kubernetes mounted secrets, vault agent files):
 }
 ```
 
-The relay reads the file content, trims whitespace, and substitutes the value.
+The path must be absolute. The relay opens it without following symlinks and
+requires a regular file owned by the relay user with no group/world permission
+bits and a bounded size. Unsafe files fail closed.
 
 ### Best Practices
 
 - **Never** hardcode secrets in pipeline configurations
-- Use Kubernetes Secrets mounted as environment variables or files
+- Use `${env:NAME}` or `${file:/absolute/path}` references
 - Rotate secrets regularly — update the environment/file and the relay picks up new values on restart
 - Use separate credentials per pipeline when possible (principle of least privilege)
-- Restrict access to the `tide` schema — only the application and relay need access
+- Resolved values are never written to catalog JSON, history, status, metrics,
+  templates, logs, or error output
 
 ## Database Access Control
 
 ### Principle of Least Privilege
 
-Create dedicated roles for different access patterns:
+Provision the canonical non-login group roles after installing or upgrading the
+extension:
 
-```sql
--- Application role: can publish to outbox and read inbox
-CREATE ROLE app_writer;
-GRANT USAGE ON SCHEMA tide TO app_writer;
-GRANT EXECUTE ON FUNCTION tide.outbox_publish TO app_writer;
-GRANT EXECUTE ON FUNCTION tide.inbox_mark_processed TO app_writer;
-GRANT SELECT ON tide.inbox_pending TO app_writer;
-
--- Relay role: needs full access to catalog and outbox/inbox tables
-CREATE ROLE relay_worker;
-GRANT USAGE ON SCHEMA tide TO relay_worker;
-GRANT ALL ON ALL TABLES IN SCHEMA tide TO relay_worker;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA tide TO relay_worker;
-
--- Read-only monitoring role
-CREATE ROLE monitor;
-GRANT USAGE ON SCHEMA tide TO monitor;
-GRANT SELECT ON tide.outbox_status TO monitor;
-GRANT SELECT ON tide.relay_dlq TO monitor;
+```bash
+psql -f deploy/postgres/pg_tide_roles.sql "$DATABASE_URL"
 ```
+
+The script creates only `NOLOGIN` group roles:
+`tide_admin`, `tide_publisher`, `tide_relay`, `tide_operator`, and
+`tide_reader`. Grant those groups to existing login roles according to the
+least-privilege matrix. Existing `pg_tide_admin` is retained as a deprecated
+compatibility alias and inherits `tide_admin`; it is not created on fresh
+installations.
+
+`tide_publisher` membership is not enough to publish. The caller also needs an
+explicit row in the outbox publisher ACL. Reader and operator surfaces expose
+sanitized status only; raw configuration, history, payloads, and secret-bearing
+catalogs remain unavailable.
 
 ### Connection Security
 
@@ -197,3 +199,5 @@ For compliance, ensure:
 - [Webhook Signatures](../features/webhook-signatures.md) — Signature schemes
 - [Deployment Guide](../operations/deployment-guide.md) — Production deployment
 - [Reference: Security](../reference/security.md) — Extension security model
+- [Threat Model](../reference/threat-model.md) — Threats, evidence, and owners
+- [Dependency Policy](../reference/dependency-policy.md) — Dependency and artifact gates

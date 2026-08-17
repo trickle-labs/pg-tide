@@ -1,0 +1,199 @@
+# Experimental-only advisory exceptions. Production profiles must not use these.
+
+[[exception]]
+advisory = "RUSTSEC-2026-0119"
+package = "hickory-proto"
+connector_or_feature = "mongodb"
+owner = "pg-tide maintainers"
+reason = "No compatible mongodb release carries the upstream fix."
+opened = "2026-05-20"
+expires = "2026-12-31"
+removal_condition = "Remove when mongodb updates hickory-proto to >=0.26.1."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0118"
+package = "hickory-proto"
+connector_or_feature = "mongodb"
+owner = "pg-tide maintainers"
+reason = "No upstream fix; DNSSEC proof path is not used by pg-tide."
+opened = "2026-05-20"
+expires = "2026-12-31"
+removal_condition = "Remove mongodb dependency or when upstream publishes a fix."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0104"
+package = "rustls-webpki"
+connector_or_feature = "sqs,kinesis,mqtt"
+owner = "pg-tide maintainers"
+reason = "Optional connector dependency is not in the core production graph."
+opened = "2026-05-20"
+expires = "2026-12-31"
+removal_condition = "Upgrade the connector dependency chain to rustls-webpki >=0.103.13."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0098"
+package = "rustls-webpki"
+connector_or_feature = "sqs,kinesis,mqtt"
+owner = "pg-tide maintainers"
+reason = "Optional connector dependency is not in the core production graph."
+opened = "2026-05-20"
+expires = "2026-12-31"
+removal_condition = "Upgrade the connector dependency chain."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0099"
+package = "rustls-webpki"
+connector_or_feature = "sqs,kinesis,mqtt"
+owner = "pg-tide maintainers"
+reason = "Optional connector dependency is not in the core production graph."
+opened = "2026-05-20"
+expires = "2026-12-31"
+removal_condition = "Upgrade the connector dependency chain."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0049"
+package = "rustls-webpki"
+connector_or_feature = "mqtt"
+owner = "pg-tide maintainers"
+reason = "Optional connector dependency is not in the core production graph."
+opened = "2026-05-20"
+expires = "2026-12-31"
+removal_condition = "Upgrade rumqttc to a rustls-safe release."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2024-0436"
+package = "paste"
+connector_or_feature = "iceberg,delta,ducklake"
+owner = "pg-tide maintainers"
+reason = "Unmaintained transitive dependency is experimental-only."
+opened = "2026-05-20"
+expires = "2026-12-31"
+removal_condition = "Remove paste from the parquet dependency graph."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2025-0134"
+package = "rustls-pemfile"
+connector_or_feature = "mqtt,object-storage"
+owner = "pg-tide maintainers"
+reason = "Unmaintained transitive dependency is experimental-only."
+opened = "2026-05-20"
+expires = "2026-12-31"
+removal_condition = "Upgrade both connector dependency chains."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0145"
+package = "astral-tokio-tar"
+connector_or_feature = "testcontainers"
+owner = "pg-tide maintainers"
+reason = "Test-only container orchestration dependency; never shipped in relay artifacts."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade testcontainers to a release using astral-tokio-tar >=0.6.2."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0204"
+package = "crossbeam-epoch"
+connector_or_feature = "criterion,rocklake"
+owner = "pg-tide maintainers"
+reason = "Benchmark and experimental RockLake dependency; absent from the core profile."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade the benchmark and RockLake dependency chains."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0195"
+package = "quick-xml"
+connector_or_feature = "object-storage,rocklake"
+owner = "pg-tide maintainers"
+reason = "Optional object-storage and RockLake dependency; absent from the core profile."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade quick-xml transitively to >=0.41.0."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0194"
+package = "quick-xml"
+connector_or_feature = "object-storage,rocklake"
+owner = "pg-tide maintainers"
+reason = "Optional object-storage and RockLake dependency; absent from the core profile."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade quick-xml transitively to >=0.41.0."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0185"
+package = "quinn-proto"
+connector_or_feature = "arrow-flight"
+owner = "pg-tide maintainers"
+reason = "Optional Arrow Flight dependency; absent from the core profile."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade the Arrow Flight dependency chain to quinn-proto >=0.11.15."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0235"
+package = "rkyv"
+connector_or_feature = "object-storage,rocklake"
+owner = "pg-tide maintainers"
+reason = "Optional object-storage and RockLake dependency; absent from the core profile."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade the transitive rkyv dependency to >=0.8.17."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0190"
+package = "anyhow"
+connector_or_feature = "rocklake"
+owner = "pg-tide maintainers"
+reason = "Experimental RockLake dependency; absent from the core profile."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade the RockLake dependency chain to a fixed anyhow release."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0221"
+package = "event-listener"
+connector_or_feature = "redis,rocklake"
+owner = "pg-tide maintainers"
+reason = "Optional Redis and RockLake dependency; absent from the core profile."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade the transitive event-listener dependency to a fixed release."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2026-0253"
+package = "lru"
+connector_or_feature = "rocklake"
+owner = "pg-tide maintainers"
+reason = "Experimental RockLake dependency; absent from the core profile."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Upgrade the transitive lru dependency to a fixed release."
+production_reachable = false
+
+[[exception]]
+advisory = "RUSTSEC-2025-0141"
+package = "bincode"
+connector_or_feature = "rocklake"
+owner = "pg-tide maintainers"
+reason = "Unmaintained dependency is confined to the experimental RockLake graph."
+opened = "2026-08-17"
+expires = "2026-12-31"
+removal_condition = "Remove or replace the transitive bincode dependency."
+production_reachable = false

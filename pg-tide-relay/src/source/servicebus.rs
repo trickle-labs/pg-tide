@@ -44,11 +44,22 @@ impl ServiceBusSource {
     ) -> Result<Self, RelayError> {
         let (namespace, key_name, key_value) =
             crate::sink::servicebus::parse_connection_string_pub(connection_string)?;
+        crate::http_util::validate_url(
+            &format!("https://{namespace}.servicebus.windows.net"),
+            "servicebus",
+            false,
+            true,
+        )?;
 
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .map_err(|e| RelayError::source_poll("servicebus", e))?;
+        let endpoint = format!("https://{namespace}.servicebus.windows.net");
+        let client = crate::http_util::secure_client_for_url(
+            &endpoint,
+            "servicebus",
+            std::time::Duration::from_secs(60),
+            false,
+            true,
+        )
+        .map_err(|e| RelayError::source_poll("servicebus", e))?;
 
         Ok(Self {
             client,

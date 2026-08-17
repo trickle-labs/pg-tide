@@ -30,11 +30,22 @@ impl ServiceBusSink {
     /// `entity`: Queue or topic name.
     pub fn new(connection_string: &str, entity: impl Into<String>) -> Result<Self, RelayError> {
         let (namespace, key_name, key_value) = parse_connection_string(connection_string)?;
+        crate::http_util::validate_url(
+            &format!("https://{namespace}.servicebus.windows.net"),
+            "servicebus",
+            false,
+            true,
+        )?;
 
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| RelayError::sink("servicebus", e))?;
+        let endpoint = format!("https://{namespace}.servicebus.windows.net");
+        let client = crate::http_util::secure_client_for_url(
+            &endpoint,
+            "servicebus",
+            std::time::Duration::from_secs(30),
+            false,
+            true,
+        )
+        .map_err(|e| RelayError::sink("servicebus", e))?;
 
         Ok(Self {
             client,

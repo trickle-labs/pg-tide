@@ -201,6 +201,9 @@
 # Reference
 
 - [Security](reference/security.md)
+- [Threat Model](reference/threat-model.md)
+- [Security Evidence](reference/security-evidence.md)
+- [Dependency Policy](reference/dependency-policy.md)
 - [Architecture Decisions](reference/architecture-decisions.md)
 - [Version Compatibility](reference/version-compatibility.md)
 - [Changelog](../CHANGELOG.md)

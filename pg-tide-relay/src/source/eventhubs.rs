@@ -46,11 +46,22 @@ impl EventHubsSource {
     ) -> Result<Self, RelayError> {
         let (namespace, key_name, key_value) =
             crate::sink::eventhubs::parse_eventhubs_connection_string(connection_string)?;
+        crate::http_util::validate_url(
+            &format!("https://{namespace}.servicebus.windows.net"),
+            "eventhubs",
+            false,
+            true,
+        )?;
 
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(65))
-            .build()
-            .map_err(|e| RelayError::source_poll("eventhubs", e))?;
+        let endpoint = format!("https://{namespace}.servicebus.windows.net");
+        let client = crate::http_util::secure_client_for_url(
+            &endpoint,
+            "eventhubs",
+            std::time::Duration::from_secs(65),
+            false,
+            true,
+        )
+        .map_err(|e| RelayError::source_poll("eventhubs", e))?;
 
         Ok(Self {
             client,

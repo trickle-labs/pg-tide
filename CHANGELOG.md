@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.44.0 — Security Boundary Hardening](#0440--security-boundary-hardening)
 - [0.43.0 — Operational Cost Contract](#0430--operational-cost-contract)
 - [0.42.0 — Crash-Safe Relay Delivery](#0420--crash-safe-relay-delivery)
 - [0.41.0 — Focused Release Metadata](#0410--focused-release-metadata)
@@ -50,6 +51,22 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.44.0] — Security Boundary Hardening
+
+v0.44.0 makes the secure path the default for database privileges, relay
+configuration, outbound HTTP, secret files, and release evidence.
+
+### Security
+- **Database boundary**: canonical non-login roles, explicit ACLs, PUBLIC
+  revokes, and fail-closed extension authorization.
+- **Relay safety**: strict redacted secret references, no-follow secret-file
+  loading, HTTPS-only shared HTTP clients, disabled ambient proxies, and
+  SSRF-safe endpoint validation.
+- **Supply chain**: pinned Rust tooling, dependency-policy evidence, and
+  artifact-specific SBOM/provenance release scaffolding.
 
 ---
 

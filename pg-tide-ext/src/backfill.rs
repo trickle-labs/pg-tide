@@ -62,8 +62,8 @@ fn backfill_create_impl(
          WHERE outbox_name = $1 AND id BETWEEN $2 AND $3",
         &[outbox_name.into(), from_id.into(), to_id.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(0);
+    .map_err(|e| PgTideError::SpiError(format!("count backfill rows: {e}")))?
+    .ok_or_else(|| PgTideError::SpiError("backfill row count was NULL".to_string()))?;
 
     let job_id: i64 = if let Some(pname) = pipeline_name {
         Spi::get_one_with_args::<i64>(
@@ -103,7 +103,7 @@ fn backfill_create_impl(
         )
         .map_err(|e| PgTideError::SpiError(format!("INSERT backfill_jobs (no pipeline): {e}")))?
     }
-    .unwrap_or(0);
+    .ok_or_else(|| PgTideError::SpiError("backfill INSERT returned no job id".to_string()))?;
 
     pgrx::log!("[pg_tide] backfill_create: job '{job_name}' registered with id {job_id}");
     Ok(job_id)
@@ -127,8 +127,8 @@ fn backfill_pause_impl(job_name: &str) -> Result<(), PgTideError> {
          ) SELECT COUNT(*)::bigint FROM u",
         &[job_name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(0);
+    .map_err(|e| PgTideError::SpiError(format!("pause backfill '{job_name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("pause backfill '{job_name}' returned NULL")))?;
 
     if updated == 0 {
         return Err(PgTideError::InvalidArgument(format!(
@@ -157,8 +157,8 @@ fn backfill_resume_impl(job_name: &str) -> Result<(), PgTideError> {
          ) SELECT COUNT(*)::bigint FROM u",
         &[job_name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(0);
+    .map_err(|e| PgTideError::SpiError(format!("resume backfill '{job_name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("resume backfill '{job_name}' returned NULL")))?;
 
     if updated == 0 {
         return Err(PgTideError::InvalidArgument(format!(
@@ -222,9 +222,9 @@ fn backfill_status_impl(job_name: Option<&str>) -> Result<pgrx::JsonB, PgTideErr
                     'created_at',     created_at \
                  ) ORDER BY job_id) FROM tide.backfill_jobs), '[]'::jsonb))",
         )
-        .unwrap_or(None);
+        .map_err(|e| PgTideError::SpiError(format!("backfill fleet status: {e}")))?;
 
-        Ok(result.unwrap_or_else(|| pgrx::JsonB(serde_json::json!({"jobs": []}))))
+        result.ok_or_else(|| PgTideError::SpiError("backfill fleet status was NULL".to_string()))
     }
 }
 
@@ -257,8 +257,8 @@ fn backfill_cancel_impl(job_name: &str) -> Result<(), PgTideError> {
          ) SELECT COUNT(*)::bigint FROM u",
         &[job_name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(0);
+    .map_err(|e| PgTideError::SpiError(format!("cancel backfill '{job_name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("cancel backfill '{job_name}' returned NULL")))?;
 
     if updated == 0 {
         return Err(PgTideError::InvalidArgument(format!(

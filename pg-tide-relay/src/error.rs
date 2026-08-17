@@ -80,7 +80,7 @@ pub enum RelayError {
     #[error("cannot read secret from file '{path}': {reason}")]
     SecretReadError { path: String, reason: String },
 
-    #[error("invalid secret variable name: '{0}'")]
+    #[error("invalid secret reference: {0}")]
     InvalidSecretToken(String),
 
     // Generic
@@ -90,6 +90,9 @@ pub enum RelayError {
     // TLS errors (v0.15.0 / v0.23.0)
     #[error("TLS required by sslmode=require but TLS backend not compiled in: {url}")]
     TlsRequired { url: String },
+
+    #[error("PostgreSQL sslmode={mode} is rejected because it permits plaintext transport: {url}")]
+    InsecureTransport { mode: String, url: String },
 
     #[error("TLS setup failed: {0}")]
     TlsSetup(String),

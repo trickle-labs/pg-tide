@@ -39,14 +39,26 @@ impl PubSubSource {
         subscription: impl Into<String>,
         event_type: impl Into<String>,
     ) -> Result<Self, RelayError> {
-        let endpoint = std::env::var("PUBSUB_EMULATOR_HOST")
+        let emulator = std::env::var("PUBSUB_EMULATOR_HOST").ok();
+        let endpoint = emulator
+            .as_deref()
             .map(|h| format!("http://{h}"))
-            .unwrap_or_else(|_| "https://pubsub.googleapis.com".to_string());
+            .unwrap_or_else(|| "https://pubsub.googleapis.com".to_string());
+        crate::http_util::validate_url(
+            &endpoint,
+            "pubsub",
+            emulator.is_some(),
+            emulator.is_none(),
+        )?;
 
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .map_err(|e| RelayError::source_poll("pubsub", e))?;
+        let client = crate::http_util::secure_client_for_url(
+            &endpoint,
+            "pubsub",
+            std::time::Duration::from_secs(60),
+            emulator.is_some(),
+            emulator.is_none(),
+        )
+        .map_err(|e| RelayError::source_poll("pubsub", e))?;
 
         Ok(Self {
             client,

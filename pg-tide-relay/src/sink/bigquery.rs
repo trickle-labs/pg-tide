@@ -85,10 +85,15 @@ pub struct BigQuerySink {
 #[cfg(feature = "bigquery")]
 impl BigQuerySink {
     pub fn new(config: BigQueryConfig) -> Result<Self, RelayError> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .map_err(|e| RelayError::sink("bigquery", e))?;
+        crate::http_util::validate_url("https://bigquery.googleapis.com", "bigquery", false, true)?;
+        let client = crate::http_util::secure_client_for_url(
+            "https://bigquery.googleapis.com",
+            "bigquery",
+            std::time::Duration::from_secs(60),
+            false,
+            true,
+        )
+        .map_err(|e| RelayError::sink("bigquery", e))?;
         Ok(Self { client, config })
     }
 }

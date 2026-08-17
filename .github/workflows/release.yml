@@ -15,7 +15,7 @@ jobs:
     name: Check connector registry
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Check generated connector surface
         run: python3 scripts/generate_connector_surface.py --check
 
@@ -50,11 +50,12 @@ jobs:
             archive_ext: tar.gz
             cargo_features: core
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
         with:
+          toolchain: 1.97.1
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools (aarch64-linux)
@@ -82,7 +83,7 @@ jobs:
             -DestinationPath "pg-tide-${{ matrix.target }}.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pg-tide-${{ matrix.target }}
           path: pg-tide-${{ matrix.target }}.${{ matrix.archive_ext }}
@@ -103,11 +104,11 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/trickle-labs/pg-tide
           tags: |
@@ -117,10 +118,10 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -167,7 +168,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           path: /tmp/digests/*
@@ -182,23 +183,23 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Download amd64 digest
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: digests-amd64
           path: /tmp/digests
 
       - name: Download arm64 digest
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: digests-arm64
           path: /tmp/digests
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/trickle-labs/pg-tide
           tags: |
@@ -208,10 +209,10 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -246,10 +247,10 @@ jobs:
       id-token: write
     steps:
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -273,10 +274,10 @@ jobs:
       packages: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -284,14 +285,14 @@ jobs:
 
       - name: Docker metadata (for version tag)
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/trickle-labs/pg-tide
           tags: |
             type=semver,pattern={{version}}
 
       - name: Run Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ghcr.io/trickle-labs/pg-tide:${{ steps.meta.outputs.version }}
           format: sarif
@@ -303,7 +304,7 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
         with:
           sarif_file: trivy-results.sarif
 
@@ -324,11 +325,11 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Docker metadata (experimental-full image)
         id: meta-experimental
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/trickle-labs/pg-tide
           tags: |
@@ -336,10 +337,10 @@ jobs:
             type=raw,value=latest-experimental,enable={{is_default_branch}}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -387,7 +388,7 @@ jobs:
           touch "/tmp/digests-experimental/${digest#sha256:}"
 
       - name: Upload experimental digest
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: digests-experimental-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           path: /tmp/digests-experimental/*
@@ -402,23 +403,23 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Download experimental amd64 digest
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: digests-experimental-amd64
           path: /tmp/digests-experimental
 
       - name: Download experimental arm64 digest
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: digests-experimental-arm64
           path: /tmp/digests-experimental
 
       - name: Docker metadata (experimental-full)
         id: meta-experimental
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/trickle-labs/pg-tide
           tags: |
@@ -426,10 +427,10 @@ jobs:
             type=raw,value=latest-experimental,enable={{is_default_branch}}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -456,25 +457,55 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, cosign-docker, docker-experimental-merge, trivy-scan]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           pattern: pg-tide-*
           merge-multiple: false
 
-      # v0.19.0: Generate CycloneDX SBOM for supply-chain transparency.
+      # v0.44.0: Generate one CycloneDX SBOM for every final binary archive.
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
 
-      - name: Generate SBOM (CycloneDX JSON)
-        uses: anchore/sbom-action@v0
+      - name: Generate archive SBOMs and provenance subjects
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 |
+            while IFS= read -r -d '' archive; do
+              name="$(basename "$archive")"
+              syft "file:${archive}" -o cyclonedx-json \
+                > "release-evidence/${name}.sbom.cyclonedx.json"
+              sha256sum "$archive" > "release-evidence/${name}.sha256"
+            done
+
+      - name: Log in to GHCR for image evidence
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
-          format: cyclonedx-json
-          output-file: pg-tide-sbom.cyclonedx.json
-          artifact-name: pg-tide-sbom.cyclonedx.json
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate final image SBOM and provenance
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/trickle-labs/pg-tide:${GITHUB_REF_NAME#v}"
+          syft "registry:${IMAGE}" -o cyclonedx-json \
+            > release-evidence/pg-tide-image.sbom.cyclonedx.json
+          digest="$(docker buildx imagetools inspect "${IMAGE}" |
+            awk '/Digest:/ {print $2; exit}')"
+          test -n "${digest}"
+          cat > release-evidence/pg-tide-image.provenance.json <<EOF
+          {
+            "buildType": "https://slsa.dev/provenance/v1",
+            "builder": {"id": "https://github.com/trickle-labs/pg-tide/actions"},
+            "invocation": {"commit": "${GITHUB_SHA}", "ref": "${GITHUB_REF}"},
+            "subject": [{"name": "${IMAGE}", "digest": {"sha256": "${digest#sha256:}"}}]
+          }
+          EOF
 
       - name: Extract changelog for this version
         id: changelog
@@ -492,37 +523,54 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create release
+      # v0.44.0: Keyless signatures and SLSA-compatible provenance for every
+      # archive, plus SBOM/provenance attestations for the final image.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
+
+      - name: Sign release artifacts (keyless cosign)
+        run: |
+          IMAGE="ghcr.io/trickle-labs/pg-tide:${GITHUB_REF_NAME#v}"
+          while IFS= read -r -d '' f; do
+            cosign sign-blob --yes \
+              --bundle "${f}.bundle" \
+              "$f"
+            digest="$(sha256sum "$f" | awk '{print $1}')"
+            printf '%s\n' \
+              '{"buildType":"https://slsa.dev/provenance/v1","builder":{"id":"https://github.com/trickle-labs/pg-tide/actions"},"invocation":{"commit":"'"${GITHUB_SHA}"'","ref":"'"${GITHUB_REF}"'"},"subject":[{"name":"'"$(basename "$f")"'","digest":{"sha256":"'"${digest}"'"}}]}' \
+              > "${f}.provenance.json"
+            cosign attest-blob --yes \
+              --bundle "${f}.provenance.bundle" \
+              --predicate "${f}.provenance.json" \
+              --type slsaprovenance \
+              "$f"
+          done < <(find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0)
+          cosign attest --yes \
+            --predicate release-evidence/pg-tide-image.sbom.cyclonedx.json \
+            --type cyclonedx \
+            "${IMAGE}"
+          cosign attest --yes \
+            --predicate release-evidence/pg-tide-image.provenance.json \
+            --type slsaprovenance \
+            "${IMAGE}"
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+
+      - name: Create signed GitHub release
         id: create_release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
         with:
           body: ${{ steps.changelog.outputs.notes }}
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
-            pg-tide-sbom.cyclonedx.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # v0.16.0: Keyless cosign signing of release binary artifacts.
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Sign release artifacts (keyless cosign)
-        run: |
-          for f in artifacts/**/*.tar.gz artifacts/**/*.zip; do
-            [ -f "$f" ] || continue
-            cosign sign-blob --yes \
-              --bundle "${f}.bundle" \
-              "$f"
-          done
-        env:
-          COSIGN_EXPERIMENTAL: "1"
-
-      - name: Upload cosign bundles to release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: artifacts/**/*.bundle
+            artifacts/**/*.bundle
+            artifacts/**/*.provenance.json
+            artifacts/**/*.provenance.bundle
+            release-evidence/*.sbom.cyclonedx.json
+            release-evidence/*.sha256
+            release-evidence/pg-tide-image.sbom.cyclonedx.json
+            release-evidence/pg-tide-image.provenance.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -531,10 +579,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: release
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Publish pg-tide-relay
         # Only publish when a CARGO_REGISTRY_TOKEN secret is configured.

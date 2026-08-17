@@ -38,8 +38,10 @@ SELECT tide.admin_convert_outbox_storage(
 );
 ```
 
-Both maintenance functions require a superuser or membership in
-`pg_tide_admin`; they are not executable by `PUBLIC`.
+Both maintenance functions require a superuser or membership in the canonical
+`tide_admin` group; they are not executable by `PUBLIC`. Existing
+`pg_tide_admin` members retain this authority through the compatibility
+membership applied by the v0.44 provisioning script.
 
 Run during a maintenance window with publishing and relay workers drained.
 Preflight must report temporary disk requirements and refuse without explicit

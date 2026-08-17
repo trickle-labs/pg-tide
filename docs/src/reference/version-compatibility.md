@@ -1,11 +1,11 @@
 # Version compatibility
 
-## v0.41.0 support
+## v0.44.0 support
 
 | Component | Supported version |
 |---|---|
 | PostgreSQL extension | PostgreSQL 18 |
-| `pg-tide` relay | v0.41.x with the v0.41.x extension |
+| `pg-tide` relay | v0.44.x with the v0.44.x extension |
 | Production build | `core` profile |
 
 PostgreSQL 17 is not supported. The evidence and rejection decision are in
@@ -27,7 +27,9 @@ for the release. A compiling backend is not automatically supported.
 
 ## Upgrades
 
-Upgrades are sequential. For v0.40.0 deployments, use the
-`0.40.0 -> 0.41.0` extension migration shipped with the release. Do not skip
-versions or assume that an older relay understands newer catalog behavior.
-
+Upgrades are sequential. For v0.43.0 deployments, use the `0.43.0 -> 0.44.0` extension migration
+shipped with the release, then run
+[`deploy/postgres/pg_tide_roles.sql`](../../../deploy/postgres/pg_tide_roles.sql)
+as a cluster administrator and grant the canonical group roles to existing
+login roles. Do not skip versions or assume that an older relay understands
+newer catalog behavior.

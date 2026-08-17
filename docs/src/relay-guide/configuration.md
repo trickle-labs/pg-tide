@@ -211,7 +211,7 @@ On `SIGTERM`:
 
 ## Envelope Encryption (KMS)
 
-pg-tide supports AES-256-GCM envelope encryption via the `kms` feature gate.
+pg-tide supports AES-256-GCM envelope encryption via the `kms-local` feature.
 Encryption is enabled per-outbox in the `tide.outbox_encryption_config` catalog table.
 
 ### KMS Provider Availability
@@ -219,14 +219,12 @@ Encryption is enabled per-outbox in the `tide.outbox_encryption_config` catalog 
 | Provider | Feature flag | Status | Notes |
 |---|---|---|---|
 | `LocalKeyFile` | `kms-local` | **Fully implemented** (v0.35.0) | AES-256-GCM with key rotation via `key_path_previous`. Ready for production use in non-cloud environments. |
-| `AwsKms` | `kms-aws` | Not yet implemented | Returns `NotImplemented` gracefully. Full implementation before v1.0.0. |
-| `GcpKms` | `kms-gcp` | Not yet implemented | Returns `NotImplemented` gracefully. Full implementation before v1.0.0. |
-| `VaultKms` | `kms-vault` | Not yet implemented | Returns `NotImplemented` gracefully. Full implementation before v1.0.0. |
+| `AwsKms` | `kms-aws` | Unavailable/experimental | Not a production capability in v0.44.0. |
+| `GcpKms` | `kms-gcp` | Unavailable/experimental | Not a production capability in v0.44.0. |
+| `VaultKms` | `kms-vault` | Unavailable/experimental | Not a production capability in v0.44.0. |
 
-> **Startup guard**: The relay checks `is_available()` on any configured KMS provider at pipeline startup.
-> If a provider returns `false` (e.g. cloud providers in v0.35.0), the pipeline is paused with
-> `PauseReason::NotImplemented` rather than crashing. This ensures safe operation when a
-> cloud KMS feature is enabled but credentials are absent.
+Unsupported providers fail validation or worker construction before the source
+polls messages. There is no plaintext fallback.
 
 ### LocalKeyFile Configuration
 

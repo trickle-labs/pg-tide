@@ -18,21 +18,22 @@ The extension uses no:
 - Shared memory
 - File system access
 - Network connections
-- `SECURITY DEFINER` functions
+- unrestricted `SECURITY DEFINER` functions
 
-All operations run with the privileges of the calling user.
+Administrative and maintenance functions use a fixed `search_path =
+pg_catalog, tide`, qualify protected objects, authorize `session_user`, and
+revoke `PUBLIC` execution. The v0.44 migration grants only the canonical group
+roles.
 
 ### Catalog Table Access
 
-By default, any user with access to the `tide` schema can read and write all catalog tables. For multi-tenant deployments, consider:
+Install the canonical roles with
+`deploy/postgres/pg_tide_roles.sql`. Do not grant direct catalog access to
+application logins:
 
 ```sql
--- Restrict outbox creation to admin role
-REVOKE INSERT ON tide.tide_outbox_config FROM PUBLIC;
-GRANT INSERT ON tide.tide_outbox_config TO tide_admin;
-
--- Allow publishing to all application users
-GRANT EXECUTE ON FUNCTION tide.outbox_publish(text, jsonb, jsonb) TO app_user;
+GRANT tide_publisher TO app_login;
+SELECT tide.outbox_grant_publish('orders', 'app_login');
 ```
 
 ---
@@ -44,32 +45,35 @@ GRANT EXECUTE ON FUNCTION tide.outbox_publish(text, jsonb, jsonb) TO app_user;
 Never embed passwords in config files committed to version control. Use environment variables:
 
 ```toml
-postgres_url = "postgres://${ENV:PG_USER}:${ENV:PG_PASSWORD}@${ENV:PG_HOST}:5432/mydb"
+postgres_url = "postgres://${env:PG_USER}:${env:PG_PASSWORD}@${env:PG_HOST}:5432/mydb"
 ```
 
-Or use Kubernetes secrets, HashiCorp Vault, or your platform's secret management.
+File references use `${file:/absolute/path}` and are checked for ownership,
+permissions, type, and size. Resolved values are never serialized or logged.
+Secret references are resolved only at the final connector boundary; malformed,
+unknown, missing, or unsafe references fail closed.
 
 ### Least-Privilege Database User
 
-The relay needs minimal privileges:
-
-```sql
-CREATE ROLE pg_tide_relay LOGIN PASSWORD 'secret';
-GRANT USAGE ON SCHEMA tide TO pg_tide_relay;
-GRANT SELECT, UPDATE ON tide.tide_outbox_messages TO pg_tide_relay;
-GRANT SELECT ON tide.tide_outbox_config TO pg_tide_relay;
-GRANT SELECT ON tide.relay_outbox_config TO pg_tide_relay;
-GRANT SELECT ON tide.relay_inbox_config TO pg_tide_relay;
-GRANT SELECT, INSERT, UPDATE ON tide.tide_consumer_offsets TO pg_tide_relay;
-GRANT SELECT, INSERT, UPDATE, DELETE ON tide.tide_consumer_leases TO pg_tide_relay;
-GRANT SELECT, INSERT, UPDATE ON tide.relay_consumer_offsets TO pg_tide_relay;
-```
+The relay login receives membership in the non-login `tide_relay` group. The
+provisioning script never creates login roles or passwords.
 
 ### Network Security
 
 - The relay's metrics endpoint (default `:9090`) should not be exposed publicly
 - Use TLS for PostgreSQL connections in production (`sslmode=require`)
 - Use TLS for sink connections (NATS TLS, Kafka SSL, HTTPS webhooks)
+- HTTP clients use HTTPS, disable automatic redirects, and ignore ambient
+  `HTTP_PROXY`/`HTTPS_PROXY` settings. Development exceptions must be explicit
+  connector configuration.
+- URL validation rejects loopback, private, link-local, metadata, mapped,
+  documentation, multicast, and other special-use addresses.
+
+### Encryption Provider Scope
+
+`LocalKeyFile` is the only supported v0.44.0 encryption provider. AWS KMS,
+GCP KMS, and Vault Transit names remain unavailable/experimental and are not
+included in the production connector profile.
 
 ### Docker Security
 

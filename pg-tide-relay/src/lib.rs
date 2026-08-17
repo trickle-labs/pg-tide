@@ -27,6 +27,7 @@ pub mod rate_limiter;
 pub mod routing;
 pub mod schema_evolution;
 pub mod schema_registry;
+pub mod secret;
 pub mod sink;
 pub mod source;
 pub mod transforms;

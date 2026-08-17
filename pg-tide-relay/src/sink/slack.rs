@@ -32,13 +32,19 @@ impl SlackSink {
         icon_emoji: Option<String>,
         batch_limit: usize,
     ) -> Result<Self, RelayError> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| RelayError::sink("slack", e))?;
+        let webhook_url = webhook_url.into();
+        crate::http_util::validate_url(&webhook_url, "slack", false, true)?;
+        let client = crate::http_util::secure_client_for_url(
+            &webhook_url,
+            "slack",
+            std::time::Duration::from_secs(30),
+            false,
+            true,
+        )
+        .map_err(|e| RelayError::sink("slack", e))?;
         Ok(Self {
             client,
-            webhook_url: webhook_url.into(),
+            webhook_url,
             username,
             icon_emoji,
             batch_limit: batch_limit.max(1),
@@ -147,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_build_payload_has_blocks() {
-        let sink = SlackSink::new("http://localhost", None, None, 50).unwrap();
+        let sink = SlackSink::new("https://hooks.slack.com/services/test", None, None, 50).unwrap();
         let msgs = vec![make_msg("insert", 1), make_msg("delete", 2)];
         let payload = sink.build_payload(&msgs);
         let blocks = payload["blocks"].as_array().unwrap();
@@ -158,7 +164,7 @@ mod tests {
     #[test]
     fn test_build_payload_includes_username_and_icon() {
         let sink = SlackSink::new(
-            "http://localhost",
+            "https://hooks.slack.com/services/test",
             Some("pg-tide".to_string()),
             Some(":robot_face:".to_string()),
             50,
@@ -172,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_build_payload_op_appears_in_block_text() {
-        let sink = SlackSink::new("http://localhost", None, None, 50).unwrap();
+        let sink = SlackSink::new("https://hooks.slack.com/services/test", None, None, 50).unwrap();
         let msgs = vec![make_msg("delete", 99)];
         let payload = sink.build_payload(&msgs);
         let text = payload["blocks"][0]["text"]["text"].as_str().unwrap();
@@ -183,7 +189,7 @@ mod tests {
     #[test]
     fn test_batch_limit_is_at_least_one() {
         // batch_limit = 0 must be clamped to 1.
-        let sink = SlackSink::new("http://localhost", None, None, 0).unwrap();
+        let sink = SlackSink::new("https://hooks.slack.com/services/test", None, None, 0).unwrap();
         assert_eq!(sink.batch_limit, 1);
     }
 }

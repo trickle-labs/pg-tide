@@ -30,13 +30,19 @@ impl DiscordSink {
         avatar_url: Option<String>,
         batch_limit: usize,
     ) -> Result<Self, RelayError> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| RelayError::sink("discord", e))?;
+        let webhook_url = webhook_url.into();
+        crate::http_util::validate_url(&webhook_url, "discord", false, true)?;
+        let client = crate::http_util::secure_client_for_url(
+            &webhook_url,
+            "discord",
+            std::time::Duration::from_secs(30),
+            false,
+            true,
+        )
+        .map_err(|e| RelayError::sink("discord", e))?;
         Ok(Self {
             client,
-            webhook_url: webhook_url.into(),
+            webhook_url,
             username,
             avatar_url,
             // Discord allows max 10 embeds per message.
@@ -153,7 +159,8 @@ mod tests {
 
     #[test]
     fn test_build_payload_has_embeds() {
-        let sink = DiscordSink::new("http://localhost", None, None, 10).unwrap();
+        let sink =
+            DiscordSink::new("https://discord.com/api/webhooks/test", None, None, 10).unwrap();
         let msgs = vec![make_msg("insert", 1), make_msg("delete", 2)];
         let payload = sink.build_payload(&msgs);
         let embeds = payload["embeds"].as_array().unwrap();
@@ -162,7 +169,8 @@ mod tests {
 
     #[test]
     fn test_insert_color_is_green() {
-        let sink = DiscordSink::new("http://localhost", None, None, 10).unwrap();
+        let sink =
+            DiscordSink::new("https://discord.com/api/webhooks/test", None, None, 10).unwrap();
         let msgs = vec![make_msg("insert", 1)];
         let payload = sink.build_payload(&msgs);
         // 0x57F287 = 5763719 decimal.
@@ -171,7 +179,8 @@ mod tests {
 
     #[test]
     fn test_delete_color_is_red() {
-        let sink = DiscordSink::new("http://localhost", None, None, 10).unwrap();
+        let sink =
+            DiscordSink::new("https://discord.com/api/webhooks/test", None, None, 10).unwrap();
         let msgs = vec![make_msg("delete", 99)];
         let payload = sink.build_payload(&msgs);
         // 0xED4245 = 15548997 decimal.
@@ -180,7 +189,8 @@ mod tests {
 
     #[test]
     fn test_embed_footer_contains_dedup_key() {
-        let sink = DiscordSink::new("http://localhost", None, None, 10).unwrap();
+        let sink =
+            DiscordSink::new("https://discord.com/api/webhooks/test", None, None, 10).unwrap();
         let msgs = vec![make_msg("insert", 42)];
         let payload = sink.build_payload(&msgs);
         let footer = payload["embeds"][0]["footer"]["text"].as_str().unwrap();
@@ -190,14 +200,15 @@ mod tests {
     #[test]
     fn test_batch_limit_clamped_to_10() {
         // Discord allows max 10 embeds — batch_limit > 10 must be clamped.
-        let sink = DiscordSink::new("http://localhost", None, None, 100).unwrap();
+        let sink =
+            DiscordSink::new("https://discord.com/api/webhooks/test", None, None, 100).unwrap();
         assert_eq!(sink.batch_limit, 10);
     }
 
     #[test]
     fn test_includes_username_and_avatar() {
         let sink = DiscordSink::new(
-            "http://localhost",
+            "https://discord.com/api/webhooks/test",
             Some("pg-tide-relay".to_string()),
             Some("https://example.com/avatar.png".to_string()),
             10,

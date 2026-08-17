@@ -27,7 +27,7 @@ jobs:
     name: Validate budget contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Validate operational budget configuration
         run: python3 scripts/check_operational_budgets.py --check-config
 
@@ -56,9 +56,11 @@ jobs:
       PG_TIDE_BENCH_DURATION_SECS: ${{ inputs.duration_seconds || '1800' }}
       PG_TIDE_BENCH_OUTPUT: target/operational-benchmarks/${{ matrix.profile }}-${{ matrix.repetition }}.json
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
       - name: Build relay binary
         run: cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core
       - name: Run reference profile
@@ -70,7 +72,7 @@ jobs:
         run: python3 scripts/check_operational_budgets.py --result "$PG_TIDE_BENCH_OUTPUT"
       - name: Upload raw result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: operational-${{ matrix.profile }}-${{ matrix.repetition }}
           path: target/operational-benchmarks/
@@ -86,9 +88,11 @@ jobs:
       PG_TIDE_BENCH_DURATION_SECS: ${{ inputs.duration_seconds || '1800' }}
       PG_TIDE_BENCH_OUTPUT: target/operational-benchmarks/soak.json
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
       - name: Build relay binary
         run: cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core
       - name: Run soak profile
@@ -100,7 +104,7 @@ jobs:
         run: python3 scripts/check_operational_budgets.py --result "$PG_TIDE_BENCH_OUTPUT"
       - name: Upload soak diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: operational-soak
           path: target/operational-benchmarks/
