@@ -48,7 +48,7 @@ sink_max_inflight = 1000
 ```
 
 ```bash
-pg-tide --config relay.toml
+pg-tide run --config relay.toml
 ```
 
 ---
@@ -58,13 +58,16 @@ pg-tide --config relay.toml
 | Parameter | CLI Flag | Environment Variable | Default | Description |
 |-----------|----------|---------------------|---------|-------------|
 | `postgres_url` | `--postgres-url` | `PG_TIDE_POSTGRES_URL` | *(required)* | PostgreSQL connection URL |
-| `metrics_addr` | `--metrics-addr` | `PG_TIDE_METRICS_ADDR` | `0.0.0.0:9090` | Prometheus metrics + health endpoint bind address |
+| `metrics_addr` | `--metrics-addr` | `PG_TIDE_METRICS_ADDR` | `0.0.0.0:9090` | Prometheus metrics and `/livez`/`/readyz` bind address |
 | `log_format` | `--log-format` | `PG_TIDE_LOG_FORMAT` | `text` | Log output format: `text` or `json` |
 | `log_level` | `--log-level` | `PG_TIDE_LOG_LEVEL` | `info` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace` |
 | `relay_group_id` | `--relay-group-id` | `PG_TIDE_GROUP_ID` | `default` | Relay group identifier for advisory lock namespacing |
 | `discovery_interval_secs` | — | — | `30` | Seconds between pipeline discovery polls |
 | `default_batch_size` | — | — | `100` | Default messages per batch when not specified per-pipeline |
 | `sink_max_inflight` | — | — | `1000` | Maximum in-flight messages before upstream polling pauses. `0` = unlimited |
+| `max_owned_pipelines` | `--max-pipelines` | `PG_TIDE_MAX_PIPELINES` | `50` | Maximum pipelines owned by one relay |
+| `max_connections` | `--max-connections` | `PG_TIDE_MAX_CONNECTIONS` | `52` | Maximum coordinator pool connections |
+| `sweep_interval_hours` | `--sweep-interval-hours` | `PG_TIDE_SWEEP_INTERVAL_HOURS` | `24` | Delivery-receipt cleanup interval |
 | — | `--drain-timeout` | `PG_TIDE_DRAIN_TIMEOUT` | `30` | Seconds to wait for in-flight messages to drain on SIGTERM |
 | — | `--config` | `PG_TIDE_CONFIG` | — | Path to TOML config file |
 
@@ -228,15 +231,8 @@ polls messages. There is no plaintext fallback.
 
 ### LocalKeyFile Configuration
 
-```toml
-# relay.toml — KMS section (when kms-local feature is enabled)
-[pipelines.my-encrypted-outbox.encryption]
-provider = "local"
-key_path = "/etc/pg-tide/kms/current.key"
-# Optional: key_path_previous for zero-downtime key rotation.
-# Messages encrypted with the old key are decrypted via the previous key file.
-key_path_previous = "/etc/pg-tide/kms/previous.key"
-```
+Configure encryption through the outbox catalog API; do not add a
+`[pipelines]` section to the process TOML.
 
 Key files must contain exactly 64 hex characters (32 bytes / 256 bits).
 Generate a new key: `openssl rand -hex 32 > /etc/pg-tide/kms/current.key`

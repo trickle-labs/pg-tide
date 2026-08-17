@@ -41,9 +41,9 @@ The relay runs as a sidecar in the same pod as PostgreSQL. It connects to
 spec:
   sidecars:
     - name: pg-tide-relay
-      image: ghcr.io/trickle-labs/pg-tide:0.1.0
+      image: ghcr.io/trickle-labs/pg-tide:0.45.0
       env:
-        - name: PG_TIDE_RELAY_POSTGRES_URL
+        - name: PG_TIDE_POSTGRES_URL
           valueFrom:
             secretKeyRef:
               name: my-cluster-app    # CNPG-generated secret

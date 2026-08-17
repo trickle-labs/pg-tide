@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.45.0 — Operators First](#0450--operators-first)
 - [0.44.0 — Security Boundary Hardening](#0440--security-boundary-hardening)
 - [0.43.0 — Operational Cost Contract](#0430--operational-cost-contract)
 - [0.42.0 — Crash-Safe Relay Delivery](#0420--crash-safe-relay-delivery)
@@ -51,6 +52,27 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.45.0] — 2026-08-17 — Operators First
+
+v0.45.0 makes the supported relay workflow straightforward to start,
+inspect, validate, upgrade, and operate safely.
+
+### Operator experience
+- **Canonical CLI**: added `run`, `config validate/export`, and
+  `maintenance sweep`, with compatibility aliases and stable text/JSON output.
+- **Diagnostics**: added strict configuration parsing, aggregate startup
+  preflight, `doctor`, status reporting, and fail-closed readiness probes.
+
+### Runtime and operations
+- **Status**: added observational runtime status storage and a sanitized
+  pipeline status view without changing delivery authority.
+- **Observability**: aligned metrics, health endpoints, dashboards, alerts,
+  Helm probes, and indexed operational runbooks.
+- **Upgrade safety**: added forward and guarded reverse migrations plus
+  migration and operational validation coverage.
 
 ---
 

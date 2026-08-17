@@ -6,6 +6,11 @@ metadata:
     {{- include "pg-tide.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "pg-tide.selectorLabels" . | nindent 6 }}
@@ -32,6 +37,7 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
+            - run
             - --metrics-addr={{ .Values.relay.metricsAddr }}
             - --log-format={{ .Values.relay.logFormat }}
             - --log-level={{ .Values.relay.logLevel }}

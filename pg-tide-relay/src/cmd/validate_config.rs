@@ -1,16 +1,14 @@
 /// `pg-tide validate-config` — dry-run source and sink factories for a pipeline.
-use std::sync::Arc;
-
+use crate::cli::OutputFormat;
 use pg_tide_relay::pg_tls;
 
 /// Dry-run source and sink factories for a named pipeline.
 pub async fn run_validate_config(
     url: &str,
     pipeline: &str,
+    output_format: OutputFormat,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use pg_tide_relay::config::{resolve_pipeline_secrets, PipelineConfig, PipelineDirection};
-
-    println!("pg-tide validate-config — pipeline: {pipeline}");
 
     // v0.15.0: Use pg_tls::connect (honours sslmode from URL).
     let (client, conn) = pg_tls::connect(url)
@@ -33,21 +31,11 @@ pub async fn run_validate_config(
         )
         .await?;
 
-    let row = match row {
-        Some(r) => r,
-        None => {
-            eprintln!("error: pipeline '{pipeline}' not found in catalog");
-            std::process::exit(1);
-        }
-    };
+    let row = row.ok_or_else(|| format!("pipeline '{pipeline}' not found in catalog"))?;
 
     let config: serde_json::Value = row.get(0);
     let direction_str: String = row.get(1);
     let enabled: bool = row.get(2);
-
-    if !enabled {
-        println!("  [WARN] pipeline '{pipeline}' is disabled");
-    }
 
     let direction = if direction_str == "forward" {
         PipelineDirection::Forward
@@ -63,51 +51,37 @@ pub async fn run_validate_config(
         tenant_name: "default".to_string(),
     };
 
-    let resolved = resolve_pipeline_secrets(pc.config.clone())
-        .map_err(|e| format!("secret resolution failed: {e}"))?;
+    let report = pg_tide_relay::config::preflight::validate_pipelines(std::slice::from_ref(&pc));
+    if !report.is_valid() {
+        let reasons = report
+            .issues
+            .iter()
+            .filter(|issue| {
+                matches!(
+                    issue.severity,
+                    pg_tide_relay::config::preflight::PreflightSeverity::Error
+                )
+            })
+            .map(|issue| issue.reason.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!("pipeline '{pipeline}' failed preflight: {reasons}").into());
+    }
 
-    println!("  [OK] Secrets resolved");
+    // Validate secret references without returning resolved values.
+    resolve_pipeline_secrets(pc.config.clone())
+        .map_err(|error| format!("secret resolution failed: {error}"))?;
 
-    let resolved_pc = PipelineConfig {
-        name: pc.name.clone(),
-        direction: pc.direction,
-        enabled: pc.enabled,
-        config: resolved,
-        tenant_name: pc.tenant_name.clone(),
-    };
-
-    // Try to build source.
-    let (worker_client, worker_conn) = pg_tls::connect(url)
-        .await
-        .map_err(|e| format!("worker connection failed: {e}"))?;
-    tokio::spawn(async move {
-        let _ = worker_conn.await;
+    let data = serde_json::json!({
+        "pipeline": pipeline,
+        "direction": direction_str,
+        "enabled": enabled,
+        "valid": true,
     });
-    let db = Arc::new(worker_client);
-
-    match pg_tide_relay::coordinator::build_source_for_validation(
-        &resolved_pc,
-        Arc::clone(&db),
-        "validate",
-    )
-    .await
-    {
-        Ok(src) => println!("  [OK] Source '{}' instantiated", src.name()),
-        Err(e) => {
-            println!("  [FAIL] Source instantiation failed: {e}");
-            std::process::exit(1);
-        }
+    if matches!(output_format, OutputFormat::Json) {
+        crate::cmd::output::success("config validate", data, output_format)?;
+    } else {
+        println!("validate-config: pipeline '{pipeline}' configuration is valid.");
     }
-
-    match pg_tide_relay::coordinator::build_sink_for_validation(&resolved_pc, Arc::clone(&db)).await
-    {
-        Ok(sink) => println!("  [OK] Sink '{}' instantiated", sink.name()),
-        Err(e) => {
-            println!("  [FAIL] Sink instantiation failed: {e}");
-            std::process::exit(1);
-        }
-    }
-
-    println!("\nvalidate-config: pipeline '{pipeline}' configuration is valid.");
     Ok(())
 }

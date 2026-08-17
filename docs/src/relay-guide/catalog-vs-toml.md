@@ -74,7 +74,9 @@ default_batch_size  = 100
 metrics_addr        = "0.0.0.0:9090"
 log_level           = "info"
 log_format          = "json"
-drain_timeout_secs  = 30
+max_owned_pipelines = 50
+max_connections     = 100
+sweep_interval_hours = 24
 ```
 
 A fully commented example is baked into the Docker image at
@@ -86,19 +88,16 @@ docker cp pg-tide:/etc/pg-tide/pg-tide.example.toml ./pg-tide.toml
 
 ---
 
-## Startup Warning: TOML-Only Pipelines
+## Startup Preflight
 
-If the TOML file configures a pipeline that is **not** present in the
-catalog (e.g. via a legacy `[pipelines.*]` section), the relay emits a
-`WARN`-level log entry at startup:
+`pg-tide run`, `pg-tide config validate`, and `pg-tide doctor` run the same
+strict catalog preflight. Unknown process or pipeline keys, malformed disabled
+rows, and invalid enabled rows are reported before any advisory lock or worker
+starts. The relay reports all independent findings in deterministic order.
 
-```
-WARN pipeline "orders-to-nats" defined in TOML but not found in catalog — ignoring
-```
-
-The expected resolution is to create the pipeline via SQL using
-`tide.relay_set_outbox_v2()` or `tide.relay_set_inbox_v2()`, then remove
-the TOML definition.
+Use `pg-tide config export --output json` to obtain canonical, secret-safe
+catalog configuration. It preserves `${env:...}` and `${file:...}` references;
+it never exports resolved secret values or runtime state.
 
 ---
 

@@ -1093,3 +1093,20 @@ jobs:
         env:
           PG_URL: "postgres://testuser:testpass@localhost/testdb"
         run: python scripts/ducklake_compat_smoke.py
+
+  operator-surfaces:
+    name: Operator surfaces (dashboards, alerts, runbooks, Helm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Validate observability contracts
+        run: python3 scripts/check_observability.py
+      - name: Validate shell scripts
+        run: bash -n scripts/*.sh
+      - name: Validate Helm YAML inputs
+        run: |
+          for f in examples/cnpg/*.yaml pg-tide/dashboards/alerts.yaml; do
+            ruby -e 'require "yaml"; YAML.load_stream(File.read(ARGV[0]))' "$f"
+          done
+      - name: Check Helm chart when available
+        run: command -v helm >/dev/null && helm lint helm/pg-tide || echo 'helm not installed; static checks completed'

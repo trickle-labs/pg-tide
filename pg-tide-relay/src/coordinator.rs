@@ -577,9 +577,47 @@ impl Coordinator {
             Ok(p) => p,
             Err(e) => {
                 tracing::error!(error = %e, "failed to load pipelines — skipping reconciliation");
+                let mut health = self.health.write().await;
+                health.postgres_reachable = false;
+                health.coordinator_ready = false;
+                self.metrics
+                    .status_refresh_errors
+                    .with_label_values(&["catalog"])
+                    .inc();
                 return;
             }
         };
+
+        let preflight = crate::config::preflight::startup_preflight(&pipelines);
+        for issue in &preflight.issues {
+            match issue.severity {
+                crate::config::preflight::PreflightSeverity::Error => {
+                    tracing::error!(
+                        pipeline = %issue.pipeline,
+                        reason = %issue.reason,
+                        "pipeline preflight failed"
+                    );
+                }
+                crate::config::preflight::PreflightSeverity::Warning => {
+                    tracing::warn!(
+                        pipeline = %issue.pipeline,
+                        reason = %issue.reason,
+                        "pipeline preflight warning"
+                    );
+                }
+            }
+        }
+        if !preflight.is_valid() {
+            let mut health = self.health.write().await;
+            health.startup_preflight_complete = true;
+            health.postgres_reachable = true;
+            health.coordinator_ready = false;
+            self.metrics
+                .status_refresh_errors
+                .with_label_values(&["preflight"])
+                .inc();
+            return;
+        }
 
         // v0.29.0: Check for pipelines eligible for auto-resume and re-enable them.
         self.check_auto_resume().await;
@@ -723,6 +761,9 @@ impl Coordinator {
 
         // v0.19.0: Update shared HealthState so /healthz reflects live pipeline state.
         let mut h = self.health.write().await;
+        h.startup_preflight_complete = true;
+        h.postgres_reachable = true;
+        h.coordinator_ready = true;
         h.unhealthy_pipelines
             .retain(|pipeline| self.owned.contains_key(pipeline));
         h.healthy_pipelines = self
@@ -752,6 +793,118 @@ async fn mark_pipeline_health(
     }
 }
 
+async fn runtime_status_available(db: &Client) -> bool {
+    match db
+        .query_one(
+            "SELECT to_regclass('tide.relay_runtime_status') IS NOT NULL",
+            &[],
+        )
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(error) => {
+            tracing::warn!(%error, "runtime status availability check failed");
+            false
+        }
+    }
+}
+
+async fn upsert_runtime_status(
+    db: &Client,
+    relay_group_id: &str,
+    pipeline: &PipelineConfig,
+    owner_token: Option<&str>,
+) {
+    let direction = match pipeline.direction {
+        PipelineDirection::Forward => "forward",
+        PipelineDirection::Reverse => "reverse",
+    };
+    if let Err(error) = db
+        .execute(
+            "INSERT INTO tide.relay_runtime_status
+                (relay_group_id, pipeline_id, direction, tenant_name,
+                 owner_token, owner_acquired_at, last_owner_heartbeat,
+                 last_state_update_at)
+             VALUES ($1, $2, $3, $4, $5,
+                     CASE WHEN $5 IS NULL THEN NULL ELSE now() END,
+                     CASE WHEN $5 IS NULL THEN NULL ELSE now() END, now())
+             ON CONFLICT (relay_group_id, pipeline_id, direction, tenant_name)
+             DO UPDATE SET
+                 owner_token = EXCLUDED.owner_token,
+                 owner_acquired_at = CASE
+                     WHEN EXCLUDED.owner_token IS NULL THEN NULL
+                     ELSE COALESCE(tide.relay_runtime_status.owner_acquired_at, now())
+                 END,
+                 last_owner_heartbeat = CASE
+                     WHEN EXCLUDED.owner_token IS NULL THEN NULL
+                     ELSE now()
+                 END,
+                 last_state_update_at = now()",
+            &[
+                &relay_group_id,
+                &pipeline.name,
+                &direction,
+                &pipeline.tenant_name,
+                &owner_token,
+            ],
+        )
+        .await
+    {
+        tracing::warn!(
+            pipeline = %pipeline.name,
+            %error,
+            "runtime status write failed; delivery state remains authoritative"
+        );
+    }
+}
+
+async fn record_runtime_error(
+    db: &Client,
+    relay_group_id: &str,
+    pipeline: &PipelineConfig,
+    error_class: &str,
+) {
+    let direction = match pipeline.direction {
+        PipelineDirection::Forward => "forward",
+        PipelineDirection::Reverse => "reverse",
+    };
+    if let Err(error) = db
+        .execute(
+            "UPDATE tide.relay_runtime_status
+                SET last_error_code = 'worker.failure',
+                    last_error_component = 'relay.worker',
+                    last_error_class = $5,
+                    last_error_at = now(),
+                    retry_state = CASE WHEN $5 = 'transient' THEN 'retrying' ELSE NULL END,
+                    last_state_update_at = now()
+              WHERE relay_group_id = $1
+                AND pipeline_id = $2
+                AND direction = $3
+                AND tenant_name = $4",
+            &[
+                &relay_group_id,
+                &pipeline.name,
+                &direction,
+                &pipeline.tenant_name,
+                &error_class,
+            ],
+        )
+        .await
+    {
+        tracing::warn!(
+            pipeline = %pipeline.name,
+            %error,
+            "runtime error status write failed"
+        );
+    }
+}
+
+struct WorkerRuntime {
+    relay_group_id: String,
+    status_enabled: bool,
+    owner_token: String,
+}
+
 /// Top-level worker task: wraps `worker_inner` and logs the outcome.
 #[allow(clippy::too_many_arguments)]
 async fn run_pipeline_worker(
@@ -766,6 +919,9 @@ async fn run_pipeline_worker(
 ) {
     let name = pipeline.name.clone();
     let tenant_label = pipeline.tenant_name.clone();
+    let status_pipeline = pipeline.clone();
+    let status_enabled = runtime_status_available(&db).await;
+    let owner_token = uuid::Uuid::new_v4().to_string();
 
     // v0.13.0: Mark pipeline as healthy when worker starts.
     metrics
@@ -773,11 +929,18 @@ async fn run_pipeline_worker(
         .with_label_values(&[&name, &tenant_label])
         .set(1);
     mark_pipeline_health(&health, &name, &tenant_label, true).await;
+    if status_enabled {
+        upsert_runtime_status(&db, &relay_group_id, &pipeline, Some(&owner_token)).await;
+    }
 
     let worker = worker_inner(
         pipeline,
-        db,
-        relay_group_id.clone(),
+        db.clone(),
+        WorkerRuntime {
+            relay_group_id: relay_group_id.clone(),
+            status_enabled,
+            owner_token: owner_token.clone(),
+        },
         metrics.clone(),
         health.clone(),
         batch_size,
@@ -814,6 +977,9 @@ async fn run_pipeline_worker(
                 .with_label_values(&[&name, &tenant_label])
                 .set(0);
             mark_pipeline_health(&health, &name, &tenant_label, false).await;
+            if status_enabled {
+                upsert_runtime_status(&db, &relay_group_id, &status_pipeline, None).await;
+            }
         }
         Err(e) => {
             tracing::error!(pipeline = %name, error = %e, "worker exited with error");
@@ -823,12 +989,18 @@ async fn run_pipeline_worker(
                 .with_label_values(&[&name, &tenant_label])
                 .set(0);
             mark_pipeline_health(&health, &name, &tenant_label, false).await;
+            if status_enabled {
+                upsert_runtime_status(&db, &relay_group_id, &status_pipeline, None).await;
+            }
             // v0.16.0: Record pipeline error by class.
             let error_class = if e.is_transient() {
                 "transient"
             } else {
                 "permanent"
             };
+            if status_enabled {
+                record_runtime_error(&db, &relay_group_id, &status_pipeline, error_class).await;
+            }
             metrics
                 .pipeline_errors_total
                 .with_label_values(&[name.as_str(), error_class])
@@ -841,7 +1013,7 @@ async fn run_pipeline_worker(
 async fn worker_inner(
     pipeline: PipelineConfig,
     db: Arc<Client>,
-    relay_group_id: String,
+    runtime: WorkerRuntime,
     metrics: Arc<RelayMetrics>,
     health: Arc<RwLock<HealthState>>,
     default_batch_size: i64,
@@ -933,7 +1105,7 @@ async fn worker_inner(
         );
     }
 
-    let mut source = build_source(&pipeline, Arc::clone(&db), &relay_group_id).await?;
+    let mut source = build_source(&pipeline, Arc::clone(&db), &runtime.relay_group_id).await?;
     if let Some(from_offset) = replay_from {
         source.configure_replay(from_offset)?;
     }
@@ -964,8 +1136,23 @@ async fn worker_inner(
         .map(|v| v as u64)
         .unwrap_or(60_000);
     let mut poll_backoff_ms = poll_interval_ms;
+    let mut last_runtime_heartbeat = Instant::now();
 
     loop {
+        if runtime.status_enabled && last_runtime_heartbeat.elapsed() >= Duration::from_secs(30) {
+            upsert_runtime_status(
+                &db,
+                &runtime.relay_group_id,
+                &pipeline,
+                Some(&runtime.owner_token),
+            )
+            .await;
+            last_runtime_heartbeat = Instant::now();
+        }
+        metrics
+            .pipeline_heartbeat_age
+            .with_label_values(&[pipeline.name.as_str()])
+            .set(0);
         if *stop_rx.borrow() {
             crate::failpoints::hit("during_shutdown", &pipeline.name).await?;
             break;
@@ -1100,6 +1287,14 @@ async fn worker_inner(
                 "intentionally_filtered",
             )
             .await?;
+            metrics
+                .retry_state
+                .with_label_values(&[pipeline.name.as_str(), "none"])
+                .set(1);
+            metrics
+                .retry_state
+                .with_label_values(&[pipeline.name.as_str(), "retrying"])
+                .set(0);
             continue;
         }
 
@@ -1234,6 +1429,10 @@ async fn worker_inner(
                     .pipeline_healthy
                     .with_label_values(&[&pipeline.name, &tenant_label])
                     .set(1);
+                metrics
+                    .pipeline_last_success
+                    .with_label_values(&[pipeline.name.as_str()])
+                    .set(chrono::Utc::now().timestamp());
                 mark_pipeline_health(&health, &pipeline.name, &tenant_label, true).await;
 
                 metrics
@@ -1256,6 +1455,14 @@ async fn worker_inner(
             }
 
             WorkerDirective::BackoffMs(sleep_ms) => {
+                metrics
+                    .retry_state
+                    .with_label_values(&[pipeline.name.as_str(), "retrying"])
+                    .set(1);
+                metrics
+                    .retry_state
+                    .with_label_values(&[pipeline.name.as_str(), "none"])
+                    .set(0);
                 if let PublishOutcome::Failure(ref e) = publish_outcome {
                     tracing::warn!(
                         pipeline = %pipeline.name,
@@ -1272,6 +1479,10 @@ async fn worker_inner(
                         .publish_errors
                         .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                         .inc();
+                    metrics
+                        .pipeline_last_error
+                        .with_label_values(&[pipeline.name.as_str()])
+                        .set(chrono::Utc::now().timestamp());
                 } else {
                     // CircuitBreakerOpen with DLQ disabled.
                     tracing::warn!(
@@ -1307,6 +1518,10 @@ async fn worker_inner(
                         .publish_errors
                         .with_label_values(&[&pipeline.name, &direction_label, &tenant_label])
                         .inc();
+                    metrics
+                        .pipeline_last_error
+                        .with_label_values(&[pipeline.name.as_str()])
+                        .set(chrono::Utc::now().timestamp());
                 } else {
                     tracing::warn!(
                         pipeline = %pipeline.name,
@@ -1346,6 +1561,10 @@ async fn worker_inner(
                 .await
                 {
                     DlqOutcome::Written => {
+                        metrics
+                            .dlq_depth
+                            .with_label_values(&[pipeline.name.as_str()])
+                            .add(entries.len() as i64);
                         metrics
                             .delivery_stage_total
                             .with_label_values(&[

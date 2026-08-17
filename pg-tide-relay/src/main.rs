@@ -20,8 +20,8 @@ use tokio::signal;
 use tokio::sync::{mpsc, watch, RwLock};
 use tracing_subscriber::EnvFilter;
 
-use cli::{Cli, Commands};
-use config::{LogFormat, RelayConfig};
+use cli::{Cli, Commands, ConfigCommands, MaintenanceCommands, OutputFormat};
+use config::{LogFormat, ProcessOverlay, RelayConfig};
 
 /// v0.27.0: Emit a clap-formatted "missing required argument" error and exit
 /// with code 2 when a PostgreSQL URL is absent for a command that requires it.
@@ -52,10 +52,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         RelayConfig::default()
     };
 
-    // CLI args take precedence over file config.
-    if let Some(url) = cli.postgres_url.clone() {
-        cfg.postgres_url = url;
-    }
+    // CLI args take precedence over file config, but only when explicitly
+    // supplied.  This preserves process settings loaded from TOML.
+    cfg.overlay(ProcessOverlay {
+        postgres_url: cli.postgres_url.clone(),
+        metrics_addr: cli.metrics_addr.clone(),
+        log_format: cli.log_format.as_deref().map(|format| match format {
+            "json" => LogFormat::Json,
+            _ => LogFormat::Text,
+        }),
+        log_level: cli.log_level.clone(),
+        relay_group_id: cli.relay_group_id.clone(),
+        max_owned_pipelines: cli.max_pipelines,
+        max_connections: cli.max_connections,
+        tenant_id: cli.tenant_id.clone().map(Some),
+        sweep_interval_hours: cli.sweep_interval_hours,
+        ..ProcessOverlay::default()
+    });
     // v0.18.0: --postgres-url-file takes precedence over --postgres-url.
     // Reads the URL from a file to avoid credential exposure in /proc/<pid>/cmdline.
     if let Some(ref url_file) = cli.postgres_url_file {
@@ -64,31 +77,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| format!("failed to read --postgres-url-file {url_file}: {e}"))?;
         cfg.postgres_url = url.trim().to_string();
     }
-    cfg.metrics_addr = cli.metrics_addr.clone();
-    cfg.log_level = cli.log_level.clone();
-    cfg.relay_group_id = cli.relay_group_id.clone();
-    cfg.log_format = match cli.log_format.as_str() {
-        "json" => LogFormat::Json,
-        _ => LogFormat::Text,
-    };
-    // v0.15.0: CLI overrides for max_pipelines and max_connections.
-    if let Some(max) = cli.max_pipelines {
-        cfg.max_owned_pipelines = max;
-    }
-    if let Some(max) = cli.max_connections {
-        cfg.max_connections = max;
-    }
-    // v0.25.0: Tenant ID for multi-tenant relay groups.
-    if let Some(ref tid) = cli.tenant_id {
-        cfg.tenant_id = Some(tid.clone());
-    }
     // v0.28.0: Config mode enforcement.
-    cfg.config_mode = match cli.config_mode.as_str() {
-        "catalog_only" => config::ConfigMode::CatalogOnly,
-        _ => config::ConfigMode::TomlAllowed,
-    };
-    // v0.35.0: Delivery receipt sweep interval.
-    cfg.sweep_interval_hours = cli.sweep_interval_hours;
+    if cli.config_mode.is_some() {
+        eprintln!(
+            "warning: `--config-mode` is deprecated and ignored; pipeline authority is PostgreSQL"
+        );
+    }
     let drain_timeout = Duration::from_secs(cli.drain_timeout);
 
     // Expand ${ENV:VAR_NAME} placeholders in connection strings.
@@ -99,22 +93,116 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Dispatch subcommands before checking postgres_url.
     match cli.command {
+        Some(Commands::Run) => {}
+        Some(Commands::Config(config_cmd)) => match config_cmd {
+            ConfigCommands::Validate {
+                pipeline,
+                postgres_url,
+            } => {
+                let url = postgres_url
+                    .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                    .unwrap_or_else(|| cfg.postgres_url.clone());
+                require_postgres_url(&url, "config validate");
+                let result =
+                    cmd::validate_config::run_validate_config(&url, &pipeline, cli.output_format)
+                        .await;
+                if let Err(error) = result {
+                    cmd::output::failure(
+                        "config validate",
+                        cmd::diagnostic::from_error("postgres.catalog", &error),
+                        cli.output_format,
+                    )?;
+                    return Err(error);
+                }
+                return Ok(());
+            }
+            ConfigCommands::Export {
+                pipeline,
+                postgres_url,
+            } => {
+                let url = postgres_url
+                    .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                    .unwrap_or_else(|| cfg.postgres_url.clone());
+                require_postgres_url(&url, "config export");
+                let data = match cmd::config::run_export(&url, pipeline.as_deref()).await {
+                    Ok(data) => data,
+                    Err(error) => {
+                        cmd::output::failure(
+                            "config export",
+                            cmd::diagnostic::from_error("postgres.catalog", &error),
+                            cli.output_format,
+                        )?;
+                        return Err(error);
+                    }
+                };
+                if matches!(cli.output_format, OutputFormat::Json) {
+                    cmd::output::success("config export", data, cli.output_format)?;
+                } else {
+                    let count = data["pipelines"].as_array().map_or(0, Vec::len);
+                    println!("Exported {count} pipeline configuration(s).");
+                }
+                return Ok(());
+            }
+        },
+        Some(Commands::Maintenance(MaintenanceCommands::Sweep {
+            outbox,
+            batch_size,
+            max_batches,
+            dry_run,
+            postgres_url,
+        })) => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| cfg.postgres_url.clone());
+            require_postgres_url(&url, "maintenance sweep");
+            let result = cmd::sweep::run_sweep_with_options(
+                &url,
+                outbox.as_deref(),
+                batch_size,
+                max_batches,
+                dry_run,
+                cli.output_format,
+            )
+            .await;
+            if let Err(error) = result {
+                if matches!(cli.output_format, OutputFormat::Json) {
+                    cmd::output::failure(
+                        "maintenance sweep",
+                        cmd::diagnostic::from_error("postgres.maintenance", &error),
+                        cli.output_format,
+                    )?;
+                }
+                return Err(error);
+            }
+            return Ok(());
+        }
         Some(Commands::Doctor { postgres_url }) => {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "doctor");
-            return cmd::doctor::run_doctor(&url).await;
+            return cmd::doctor::run_doctor(&url, cli.output_format).await;
         }
         Some(Commands::ValidateConfig {
             pipeline,
             postgres_url,
         }) => {
+            eprintln!("warning: `validate-config` is deprecated; use `config validate`");
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "validate-config");
-            return cmd::validate_config::run_validate_config(&url, &pipeline).await;
+            let result =
+                cmd::validate_config::run_validate_config(&url, &pipeline, cli.output_format).await;
+            if let Err(error) = result {
+                cmd::output::failure(
+                    "config validate",
+                    cmd::diagnostic::from_error("postgres.catalog", &error),
+                    cli.output_format,
+                )?;
+                return Err(error);
+            }
+            return Ok(());
         }
         Some(Commands::Replay(replay_cmd)) => {
             return cmd::replay::run_replay_command(replay_cmd, &cfg.postgres_url).await;
@@ -132,18 +220,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             dry_run,
             postgres_url,
         }) => {
+            eprintln!("warning: `sweep` is deprecated; use `maintenance sweep`");
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "sweep");
-            return cmd::sweep::run_sweep_with_options(
+            let result = cmd::sweep::run_sweep_with_options(
                 &url,
                 outbox.as_deref(),
                 batch_size,
                 max_batches,
                 dry_run,
+                cli.output_format,
             )
             .await;
+            if let Err(error) = result {
+                if matches!(cli.output_format, OutputFormat::Json) {
+                    cmd::output::failure(
+                        "maintenance sweep",
+                        cmd::diagnostic::from_error("postgres.maintenance", &error),
+                        cli.output_format,
+                    )?;
+                }
+                return Err(error);
+            }
+            return Ok(());
         }
         Some(Commands::Status {
             postgres_url,
@@ -153,7 +254,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "status");
-            return cmd::status::run_status(&url, inbox_summary).await;
+            let result = cmd::status::run_status(&url, inbox_summary, cli.output_format).await;
+            if let Err(error) = result {
+                if matches!(cli.output_format, OutputFormat::Json) {
+                    cmd::output::failure(
+                        "status",
+                        cmd::diagnostic::from_error("postgres.status", &error),
+                        cli.output_format,
+                    )?;
+                }
+                return Err(error);
+            }
+            return Ok(());
         }
         Some(Commands::MigrateConfig { postgres_url }) => {
             let url = postgres_url
@@ -264,7 +376,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Dag(dag_cmd)) => {
             return cmd::dag::run_dag_command(dag_cmd, &cfg.postgres_url).await;
         }
-        None => {}
+        None => {
+            eprintln!("warning: commandless relay startup is deprecated; use `run`");
+        }
     }
 
     // v0.25.0: Handle --self-test flag: verify connectivity, schema, and
@@ -280,6 +394,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     require_postgres_url(&cfg.postgres_url, "relay daemon");
+    cfg.validate()?;
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),

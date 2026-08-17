@@ -29,7 +29,7 @@ relay:
   # Relay group ID — used for advisory lock namespacing.
   # Set a unique value per deployment group.
   groupId: "default"
-  # Address for the Prometheus /metrics and /health endpoints.
+  # Address for the Prometheus /metrics and /livez endpoints.
   metricsAddr: "0.0.0.0:9090"
   # Log format: text or json.
   logFormat: "json"
@@ -78,14 +78,14 @@ resources:
 
 livenessProbe:
   httpGet:
-    path: /health
+    path: /livez
     port: metrics
   initialDelaySeconds: 5
   periodSeconds: 10
 
 readinessProbe:
   httpGet:
-    path: /health
+    path: /readyz
     port: metrics
   initialDelaySeconds: 3
   periodSeconds: 5

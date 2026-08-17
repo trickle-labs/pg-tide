@@ -42,7 +42,7 @@ default_batch_size = 100
 
 # ── Observability ─────────────────────────────────────────────────────────
 #
-# Address for the Prometheus /metrics, /health, and /healthz endpoints.
+# Address for Prometheus metrics and health endpoints (/livez, /readyz).
 metrics_addr = "0.0.0.0:9090"
 
 # Logging level: "trace", "debug", "info" (default), "warn", "error"
@@ -56,7 +56,10 @@ log_format = "text"
 #
 # How long (seconds) to wait for in-flight batches to finish before forcing
 # a hard stop on SIGTERM / Ctrl-C.
-drain_timeout_secs = 30
+drain_timeout = 30
+
+# Hours between best-effort delivery-receipt cleanup runs.
+sweep_interval_hours = 24
 
 # ── Example: forward pipeline (outbox → NATS JetStream) ──────────────────
 #

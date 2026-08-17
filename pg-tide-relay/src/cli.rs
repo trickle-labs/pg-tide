@@ -1,5 +1,12 @@
 /// CLI argument definitions for pg-tide.
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub enum OutputFormat {
+    #[default]
+    Text,
+    Json,
+}
 
 /// v0.27.0: Validate that a `--postgres-url` value, when provided, begins with
 /// a recognised PostgreSQL URI scheme (`postgres://` or `postgresql://`).
@@ -56,6 +63,9 @@ fn validate_tenant_id_str(value: &str) -> Result<String, String> {
                   Reverse mode: consumes from external sources → writes to inbox tables."
 )]
 pub struct Cli {
+    /// Operator output format.
+    #[arg(long = "output", global = true, value_enum, default_value_t = OutputFormat::Text)]
+    pub output_format: OutputFormat,
     /// PostgreSQL connection string (required for relay mode; optional for diagnostics).
     /// Example: postgres://user:pass@localhost:5432/mydb
     #[arg(
@@ -83,39 +93,36 @@ pub struct Cli {
     /// Prometheus metrics + health endpoint address.
     #[arg(
         long,
-        default_value = "0.0.0.0:9090",
         env = "PG_TIDE_METRICS_ADDR",
         help = "Prometheus metrics + health endpoint (default: 0.0.0.0:9090)"
     )]
-    pub metrics_addr: String,
+    pub metrics_addr: Option<String>,
 
     /// Log format.
     #[arg(
         long,
-        default_value = "text",
         env = "PG_TIDE_LOG_FORMAT",
+        value_parser = ["text", "json"],
         help = "Log format: text or json (default: text)"
     )]
-    pub log_format: String,
+    pub log_format: Option<String>,
 
     /// Log level.
     #[arg(
         long,
-        default_value = "info",
         env = "PG_TIDE_LOG_LEVEL",
         help = "Log level: error, warn, info, debug, trace (default: info)"
     )]
-    pub log_level: String,
+    pub log_level: Option<String>,
 
     /// Relay group ID for advisory locks and offset namespacing.
     /// Use a unique value per relay deployment group.
     #[arg(
         long,
-        default_value = "default",
         env = "PG_TIDE_RELAY_GROUP_ID",
         help = "Relay group ID for advisory locks (default: default)"
     )]
-    pub relay_group_id: String,
+    pub relay_group_id: Option<String>,
 
     /// Optional TOML config file path.
     #[arg(
@@ -214,23 +221,23 @@ pub struct Cli {
     #[arg(
         long = "config-mode",
         env = "PG_TIDE_CONFIG_MODE",
-        default_value = "toml_allowed",
+        value_parser = ["toml_allowed", "catalog_only"],
         help = "Pipeline config enforcement mode: toml_allowed | catalog_only (default: toml_allowed)"
     )]
-    pub config_mode: String,
+    pub config_mode: Option<String>,
 
     /// v0.35.0: Interval in hours between automatic delivery-receipt sweep runs.
     /// The coordinator calls `tide.relay_truncate_delivery_receipts()` on this schedule.
     #[arg(
         long = "sweep-interval-hours",
         env = "PG_TIDE_SWEEP_INTERVAL_HOURS",
-        default_value = "24",
         hide = true,
         help = "Hours between delivery-receipt background sweep runs (default: 24)"
     )]
-    pub sweep_interval_hours: u64,
+    pub sweep_interval_hours: Option<u64>,
 
-    /// Optional subcommand.  When absent the relay daemon is started.
+    /// Optional subcommand.  When absent the relay daemon is started (legacy
+    /// compatibility form; use `run`).
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -238,6 +245,17 @@ pub struct Cli {
 /// Diagnostic / operational subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Start the relay daemon.
+    Run,
+
+    /// Configuration operations.
+    #[command(subcommand)]
+    Config(ConfigCommands),
+
+    /// Retention and catalog maintenance.
+    #[command(subcommand)]
+    Maintenance(MaintenanceCommands),
+
     /// Validate PostgreSQL connectivity, schema version, and catalog health.
     ///
     /// Connects to PostgreSQL, checks that the tide schema and required tables
@@ -388,6 +406,41 @@ pub enum Commands {
     /// `pg-tide dag status` — show each edge with upstream lag and gate state.
     #[command(subcommand)]
     Dag(DagCommands),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommands {
+    /// Validate a named pipeline.
+    Validate {
+        #[arg(long)]
+        pipeline: String,
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+    /// Export catalog pipeline configuration.
+    Export {
+        #[arg(long)]
+        pipeline: Option<String>,
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MaintenanceCommands {
+    /// Run a bounded retention sweep.
+    Sweep {
+        #[arg(long)]
+        outbox: Option<String>,
+        #[arg(long, default_value = "1000", value_parser = clap::value_parser!(i32).range(1..=10000))]
+        batch_size: i32,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1000000))]
+        max_batches: Option<u32>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
+        postgres_url: Option<String>,
+    },
 }
 
 /// Replay workbench subcommands.
@@ -761,5 +814,37 @@ mod tests {
     fn sweep_rejects_batch_size_above_hard_limit() {
         let result = Cli::try_parse_from(["pg-tide", "sweep", "--batch-size", "10001"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn canonical_command_tree_parses() {
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "run"]).unwrap().command,
+            Some(Commands::Run)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "config", "validate", "--pipeline", "orders"])
+                .unwrap()
+                .command,
+            Some(Commands::Config(ConfigCommands::Validate { .. }))
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "config", "export"])
+                .unwrap()
+                .command,
+            Some(Commands::Config(ConfigCommands::Export { .. }))
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "maintenance", "sweep"])
+                .unwrap()
+                .command,
+            Some(Commands::Maintenance(MaintenanceCommands::Sweep { .. }))
+        ));
+    }
+
+    #[test]
+    fn output_selector_is_global() {
+        let cli = Cli::try_parse_from(["pg-tide", "--output", "json", "status"]).unwrap();
+        assert!(matches!(cli.output_format, OutputFormat::Json));
     }
 }

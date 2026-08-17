@@ -145,6 +145,7 @@
 - [Capacity Planning](operations/capacity-planning.md)
 - [Maintenance](operations/maintenance.md)
 - [Monitoring Cookbook](operations/monitoring-cookbook.md)
+- [Operations Runbooks](operations/runbooks.md)
 - [Partition Management](operations/partition-management.md)
 - [Troubleshooting](operations/troubleshooting.md)
 - [Troubleshooting Guide](operations/troubleshooting-guide.md)

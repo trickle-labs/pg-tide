@@ -13,7 +13,7 @@ groups:
   - name: pg-tide-health
     rules:
       - alert: PgTidePipelineUnhealthy
-        expr: pg_tide_pipeline_healthy == 0
+        expr: pg_tide_relay_pipeline_healthy == 0
         for: 2m
         labels:
           severity: critical
@@ -21,7 +21,7 @@ groups:
           summary: "Pipeline {{ $labels.pipeline }} is unhealthy (circuit breaker open)"
 
       - alert: PgTideNoActivity
-        expr: rate(pg_tide_messages_published_total[10m]) == 0
+        expr: rate(pg_tide_relay_messages_published_total[10m]) == 0
         for: 15m
         labels:
           severity: warning
@@ -32,7 +32,7 @@ groups:
 ### Dashboard Panel
 ```promql
 # Traffic light: 1 = green, 0 = red
-pg_tide_pipeline_healthy
+pg_tide_relay_pipeline_healthy
 ```
 
 ## Recipe: Throughput Monitoring
@@ -43,13 +43,13 @@ pg_tide_pipeline_healthy
 
 ```promql
 # Messages published per second (per pipeline)
-rate(pg_tide_messages_published_total[5m])
+rate(pg_tide_relay_messages_published_total[5m])
 
 # Total throughput across all pipelines
-sum(rate(pg_tide_messages_published_total[5m]))
+sum(rate(pg_tide_relay_messages_published_total[5m]))
 
 # Publish success ratio
-1 - (rate(pg_tide_publish_errors_total[5m]) / rate(pg_tide_messages_consumed_total[5m]))
+1 - (rate(pg_tide_relay_publish_errors_total[5m]) / rate(pg_tide_relay_messages_consumed_total[5m]))
 ```
 
 ### Alert: Throughput Drop
@@ -57,8 +57,8 @@ sum(rate(pg_tide_messages_published_total[5m]))
 ```yaml
 - alert: PgTideThroughputDrop
   expr: |
-    rate(pg_tide_messages_published_total[5m]) 
-    < 0.5 * rate(pg_tide_messages_published_total[1h] offset 1d)
+    rate(pg_tide_relay_messages_published_total[5m])
+    < 0.5 * rate(pg_tide_relay_messages_published_total[1h] offset 1d)
   for: 10m
   labels:
     severity: warning
@@ -74,13 +74,13 @@ sum(rate(pg_tide_messages_published_total[5m]))
 
 ```promql
 # P50 delivery latency
-histogram_quantile(0.5, rate(pg_tide_delivery_latency_seconds_bucket[5m]))
+histogram_quantile(0.5, rate(pg_tide_relay_delivery_latency_seconds_bucket[5m]))
 
 # P99 delivery latency
-histogram_quantile(0.99, rate(pg_tide_delivery_latency_seconds_bucket[5m]))
+histogram_quantile(0.99, rate(pg_tide_relay_delivery_latency_seconds_bucket[5m]))
 
 # Percentage of messages delivered within 1 second
-sum(rate(pg_tide_delivery_latency_seconds_bucket{le="1.0"}[5m]))
+sum(rate(pg_tide_relay_delivery_latency_seconds_bucket{le="1.0"}[5m]))
 / sum(rate(pg_tide_delivery_latency_seconds_count[5m]))
 ```
 
@@ -88,7 +88,7 @@ sum(rate(pg_tide_delivery_latency_seconds_bucket{le="1.0"}[5m]))
 
 ```yaml
 - alert: PgTideHighLatency
-  expr: histogram_quantile(0.99, rate(pg_tide_delivery_latency_seconds_bucket[5m])) > 5
+  expr: histogram_quantile(0.99, rate(pg_tide_relay_delivery_latency_seconds_bucket[5m])) > 5
   for: 5m
   labels:
     severity: warning
@@ -105,20 +105,20 @@ sum(rate(pg_tide_delivery_latency_seconds_bucket{le="1.0"}[5m]))
 ```promql
 # Exact lag is exported from tide.relay_pipeline_lag through PostgreSQL exporter.
 # Use labels for relay group, pipeline, and outbox.
-pg_tide_relay_pipeline_lag
+pg_tide_relay_consumer_lag
 
 # Lag growth rate (positive = growing, negative = draining)
-deriv(pg_tide_consumer_lag[5m])
+deriv(pg_tide_relay_consumer_lag[5m])
 
 # Estimated time to drain at current rate
-pg_tide_relay_pipeline_lag / rate(pg_tide_messages_published_total[5m])
+pg_tide_relay_consumer_lag / rate(pg_tide_relay_messages_published_total[5m])
 ```
 
 ### Alert: Growing Lag
 
 ```yaml
 - alert: PgTideGrowingLag
-  expr: deriv(pg_tide_relay_pipeline_lag[10m]) > 0
+  expr: deriv(pg_tide_relay_consumer_lag[10m]) > 0
   for: 10m
   labels:
     severity: warning
@@ -126,7 +126,7 @@ pg_tide_relay_pipeline_lag / rate(pg_tide_messages_published_total[5m])
     summary: "Pipeline {{ $labels.pipeline }} lag is growing"
 
 - alert: PgTideCleanupBlocked
-  expr: pg_tide_outbox_retention_blocked > 0
+  expr: pg_tide_relay_consumer_lag > 0
   for: 5m
   labels:
     severity: critical
@@ -147,17 +147,17 @@ fixed message count.
 
 ```promql
 # Errors per second
-rate(pg_tide_publish_errors_total[5m])
+rate(pg_tide_relay_publish_errors_total[5m])
 
 # Error ratio (errors / total consumed)
-rate(pg_tide_publish_errors_total[5m]) / rate(pg_tide_messages_consumed_total[5m])
+rate(pg_tide_relay_publish_errors_total[5m]) / rate(pg_tide_relay_messages_consumed_total[5m])
 ```
 
 ### Alert: Error Spike
 
 ```yaml
 - alert: PgTideErrorSpike
-  expr: rate(pg_tide_publish_errors_total[5m]) > 1
+  expr: rate(pg_tide_relay_publish_errors_total[5m]) > 1
   for: 5m
   labels:
     severity: warning
@@ -183,7 +183,7 @@ GROUP BY pipeline_name;
 
 ```yaml
 - alert: PgTideDLQGrowing
-  expr: pg_tide_dlq_unresolved > 0
+  expr: pg_tide_relay_dlq_depth > 0
   for: 30m
   labels:
     severity: warning

@@ -41,6 +41,14 @@ pub const METRIC_SOURCE_POLL_QUERIES: &str = "pg_tide_relay_source_poll_queries_
 pub const METRIC_OFFSET_WRITES: &str = "pg_tide_relay_offset_writes_total";
 /// v0.43.0: Coordinator catalog discovery query count.
 pub const METRIC_CATALOG_DISCOVERY_QUERIES: &str = "pg_tide_relay_catalog_discovery_queries_total";
+pub const METRIC_RETRY_STATE: &str = "pg_tide_relay_retry_state";
+pub const METRIC_DLQ_DEPTH: &str = "pg_tide_relay_dlq_depth";
+pub const METRIC_STATUS_REFRESH: &str = "pg_tide_relay_status_refresh_total";
+pub const METRIC_STATUS_REFRESH_ERRORS: &str = "pg_tide_relay_status_refresh_errors_total";
+pub const METRIC_PIPELINE_HEARTBEAT_AGE: &str = "pg_tide_relay_pipeline_heartbeat_age_seconds";
+pub const METRIC_PIPELINE_LAST_SUCCESS: &str =
+    "pg_tide_relay_pipeline_last_success_timestamp_seconds";
+pub const METRIC_PIPELINE_LAST_ERROR: &str = "pg_tide_relay_pipeline_last_error_timestamp_seconds";
 
 /// Shared relay metrics.
 pub struct RelayMetrics {
@@ -86,6 +94,13 @@ pub struct RelayMetrics {
     pub source_poll_queries: IntCounterVec,
     pub offset_writes: IntCounterVec,
     pub catalog_discovery_queries: IntCounterVec,
+    pub retry_state: IntGaugeVec,
+    pub dlq_depth: IntGaugeVec,
+    pub status_refresh: IntCounterVec,
+    pub status_refresh_errors: IntCounterVec,
+    pub pipeline_heartbeat_age: IntGaugeVec,
+    pub pipeline_last_success: IntGaugeVec,
+    pub pipeline_last_error: IntGaugeVec,
     registry: Registry,
 }
 
@@ -325,6 +340,54 @@ impl RelayMetrics {
         )?;
         registry.register(Box::new(catalog_discovery_queries.clone()))?;
 
+        let retry_state = IntGaugeVec::new(
+            prometheus::opts!(METRIC_RETRY_STATE, "Current retry state for a pipeline"),
+            &["pipeline", "state"],
+        )?;
+        let dlq_depth = IntGaugeVec::new(
+            prometheus::opts!(METRIC_DLQ_DEPTH, "Unresolved dead-letter entries"),
+            &["pipeline"],
+        )?;
+        let status_refresh = IntCounterVec::new(
+            prometheus::opts!(METRIC_STATUS_REFRESH, "Operational status refreshes"),
+            &["result"],
+        )?;
+        let status_refresh_errors = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_STATUS_REFRESH_ERRORS,
+                "Operational status refresh failures"
+            ),
+            &["component"],
+        )?;
+        registry.register(Box::new(retry_state.clone()))?;
+        registry.register(Box::new(dlq_depth.clone()))?;
+        registry.register(Box::new(status_refresh.clone()))?;
+        registry.register(Box::new(status_refresh_errors.clone()))?;
+        let pipeline_heartbeat_age = IntGaugeVec::new(
+            prometheus::opts!(
+                METRIC_PIPELINE_HEARTBEAT_AGE,
+                "Age of the last pipeline heartbeat"
+            ),
+            &["pipeline"],
+        )?;
+        let pipeline_last_success = IntGaugeVec::new(
+            prometheus::opts!(
+                METRIC_PIPELINE_LAST_SUCCESS,
+                "Unix timestamp of the last checkpointed success"
+            ),
+            &["pipeline"],
+        )?;
+        let pipeline_last_error = IntGaugeVec::new(
+            prometheus::opts!(
+                METRIC_PIPELINE_LAST_ERROR,
+                "Unix timestamp of the last safe pipeline error"
+            ),
+            &["pipeline"],
+        )?;
+        registry.register(Box::new(pipeline_heartbeat_age.clone()))?;
+        registry.register(Box::new(pipeline_last_success.clone()))?;
+        registry.register(Box::new(pipeline_last_error.clone()))?;
+
         Ok(Arc::new(Self {
             messages_published,
             messages_consumed,
@@ -351,6 +414,13 @@ impl RelayMetrics {
             source_poll_queries,
             offset_writes,
             catalog_discovery_queries,
+            retry_state,
+            dlq_depth,
+            status_refresh,
+            status_refresh_errors,
+            pipeline_heartbeat_age,
+            pipeline_last_success,
+            pipeline_last_error,
             registry,
         }))
     }
@@ -369,11 +439,28 @@ impl RelayMetrics {
 pub struct HealthState {
     pub healthy_pipelines: Vec<String>,
     pub unhealthy_pipelines: Vec<String>,
+    /// Set only after the initial catalog/preflight pass has completed.
+    pub startup_preflight_complete: bool,
+    /// Last known PostgreSQL reachability. Unknown is not ready.
+    pub postgres_reachable: bool,
+    /// Set while the coordinator is running its reconciliation loop.
+    pub coordinator_ready: bool,
 }
 
 impl HealthState {
     pub fn is_healthy(&self) -> bool {
         self.unhealthy_pipelines.is_empty()
+    }
+
+    pub fn is_live(&self) -> bool {
+        true
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.startup_preflight_complete
+            && self.postgres_reachable
+            && self.coordinator_ready
+            && self.unhealthy_pipelines.is_empty()
     }
 }
 
@@ -396,16 +483,17 @@ pub async fn start_metrics_server(
         health: Arc::clone(&health),
     };
 
-    async fn health_handler(State(s): State<AppState>) -> (StatusCode, String) {
+    async fn readiness_handler(State(s): State<AppState>) -> (StatusCode, String) {
         let h = s.health.read().await;
-        if h.is_healthy() {
-            (StatusCode::OK, "healthy".to_string())
+        if h.is_ready() {
+            (StatusCode::OK, "ready".to_string())
         } else {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!("unhealthy: {:?}", h.unhealthy_pipelines),
-            )
+            (StatusCode::SERVICE_UNAVAILABLE, "not ready".to_string())
         }
+    }
+
+    async fn liveness_handler() -> (StatusCode, &'static str) {
+        (StatusCode::OK, "alive")
     }
 
     let app = Router::new()
@@ -418,10 +506,10 @@ pub async fn start_metrics_server(
                 }
             }),
         )
-        // v0.19.0: /healthz is the Kubernetes-standard liveness/readiness path;
-        // /health is kept for backwards compatibility.
-        .route("/health", get(health_handler))
-        .route("/healthz", get(health_handler))
+        .route("/livez", get(liveness_handler))
+        .route("/readyz", get(readiness_handler))
+        .route("/health", get(readiness_handler))
+        .route("/healthz", get(readiness_handler))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -526,7 +614,22 @@ mod tests {
         let h = HealthState {
             healthy_pipelines: vec![],
             unhealthy_pipelines: vec!["broken-pipeline".to_string()],
+            ..HealthState::default()
         };
         assert!(!h.is_healthy());
+    }
+
+    #[test]
+    fn readiness_is_fail_closed_but_liveness_is_process_only() {
+        let mut h = HealthState::default();
+        assert!(h.is_live());
+        assert!(!h.is_ready());
+        h.startup_preflight_complete = true;
+        h.postgres_reachable = true;
+        h.coordinator_ready = true;
+        assert!(h.is_ready());
+        h.unhealthy_pipelines.push("broken".into());
+        assert!(h.is_live());
+        assert!(!h.is_ready());
     }
 }

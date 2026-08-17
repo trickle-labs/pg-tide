@@ -1,0 +1,53 @@
+# Bounded v0.44.0 -> v0.45.0 rehearsal. Apply to an existing CNPG cluster;
+# extension migration is a one-shot job, not bootstrap postInitSQL.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pg-tide-v045-migrate
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ghcr.io/trickle-labs/pg-tide:0.45.0
+          command: ["sh", "-ec"]
+          args:
+            - >-
+              pg-tide doctor --output json &&
+              psql "$PG_TIDE_POSTGRES_URL" -v ON_ERROR_STOP=1
+              -c 'ALTER EXTENSION pg_tide UPDATE;'
+          env:
+            - name: PG_TIDE_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pg-tide-cluster-app
+                  key: uri
+---
+# During the window run at least two relay instances, upgrade one at a time.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg-tide-relay
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {app: pg-tide-relay}
+  template:
+    metadata: {labels: {app: pg-tide-relay}}
+    spec:
+      containers:
+        - name: relay
+          image: ghcr.io/trickle-labs/pg-tide:0.45.0
+          args: ["run", "--metrics-addr=0.0.0.0:9090", "--drain-timeout=30"]
+          env:
+            - name: PG_TIDE_POSTGRES_URL
+              valueFrom:
+                secretKeyRef: {name: pg-tide-cluster-app, key: uri}
+          ports: [{name: metrics, containerPort: 9090}]
+          livenessProbe: {httpGet: {path: /livez, port: metrics}}
+          readinessProbe: {httpGet: {path: /readyz, port: metrics}}
