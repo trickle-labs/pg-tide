@@ -522,6 +522,7 @@ jobs:
             echo "$NOTES"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/release-notes.md"
 
       # v0.44.0: Keyless signatures and SLSA-compatible provenance for every
       # archive, plus SBOM/provenance attestations for the final image.
@@ -557,22 +558,33 @@ jobs:
           COSIGN_EXPERIMENTAL: "1"
 
       - name: Create signed GitHub release
-        id: create_release
-        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
-        with:
-          body: ${{ steps.changelog.outputs.notes }}
-          files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.zip
-            artifacts/**/*.bundle
-            artifacts/**/*.provenance.json
-            artifacts/**/*.provenance.bundle
-            release-evidence/*.sbom.cyclonedx.json
-            release-evidence/*.sha256
-            release-evidence/pg-tide-image.sbom.cyclonedx.json
-            release-evidence/pg-tide-image.provenance.json
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          title="pg-tide ${tag#v}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" \
+              --title "$title" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --verify-tag
+          else
+            gh release create "$tag" \
+              --draft \
+              --title "$title" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --verify-tag
+          fi
+
+          find artifacts release-evidence -type f -print0 |
+            sort -z |
+            while IFS= read -r -d '' file; do
+              gh release upload "$tag" "$file" --clobber
+            done
+
+          gh release edit "$tag" --draft=false --verify-tag
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-crate:
     name: Publish to crates.io
