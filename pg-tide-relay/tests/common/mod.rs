@@ -225,6 +225,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0.42.0 -> 0.43.0",
         include_str!("../../../sql/pg_tide--0.42.0--0.43.0.sql"),
     ),
+    (
+        "0.43.0 -> 0.44.0",
+        include_str!("../../../sql/pg_tide--0.43.0--0.44.0.sql"),
+    ),
 ];
 
 /// Install the v0.1.0 base schema then apply all migrations through the current

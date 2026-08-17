@@ -31,9 +31,12 @@ async fn test_pg_inbox_sink_round_trip() {
         db.host_port
     );
 
-    let mut sink = PgInboxSink::new(&postgres_url, "pg_sink_test_inbox")
-        .await
-        .expect("PgInboxSink::new should succeed");
+    let mut sink = PgInboxSink::new(
+        &format!("{postgres_url} sslmode=disable"),
+        "pg_sink_test_inbox",
+    )
+    .await
+    .expect("PgInboxSink::new should succeed");
 
     // Publish 100 messages in a single batch.
     let messages: Vec<RelayMessage> = (1..=100_u32)
@@ -109,9 +112,12 @@ async fn test_pg_inbox_sink_empty_batch_is_no_op() {
         db.host_port
     );
 
-    let mut sink = PgInboxSink::new(&postgres_url, "pg_sink_empty_inbox")
-        .await
-        .expect("PgInboxSink::new should succeed");
+    let mut sink = PgInboxSink::new(
+        &format!("{postgres_url} sslmode=disable"),
+        "pg_sink_empty_inbox",
+    )
+    .await
+    .expect("PgInboxSink::new should succeed");
 
     // Publishing an empty batch should return Ok without touching the DB.
     sink.publish(&[])
@@ -147,9 +153,12 @@ async fn test_pg_inbox_sink_hyphenated_name() {
         db.host_port
     );
 
-    let mut sink = PgInboxSink::new(&postgres_url, "order-events_inbox")
-        .await
-        .expect("PgInboxSink::new should accept hyphenated table names");
+    let mut sink = PgInboxSink::new(
+        &format!("{postgres_url} sslmode=disable"),
+        "order-events_inbox",
+    )
+    .await
+    .expect("PgInboxSink::new should accept hyphenated table names");
 
     // Publish 20 messages — with an unquoted identifier this would produce a
     // SQL syntax error.

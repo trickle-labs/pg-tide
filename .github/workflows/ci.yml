@@ -449,7 +449,8 @@ jobs:
         env:
           PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e"
         run: |
-          cargo test --package pg-tide-relay --test public_api_outbox_to_nats_e2e -- \
+          PG_TIDE_E2E_DATABASE_URL="${PG_TIDE_E2E_DATABASE_URL}?sslmode=disable" \
+            cargo test --package pg-tide-relay --test public_api_outbox_to_nats_e2e -- \
             --test-threads=1 --nocapture
 
   # v0.40.0 (Workstream H.3): Execute the marked Quick Start SQL blocks against a
@@ -922,7 +923,7 @@ jobs:
       - name: Run wire format fuzz target (60 seconds)
         run: |
           cd pg-tide-relay
-          cargo fuzz run fuzz_wire_format -- -max_total_time=60 -jobs=1
+          cargo +nightly fuzz run fuzz_wire_format -- -max_total_time=60 -jobs=1
 
   # v0.30.0: Helm chart version-alignment CI check.
   helm-version-check:

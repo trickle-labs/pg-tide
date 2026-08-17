@@ -278,8 +278,8 @@ mod rocklake_integration {
             .expect("publish for source test");
 
         // Now poll the source.
-        let config =
-            RockLakeSourceConfig::new(&harness.connection_url(), "analytics", "stream_events");
+        let source_url = format!("{}?sslmode=disable", harness.connection_url());
+        let config = RockLakeSourceConfig::new(&source_url, "analytics", "stream_events");
         let mut source = RockLakeSource::new(config, 0);
         let polled = source.poll(100).await.expect("source poll");
 

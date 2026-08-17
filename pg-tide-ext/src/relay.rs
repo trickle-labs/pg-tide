@@ -707,10 +707,9 @@ mod tests {
 
     // ── error paths ────────────────────────────────────────────────────────
 
-    #[pg_test]
+    #[pg_test(error = "relay pipeline not found: does-not-exist")]
     fn test_relay_enable_unknown_pipeline_is_safe() {
-        // Enabling a non-existent pipeline with our implementation is a no-op
-        // (no rows updated). Verify the function does not panic.
+        // Missing pipelines fail closed rather than becoming a successful no-op.
         crate::relay::relay_enable("does-not-exist");
     }
 
