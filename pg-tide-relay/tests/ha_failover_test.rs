@@ -93,7 +93,7 @@ async fn test_ha_failover_surviving_coordinator_takes_over() {
             "INSERT INTO tide.relay_outbox_config (name, enabled, config) \
              VALUES ('ha-test-pipeline', true, \
              '{\"source_type\":\"outbox\",\"source\":{\"outbox\":\"ha-test-pipeline\"},\
-             \"sink_type\":\"stdout\",\"batch_size\":10}'::jsonb)",
+             \"sink_type\":\"stdout\",\"sink\":{},\"batch_size\":10}'::jsonb)",
             &[],
         )
         .await

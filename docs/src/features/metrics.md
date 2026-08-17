@@ -1,119 +1,35 @@
-# Feature: Prometheus Metrics
+# Prometheus metrics
 
-pg_tide exposes Prometheus-format metrics via an HTTP endpoint, giving you real-time visibility into pipeline throughput, error rates, latency, and health. These metrics integrate with Grafana, Datadog, or any Prometheus-compatible monitoring stack.
+The relay exposes `/metrics`, `/livez`, and `/readyz` on the configured metrics
+address (default `0.0.0.0:9090`). `/livez` answers whether the process is alive;
+`/readyz` answers whether it can serve owned pipelines. A pipeline failure must
+remove a pod from service, not cause a restart loop.
 
-## Metrics Endpoint
+## Core metrics
 
-The relay starts an HTTP server on port 9090 by default:
+All relay metrics use the `pg_tide_relay_` prefix. Labels are only documented
+where emitted by the relay (`pipeline`, `direction`, and metric-specific labels).
 
-```
-GET http://localhost:9090/metrics    → Prometheus text format
-GET http://localhost:9090/health     → Health check (200 or 503)
-```
+| Metric | Meaning |
+|---|---|
+| `pg_tide_relay_messages_published_total` | Successful sink publishes |
+| `pg_tide_relay_messages_consumed_total` | Messages read from sources |
+| `pg_tide_relay_publish_errors_total` | Failed publish attempts |
+| `pg_tide_relay_pipeline_healthy` | 1 when pipeline is healthy, 0 otherwise |
+| `pg_tide_relay_consumer_lag` | Pending source messages |
+| `pg_tide_relay_delivery_latency_seconds` | Delivery latency histogram |
+| `pg_tide_relay_retry_state` | Current retry/backoff state |
+| `pg_tide_relay_dlq_depth` | Unresolved DLQ entries |
+| `pg_tide_relay_owned_pipelines` | Pipelines owned by this relay |
+| `pg_tide_relay_pool_connections` | Pool connections by state |
 
-Configure the listen address:
+See `pg-tide/dashboards/relay-health.json` for the core dashboard and
+`pg-tide/dashboards/alerts.yaml` for actionable thresholds. No-data is unknown,
+never healthy. Use the [operations runbooks](../operations/runbooks.md) for
+incident response.
 
-```bash
-pg-tide --metrics-addr "0.0.0.0:9090"
-```
-
-## Available Metrics
-
-### Counters
-
-| Metric | Labels | Description |
-|--------|--------|-------------|
-| `pg_tide_messages_published_total` | pipeline, direction | Total messages successfully published to sink |
-| `pg_tide_messages_consumed_total` | pipeline, direction | Total messages consumed from source |
-| `pg_tide_publish_errors_total` | pipeline, direction | Total publish failures |
-| `pg_tide_dedup_skipped_total` | pipeline | Messages skipped due to deduplication |
-
-### Gauges
-
-| Metric | Labels | Description |
-|--------|--------|-------------|
-| `pg_tide_pipeline_healthy` | pipeline | 1 = healthy, 0 = circuit breaker open |
-| `pg_tide_consumer_lag` | pipeline | Pending messages in outbox (estimated) |
-
-### Histograms
-
-| Metric | Labels | Buckets (seconds) | Description |
-|--------|--------|-------------------|-------------|
-| `pg_tide_delivery_latency_seconds` | pipeline | 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0 | Time from outbox insert to sink acknowledgment |
-
-## Labels
-
-All metrics are labeled by:
-- **`pipeline`** — Pipeline name (e.g., `"orders-to-kafka"`)
-- **`direction`** — `"forward"` (outbox → sink) or `"reverse"` (source → inbox)
-
-## Health Endpoint
-
-The `/health` endpoint returns:
-- **200 OK** with body `"healthy"` — All pipelines have closed circuit breakers
-- **503 Service Unavailable** with body `"unhealthy: [pipeline-a, pipeline-b]"` — One or more pipelines have open circuit breakers
-
-Use this for Kubernetes liveness/readiness probes:
-
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 9090
-  initialDelaySeconds: 5
-  periodSeconds: 10
-```
-
-## Prometheus Scrape Configuration
-
-```yaml
-# prometheus.yml
-scrape_configs:
-  - job_name: 'pg-tide'
-    static_targets:
-      - targets: ['pg-tide:9090']
-    scrape_interval: 15s
-```
-
-For Kubernetes with pod annotations:
-
-```yaml
-metadata:
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "9090"
-    prometheus.io/path: "/metrics"
-```
-
-## Key Queries
-
-### Throughput (messages/second)
 ```promql
-rate(pg_tide_messages_published_total[5m])
+sum by (pipeline) (rate(pg_tide_relay_messages_published_total[5m]))
+pg_tide_relay_consumer_lag
+histogram_quantile(0.99, sum by (le,pipeline) (rate(pg_tide_relay_delivery_latency_seconds_bucket[5m])))
 ```
-
-### Error rate
-```promql
-rate(pg_tide_publish_errors_total[5m])
-```
-
-### Delivery latency (p99)
-```promql
-histogram_quantile(0.99, rate(pg_tide_delivery_latency_seconds_bucket[5m]))
-```
-
-### Consumer lag
-```promql
-pg_tide_consumer_lag
-```
-
-### Unhealthy pipelines
-```promql
-pg_tide_pipeline_healthy == 0
-```
-
-## Further Reading
-
-- [Dashboards](dashboards.md) — Pre-built Grafana dashboards
-- [OpenTelemetry](opentelemetry.md) — Distributed tracing (complementary)
-- [Monitoring Guide](../relay-guide/monitoring.md) — Complete observability setup

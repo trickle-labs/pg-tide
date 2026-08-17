@@ -545,3 +545,20 @@ check-migrations:
 # pg_tide extension. Set PGURL or standard libpq env vars for the connection.
 quickstart-sql:
     python3 scripts/run_quickstart_sql.py README.md docs/src/getting-started/first-pipeline.md
+
+# Static operator-surface contract checks.
+test-observability:
+    python3 scripts/check_observability.py
+
+# Validate runbook paths and evidence manifest.
+test-runbooks:
+    python3 scripts/check_observability.py
+
+test-operator-cli:
+    cargo test -p pg-tide-relay --no-default-features --features experimental-full cli
+
+test-config-contract:
+    cargo test -p pg-tide-relay --no-default-features --features experimental-full config
+
+test-upgrade:
+    bash scripts/check_upgrade_completeness.sh

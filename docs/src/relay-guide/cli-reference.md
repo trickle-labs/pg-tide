@@ -12,8 +12,26 @@ maintenance, and introspection.
 pg-tide [OPTIONS] [COMMAND]
 ```
 
-When `COMMAND` is omitted, the relay daemon starts. All subcommands are
+When `COMMAND` is omitted, the relay daemon starts (deprecated; use `run`). All subcommands are
 short-lived and exit after completing their task.
+
+Canonical command tree:
+
+```text
+pg-tide doctor
+pg-tide status
+pg-tide config validate|export
+pg-tide run
+pg-tide replay ...
+pg-tide maintenance sweep ...
+```
+
+`validate-config` and `sweep` remain compatibility aliases and print a
+deprecation warning to stderr. Use `--output json` for the schema-v1 envelope;
+JSON is written only to stdout, while logs and warnings go to stderr.
+
+Exit codes: `0` success, `1` operational failure, `2` CLI usage error,
+`3` validation/compatibility failure, `4` partial result.
 
 ---
 

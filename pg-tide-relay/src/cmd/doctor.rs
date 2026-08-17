@@ -1,9 +1,126 @@
 /// `pg-tide doctor` — PostgreSQL connectivity and catalog health check.
+use crate::cli::OutputFormat;
 use pg_tide_relay::pg_tls;
 
 /// Validate PostgreSQL connectivity, schema presence, and catalog health.
-pub async fn run_doctor(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_doctor(
+    url: &str,
+    output_format: OutputFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(output_format, OutputFormat::Json) {
+        let result = run_doctor_json(url).await;
+        if let Err(error) = &result {
+            crate::cmd::output::failure(
+                "doctor",
+                crate::cmd::diagnostic::from_error("postgres.catalog", error),
+                output_format,
+            )?;
+        }
+        return result;
+    }
     run_doctor_with_threshold(url, 100).await
+}
+
+async fn run_doctor_json(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (client, conn) = match pg_tls::connect(url).await {
+        Ok(connection) => connection,
+        Err(error) => return Err(format!("connection failed: {error}").into()),
+    };
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let extension_version = client
+        .query_opt(
+            "SELECT extversion::text FROM pg_extension WHERE extname = 'pg_tide'",
+            &[],
+        )
+        .await?
+        .map(|row| row.try_get::<_, String>(0))
+        .transpose()?;
+    let schema_exists: bool = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'tide')",
+            &[],
+        )
+        .await?
+        .try_get(0)?;
+    let required_tables = [
+        "tide_outbox_config",
+        "tide_outbox_messages",
+        "tide_inbox_config",
+        "relay_outbox_config",
+        "relay_inbox_config",
+        "relay_consumer_offsets",
+        "relay_runtime_status",
+    ];
+    let mut table_checks = Vec::with_capacity(required_tables.len());
+    let mut checks_ok = extension_version.is_some() && schema_exists;
+    for table in required_tables {
+        let exists: bool = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = 'tide' AND table_name = $1)",
+                &[&table],
+            )
+            .await?
+            .try_get(0)?;
+        checks_ok &= exists;
+        table_checks.push(serde_json::json!({
+            "component": format!("postgres.{}.{}", "tide", table),
+            "status": if exists { "pass" } else { "fail" },
+        }));
+    }
+
+    let rows = client
+        .query(
+            "SELECT name::text, 'forward'::text AS direction, enabled, config,
+                    COALESCE(tenant_name, 'default') AS tenant_name
+               FROM tide.relay_outbox_config
+             UNION ALL
+             SELECT name::text, 'reverse'::text, enabled, config,
+                    COALESCE(tenant_name, 'default')
+               FROM tide.relay_inbox_config
+             ORDER BY name::text, direction",
+            &[],
+        )
+        .await?;
+    let mut pipelines = Vec::with_capacity(rows.len());
+    for row in rows {
+        let direction: String = row.try_get("direction")?;
+        pipelines.push(pg_tide_relay::config::PipelineConfig {
+            name: row.try_get("name")?,
+            direction: if direction == "forward" {
+                pg_tide_relay::config::PipelineDirection::Forward
+            } else {
+                pg_tide_relay::config::PipelineDirection::Reverse
+            },
+            enabled: row.try_get("enabled")?,
+            config: row.try_get("config")?,
+            tenant_name: row.try_get("tenant_name")?,
+        });
+    }
+    let preflight = pg_tide_relay::config::preflight::startup_preflight(&pipelines);
+    checks_ok &= preflight.is_valid();
+    let data = serde_json::json!({
+        "extension_version": extension_version,
+        "schema": {"status": if schema_exists { "pass" } else { "fail" }},
+        "tables": table_checks,
+        "pipelines": {
+            "count": pipelines.len(),
+            "preflight_issues": preflight.issues.iter().map(|issue| serde_json::json!({
+                "pipeline": issue.pipeline,
+                "severity": format!("{:?}", issue.severity).to_lowercase(),
+                "reason": issue.reason,
+            })).collect::<Vec<_>>(),
+        },
+    });
+    if checks_ok {
+        crate::cmd::output::success("doctor", data, OutputFormat::Json)?;
+        Ok(())
+    } else {
+        Err("doctor found one or more failed checks".into())
+    }
 }
 
 /// Run the doctor checks with a configurable DLQ warn threshold.
@@ -17,13 +134,29 @@ pub async fn run_doctor_with_threshold(
     // v0.15.0: Use pg_tls::connect (honours sslmode from URL).
     let (client, conn) = pg_tls::connect(url)
         .await
-        .map_err(|e| format!("connection failed: {e}"))?;
+        .map_err(|_| "connection failed: verify PostgreSQL reachability and TLS settings")?;
 
     tokio::spawn(async move {
         let _ = conn.await;
     });
 
     println!("  [OK] Connected to PostgreSQL");
+
+    let extension_version = client
+        .query_opt(
+            "SELECT extversion::text FROM pg_extension WHERE extname = 'pg_tide'",
+            &[],
+        )
+        .await
+        .map_err(|_| "extension version check failed")?
+        .and_then(|row| row.try_get::<_, String>(0).ok());
+    match extension_version {
+        Some(version) => println!("  [OK] pg_tide extension {version} installed"),
+        None => {
+            println!("  [FAIL] pg_tide extension is not installed");
+            return Err("doctor found one or more failed checks".into());
+        }
+    }
 
     // v0.25.0: TLS version check — query pg_ssl for negotiated TLS version.
     let tls_row = client
@@ -75,7 +208,6 @@ pub async fn run_doctor_with_threshold(
         println!("  [OK] Schema 'tide' exists");
     } else {
         println!("  [FAIL] Schema 'tide' not found — is pg_tide installed?");
-        std::process::exit(1);
     }
 
     // Check required tables.
@@ -87,7 +219,7 @@ pub async fn run_doctor_with_threshold(
         "relay_inbox_config",
         "relay_consumer_offsets",
     ];
-    let mut all_ok = true;
+    let mut all_ok = schema_exists;
     for table in &required_tables {
         let exists: bool = client
             .query_one(

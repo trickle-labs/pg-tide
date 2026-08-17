@@ -1,0 +1,354 @@
+{
+  "$defs": {
+    "connector": {
+      "additionalProperties": false,
+      "description": "Connector-owned fields; values may contain secret references.",
+      "properties": {
+        "access_token": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "addr": {
+          "type": "string"
+        },
+        "allow_http": {
+          "type": "boolean"
+        },
+        "atomic_lake_writes": {},
+        "auth_token": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
+        "avatar_url": {},
+        "batch_limit": {},
+        "batch_size": {
+          "type": "integer"
+        },
+        "brokers": {
+          "type": "string"
+        },
+        "bucket": {},
+        "buffer_max_bytes": {},
+        "buffer_max_rows": {},
+        "buffer_max_seconds": {},
+        "catalog_connection": {},
+        "catalog_schema": {},
+        "change_data_feed": {},
+        "client_id": {},
+        "collection_template": {},
+        "component": {},
+        "configured_catalog": {},
+        "connection_string": {
+          "type": "string"
+        },
+        "consumer": {
+          "type": "string"
+        },
+        "consumer_group": {
+          "type": "string"
+        },
+        "consumer_id": {
+          "type": "string"
+        },
+        "container": {},
+        "data_path": {},
+        "database": {},
+        "dataset_id": {},
+        "descriptor_path": {},
+        "destination_args": {},
+        "destination_command": {},
+        "destination_config": {},
+        "destination_image": {},
+        "destination_name": {},
+        "doc_id_field": {},
+        "endpoint": {},
+        "entity": {},
+        "event_hub": {},
+        "event_type": {
+          "type": "string"
+        },
+        "exchange": {},
+        "format": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "group_id": {},
+        "icon_emoji": {},
+        "inbox": {},
+        "index_template": {},
+        "inline_row_limit": {},
+        "is_fifo": {},
+        "iterator_type": {},
+        "last_snapshot_id": {},
+        "max_len": {},
+        "max_messages": {},
+        "namespace": {},
+        "on_schema_change": {},
+        "outbox": {
+          "type": "string"
+        },
+        "partition": {},
+        "partition_by_date": {},
+        "partition_count": {},
+        "partition_key_template": {},
+        "password": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "postgres_url": {},
+        "prefix": {},
+        "project_id": {
+          "type": "string"
+        },
+        "provider": {},
+        "qos": {},
+        "queue": {
+          "type": "string"
+        },
+        "queue_url": {
+          "type": "string"
+        },
+        "region": {},
+        "root": {},
+        "routing_key": {},
+        "routing_key_template": {},
+        "rows_per_file": {},
+        "schema": {
+          "type": "string"
+        },
+        "secret": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
+        "severity": {},
+        "signing_algorithm": {},
+        "signing_secret": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
+        "snapshot_poll_interval_ms": {},
+        "source": {},
+        "source_args": {},
+        "source_command": {},
+        "source_config": {},
+        "source_image": {},
+        "source_name": {},
+        "storage_provider": {},
+        "stream": {
+          "type": "string"
+        },
+        "stream_key": {},
+        "stream_key_template": {},
+        "stream_name": {},
+        "stream_name_template": {},
+        "subject": {
+          "type": "string"
+        },
+        "subject_template": {},
+        "subscription": {},
+        "table": {},
+        "table_path": {},
+        "table_template": {},
+        "tap_args": {},
+        "tap_command": {},
+        "tap_name": {},
+        "target_args": {},
+        "target_command": {},
+        "target_name": {},
+        "timeout_secs": {},
+        "topic": {
+          "type": "string"
+        },
+        "topic_template": {},
+        "url": {
+          "type": "string"
+        },
+        "user": {},
+        "username": {
+          "type": "string"
+        },
+        "visibility_seconds": {},
+        "warehouse_path": {},
+        "webhook_url": {
+          "type": "string"
+        },
+        "write_concern": {},
+        "write_mode": {}
+      },
+      "type": "object"
+    },
+    "dlq": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_retries": {
+          "maximum": 100000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "encoding": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "json",
+            "jsonl",
+            "native",
+            "avro",
+            "protobuf"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "retry": {
+      "additionalProperties": false,
+      "properties": {
+        "backoff_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_retries": {
+          "maximum": 100000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://pg-tide.dev/schemas/pipeline-config-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "batch_size": {
+      "maximum": 1000000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "dlq": {
+      "$ref": "#/$defs/dlq"
+    },
+    "encoding": {
+      "$ref": "#/$defs/encoding"
+    },
+    "retry": {
+      "$ref": "#/$defs/retry"
+    },
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "sink": {
+      "$ref": "#/$defs/connector"
+    },
+    "sink_type": {
+      "enum": [
+        "airbyte",
+        "bigquery",
+        "clickhouse",
+        "delta",
+        "discord",
+        "ducklake",
+        "elasticsearch",
+        "eventhubs",
+        "fanin",
+        "file",
+        "iceberg",
+        "inbox",
+        "kafka",
+        "kinesis",
+        "mongodb",
+        "mqtt",
+        "nats",
+        "object_storage",
+        "outbox",
+        "pagerduty",
+        "pg_logical",
+        "pg_outbox",
+        "pg_trickle_outbox",
+        "pubsub",
+        "rabbitmq",
+        "redis",
+        "rocklake",
+        "servicebus",
+        "singer",
+        "slack",
+        "snowflake",
+        "sqs",
+        "stdin",
+        "stdout",
+        "webhook"
+      ],
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/connector"
+    },
+    "source_type": {
+      "enum": [
+        "airbyte",
+        "bigquery",
+        "clickhouse",
+        "delta",
+        "discord",
+        "ducklake",
+        "elasticsearch",
+        "eventhubs",
+        "fanin",
+        "file",
+        "iceberg",
+        "inbox",
+        "kafka",
+        "kinesis",
+        "mongodb",
+        "mqtt",
+        "nats",
+        "object_storage",
+        "outbox",
+        "pagerduty",
+        "pg_logical",
+        "pg_outbox",
+        "pg_trickle_outbox",
+        "pubsub",
+        "rabbitmq",
+        "redis",
+        "rocklake",
+        "servicebus",
+        "singer",
+        "slack",
+        "snowflake",
+        "sqs",
+        "stdin",
+        "stdout",
+        "webhook"
+      ],
+      "type": "string"
+    },
+    "transforms": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "source_type",
+    "source",
+    "sink_type",
+    "sink"
+  ],
+  "title": "pg_tide pipeline configuration v1",
+  "type": "object"
+}

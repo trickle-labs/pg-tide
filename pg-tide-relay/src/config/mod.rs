@@ -3,8 +3,12 @@
 /// This module only handles CLI/env/TOML configuration for the relay process itself.
 use serde::{Deserialize, Serialize};
 
+pub mod preflight;
+pub mod schema_support;
+
 /// Top-level relay process configuration (not pipeline config — that lives in PG).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(default)]
 pub struct RelayConfig {
     /// PostgreSQL connection URL (required).
@@ -97,6 +101,72 @@ impl Default for RelayConfig {
 }
 
 impl RelayConfig {
+    /// Parse process TOML without permitting pipeline definitions or typos.
+    pub fn from_toml(input: &str) -> Result<Self, crate::error::RelayError> {
+        toml::from_str(input).map_err(crate::error::RelayError::Toml)
+    }
+
+    /// Apply only values explicitly supplied by the CLI.
+    pub fn overlay(&mut self, overlay: ProcessOverlay) {
+        if let Some(value) = overlay.postgres_url {
+            self.postgres_url = value;
+        }
+        if let Some(value) = overlay.metrics_addr {
+            self.metrics_addr = value;
+        }
+        if let Some(value) = overlay.log_format {
+            self.log_format = value;
+        }
+        if let Some(value) = overlay.log_level {
+            self.log_level = value;
+        }
+        if let Some(value) = overlay.discovery_interval_secs {
+            self.discovery_interval_secs = value;
+        }
+        if let Some(value) = overlay.default_batch_size {
+            self.default_batch_size = value;
+        }
+        if let Some(value) = overlay.relay_group_id {
+            self.relay_group_id = value;
+        }
+        if let Some(value) = overlay.sink_max_inflight {
+            self.sink_max_inflight = value;
+        }
+        if let Some(value) = overlay.max_owned_pipelines {
+            self.max_owned_pipelines = value;
+        }
+        if let Some(value) = overlay.max_connections {
+            self.max_connections = value;
+        }
+        if let Some(value) = overlay.tenant_id {
+            self.tenant_id = value;
+        }
+        if let Some(value) = overlay.sweep_interval_hours {
+            self.sweep_interval_hours = value;
+        }
+    }
+
+    /// Validate process-only semantic bounds before opening PostgreSQL.
+    pub fn validate(&self) -> Result<(), crate::error::RelayError> {
+        if self.postgres_url.trim().is_empty() {
+            return Err(crate::error::RelayError::Config(
+                "postgres_url is required".to_string(),
+            ));
+        }
+        if self.discovery_interval_secs == 0
+            || self.default_batch_size <= 0
+            || self.max_owned_pipelines == 0
+            || self.max_connections == 0
+            || self.sweep_interval_hours == 0
+        {
+            return Err(crate::error::RelayError::Config(
+                "process intervals, batch size, pipeline, and connection limits must be greater than zero"
+                    .to_string(),
+            ));
+        }
+        validate_relay_identifier(&self.relay_group_id)
+    }
+
     /// A30: Expand `${ENV:VAR_NAME}` placeholders in a connection string using
     /// the current process environment.  Unknown variables are left as-is so
     /// callers can detect mis-configuration.
@@ -138,6 +208,24 @@ impl RelayConfig {
     }
 }
 
+/// Optional CLI values. `None` means the flag was not supplied and therefore
+/// must not overwrite a value loaded from TOML.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProcessOverlay {
+    pub postgres_url: Option<String>,
+    pub metrics_addr: Option<String>,
+    pub log_format: Option<LogFormat>,
+    pub log_level: Option<String>,
+    pub discovery_interval_secs: Option<u64>,
+    pub default_batch_size: Option<i64>,
+    pub relay_group_id: Option<String>,
+    pub sink_max_inflight: Option<usize>,
+    pub max_owned_pipelines: Option<usize>,
+    pub max_connections: Option<usize>,
+    pub tenant_id: Option<Option<String>>,
+    pub sweep_interval_hours: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LogFormat {
@@ -168,6 +256,16 @@ pub enum PipelineDirection {
 }
 
 impl PipelineConfig {
+    /// Parse and validate the catalog JSON without resolving secrets.
+    pub fn validate(&self) -> Result<schema_support::PipelineDocument, crate::error::RelayError> {
+        schema_support::PipelineDocument::parse(&self.name, &self.config)
+    }
+
+    /// Return the deterministic, secret-reference-preserving v1 representation.
+    pub fn canonical_json(&self) -> Result<serde_json::Value, crate::error::RelayError> {
+        self.validate()?.canonical_json()
+    }
+
     /// Extract a required string value from the pipeline config.
     pub fn require_str<'a>(&'a self, path: &[&str]) -> Result<&'a str, crate::error::RelayError> {
         let mut v = &self.config;
@@ -521,6 +619,32 @@ mod tests {
         assert_eq!(decoded.postgres_url, cfg.postgres_url);
         assert_eq!(decoded.relay_group_id, cfg.relay_group_id);
         assert_eq!(decoded.sink_max_inflight, 500);
+    }
+
+    #[test]
+    fn strict_process_toml_rejects_unknown_and_pipeline_keys() {
+        assert!(
+            RelayConfig::from_toml("postgres_url = 'postgres://db'\npostgre_url = 'typo'").is_err()
+        );
+        assert!(RelayConfig::from_toml(
+            "postgres_url = 'postgres://db'\n[[pipeline]]\nname = 'orders'"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn overlay_does_not_replace_toml_with_cli_defaults() {
+        let mut config = RelayConfig::from_toml(
+            "postgres_url = 'postgres://db'\nmetrics_addr = '127.0.0.1:9999'",
+        )
+        .unwrap();
+        config.overlay(ProcessOverlay::default());
+        assert_eq!(config.metrics_addr, "127.0.0.1:9999");
+        config.overlay(ProcessOverlay {
+            log_level: Some("debug".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(config.log_level, "debug");
     }
 
     // ── A30: ENV variable expansion ───────────────────────────────────────

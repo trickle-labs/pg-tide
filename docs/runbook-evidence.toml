@@ -1,0 +1,98 @@
+[[runbook]]
+id = "relay-will-not-start"
+path = "docs/src/operations/runbooks.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "pipeline-not-discovered"
+path = "docs/src/operations/runbooks.md"
+alerts = ["PgTidePipelineUnhealthy"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "pipeline-has-lag"
+path = "docs/src/operations/runbooks.md"
+alerts = ["PgTideConsumerLagHigh", "PgTidePoolWaiting"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "sink-authentication-failure"
+path = "docs/src/operations/runbooks.md"
+alerts = ["PgTidePublishErrors"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "dlq-is-growing"
+path = "docs/src/operations/runbooks.md"
+alerts = ["PgTideDLQDepthHigh"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "advisory-lock-ownership"
+path = "docs/src/operations/runbooks.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "postgresql-failover"
+path = "docs/src/operations/runbooks.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "retention-cleanup"
+path = "docs/src/operations/runbooks.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "disk-usage"
+path = "docs/src/operations/runbooks.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "upgrade-failed"
+path = "docs/src/operations/runbooks.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"
+
+[[runbook]]
+id = "duplicate-messages"
+path = "docs/src/operations/runbooks.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.45.0"

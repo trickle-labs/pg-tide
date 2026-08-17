@@ -55,6 +55,7 @@ const V0_40_0_TO_0_41_0: &str = include_str!("../../sql/pg_tide--0.40.0--0.41.0.
 const V0_41_0_TO_0_42_0: &str = include_str!("../../sql/pg_tide--0.41.0--0.42.0.sql");
 const V0_42_0_TO_0_43_0: &str = include_str!("../../sql/pg_tide--0.42.0--0.43.0.sql");
 const V0_43_0_TO_0_44_0: &str = include_str!("../../sql/pg_tide--0.43.0--0.44.0.sql");
+const V0_44_0_TO_0_45_0: &str = include_str!("../../sql/pg_tide--0.44.0--0.45.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -101,6 +102,7 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.41.0 → 0.42.0", V0_41_0_TO_0_42_0),
     ("0.42.0 → 0.43.0", V0_42_0_TO_0_43_0),
     ("0.43.0 → 0.44.0", V0_43_0_TO_0_44_0),
+    ("0.44.0 → 0.45.0", V0_44_0_TO_0_45_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
@@ -611,5 +613,76 @@ async fn test_sequential_migration_upgrade() {
     assert_eq!(
         enabled_fanin, 0,
         "all fan-in configs must be disabled after v0.40.0 migration"
+    );
+
+    // ── v0.45.0 observational runtime status ─────────────────────────────
+    let has_runtime_status: bool = client
+        .query_one(
+            "SELECT to_regclass('tide.relay_runtime_status') IS NOT NULL",
+            &[],
+        )
+        .await
+        .expect("runtime status table lookup")
+        .get(0);
+    assert!(
+        has_runtime_status,
+        "v0.45.0 runtime status table must exist"
+    );
+
+    let has_status_view: bool = client
+        .query_one(
+            "SELECT to_regclass('tide.relay_pipeline_status') IS NOT NULL",
+            &[],
+        )
+        .await
+        .expect("status view lookup")
+        .get(0);
+    assert!(has_status_view, "v0.45.0 sanitized status view must exist");
+
+    client
+        .execute(
+            "INSERT INTO tide.relay_outbox_config
+             (name, config) VALUES
+             ('status-pipeline', '{\"source\":{\"outbox\":\"orders_v40\"}}')",
+            &[],
+        )
+        .await
+        .expect("status pipeline insert");
+    client
+        .execute(
+            "INSERT INTO tide.relay_runtime_status
+             (relay_group_id, pipeline_id, direction, owner_token)
+             VALUES ('default', 'status-pipeline', 'forward', 'opaque-owner')",
+            &[],
+        )
+        .await
+        .expect("runtime status insert");
+    let ownership: String = client
+        .query_one(
+            "SELECT ownership FROM tide.relay_pipeline_status
+             WHERE pipeline_id = 'status-pipeline'",
+            &[],
+        )
+        .await
+        .expect("status view query")
+        .get(0);
+    assert_eq!(ownership, "stale");
+
+    let has_owner_token_column: bool = client
+        .query_one(
+            "SELECT EXISTS(
+               SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'tide'
+                 AND table_name = 'relay_pipeline_status'
+                 AND column_name = 'owner_token'
+             )",
+            &[],
+        )
+        .await
+        .expect("status view columns")
+        .get(0);
+    assert!(
+        !has_owner_token_column,
+        "sanitized status view must not expose owner tokens"
     );
 }

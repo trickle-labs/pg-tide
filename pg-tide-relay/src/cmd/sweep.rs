@@ -1,5 +1,6 @@
 //! `pg-tide sweep` — run bounded, retention-aware outbox cleanup.
 
+use crate::cli::OutputFormat;
 use pg_tide_relay::pg_tls;
 use serde_json::Value;
 
@@ -70,7 +71,7 @@ pub async fn run_sweep(
     url: &str,
     outbox_name: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    run_sweep_with_options(url, outbox_name, 1000, Some(1), false).await
+    run_sweep_with_options(url, outbox_name, 1000, Some(1), false, OutputFormat::Text).await
 }
 
 /// Delete at most `batch_size` rows per transaction and outbox per iteration.
@@ -84,6 +85,7 @@ pub async fn run_sweep_with_options(
     batch_size: i32,
     max_batches: Option<u32>,
     dry_run: bool,
+    output_format: OutputFormat,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !(1..=10_000).contains(&batch_size) {
         return Err("batch-size must be between 1 and 10000".into());
@@ -92,7 +94,10 @@ pub async fn run_sweep_with_options(
         return Err("max-batches must be greater than zero".into());
     }
 
-    println!("pg-tide sweep v{}", env!("CARGO_PKG_VERSION"));
+    let text_output = matches!(output_format, OutputFormat::Text);
+    if text_output {
+        println!("pg-tide sweep v{}", env!("CARGO_PKG_VERSION"));
+    }
     let (client, conn) = pg_tls::connect(url)
         .await
         .map_err(|e| format!("connection failed: {e}"))?;
@@ -115,13 +120,22 @@ pub async fn run_sweep_with_options(
     };
 
     if outboxes.is_empty() {
-        println!("  [INFO] No outboxes configured — nothing to sweep.");
+        if text_output {
+            println!("  [INFO] No outboxes configured — nothing to sweep.");
+        } else {
+            crate::cmd::output::success(
+                "maintenance sweep",
+                serde_json::json!({"outboxes": [], "total_deleted": 0}),
+                output_format,
+            )?;
+        }
         return Ok(());
     }
 
     let iterations = max_batches.unwrap_or(1);
     let mut total_deleted = 0_i64;
     let mut failures = Vec::new();
+    let mut results = Vec::new();
 
     for name in &outboxes {
         let mut outbox_deleted = 0_i64;
@@ -132,7 +146,9 @@ pub async fn run_sweep_with_options(
             match call_sweep(&client, name, batch_size, dry_run).await {
                 Ok(result) => {
                     outbox_deleted += result.affected_rows;
-                    print_progress(name, batch, dry_run, &result);
+                    if text_output {
+                        print_progress(name, batch, dry_run, &result);
+                    }
                     completed = batch;
                     if dry_run || !result.has_more {
                         break;
@@ -143,7 +159,9 @@ pub async fn run_sweep_with_options(
                         "outbox '{name}' sweep failed after {completed} batch(es): {error}; \
                          inspect tide.outbox_retention_status and retry"
                     );
-                    println!("  [FAIL] {message}");
+                    if text_output {
+                        println!("  [FAIL] {message}");
+                    }
                     failures.push(message);
                     break;
                 }
@@ -151,7 +169,14 @@ pub async fn run_sweep_with_options(
         }
 
         total_deleted += outbox_deleted;
-        println!("  [OK] Outbox '{name}': {outbox_deleted} row(s) affected");
+        if text_output {
+            println!("  [OK] Outbox '{name}': {outbox_deleted} row(s) affected");
+        }
+        results.push(serde_json::json!({
+            "outbox": name,
+            "affected_rows": outbox_deleted,
+            "completed_batches": completed,
+        }));
     }
 
     if let Err(error) = maintain_partitions(&client, dry_run).await {
@@ -159,15 +184,30 @@ pub async fn run_sweep_with_options(
             "partition maintenance failed: {error}; \
              inspect tide.outbox_storage_config and retry"
         );
-        println!("  [FAIL] {message}");
+        if text_output {
+            println!("  [FAIL] {message}");
+        }
         failures.push(message);
     }
 
-    println!(
-        "\npg-tide sweep: {total_deleted} total row(s) affected across {} outbox(es).",
-        outboxes.len()
-    );
+    if text_output {
+        println!(
+            "\npg-tide sweep: {total_deleted} total row(s) affected across {} outbox(es).",
+            outboxes.len()
+        );
+    }
     if failures.is_empty() {
+        if !text_output {
+            crate::cmd::output::success(
+                "maintenance sweep",
+                serde_json::json!({
+                    "outboxes": results,
+                    "total_deleted": total_deleted,
+                    "dry_run": dry_run,
+                }),
+                output_format,
+            )?;
+        }
         Ok(())
     } else {
         Err(failures.join("; ").into())
