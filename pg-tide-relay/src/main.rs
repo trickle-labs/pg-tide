@@ -482,11 +482,36 @@ fn create_coordinator_pool(
         max_size,
         ..Default::default()
     });
-    let pool = cfg
-        .create_pool(
-            Some(deadpool_postgres::Runtime::Tokio1),
-            tokio_postgres::NoTls,
-        )
-        .map_err(|e| format!("failed to create coordinator connection pool: {e}"))?;
-    Ok(pool)
+    match pg_tls::parse_ssl_mode(url) {
+        pg_tls::PgSslMode::Disable => cfg
+            .create_pool(
+                Some(deadpool_postgres::Runtime::Tokio1),
+                tokio_postgres::NoTls,
+            )
+            .map_err(|e| format!("failed to create coordinator connection pool: {e}").into()),
+        pg_tls::PgSslMode::Prefer => Err(Box::new(
+            pg_tide_relay::error::RelayError::InsecureTransport {
+                mode: "prefer".to_string(),
+                url: pg_tls::sanitize_connection_url(url),
+            },
+        )),
+        pg_tls::PgSslMode::Require => {
+            #[cfg(feature = "native-tls")]
+            {
+                cfg.create_pool(
+                    Some(deadpool_postgres::Runtime::Tokio1),
+                    pg_tls::make_tls_connector()?,
+                )
+                .map_err(|e| {
+                    format!("failed to create TLS coordinator connection pool: {e}").into()
+                })
+            }
+            #[cfg(not(feature = "native-tls"))]
+            {
+                Err(Box::new(pg_tide_relay::error::RelayError::TlsRequired {
+                    url: pg_tls::sanitize_connection_url(url),
+                }))
+            }
+        }
+    }
 }

@@ -18,7 +18,7 @@ path = "src/main.rs"
 default = ["core"]
 core = ["nats", "stdout"]
 core-kafka = ["core", "kafka"]
-experimental-full = ["airbyte", "arrow-flight", "bigquery", "canal", "cdc-json", "clickhouse", "debezium", "delta", "discord", "ducklake", "elasticsearch", "eventhubs", "iceberg", "kafka", "kinesis", "kms", "kms-aws", "kms-gcp", "kms-local", "kms-vault", "maxwell", "mongodb", "mqtt", "native-tls", "nats", "object-storage", "otel", "pagerduty", "pubsub", "rabbitmq", "redis", "rocklake", "schema-registry", "servicebus", "singer", "slack", "snowflake", "sqs", "stdout", "wal-source", "webhook"]
+experimental-full = ["airbyte", "arrow-flight", "bigquery", "canal", "cdc-json", "clickhouse", "debezium", "delta", "discord", "ducklake", "elasticsearch", "eventhubs", "iceberg", "kafka", "kinesis", "kms-local", "maxwell", "mongodb", "mqtt", "native-tls", "nats", "object-storage", "otel", "pagerduty", "pubsub", "rabbitmq", "redis", "rocklake", "schema-registry", "servicebus", "singer", "slack", "snowflake", "sqs", "stdout", "wal-source", "webhook"]
 # END GENERATED CONNECTOR PROFILES
 
 # Internal crash-test instrumentation. Never included in a production profile.
@@ -79,12 +79,9 @@ cdc-json        = []
 # Not enabled by default; skipped in CI unless explicitly requested.
 # See docs/adr/adr-009-wal-logical-replication-source.md for design details.
 wal-source      = []
-# v0.33.0: KMS envelope encryption — interface skeleton (ADR-010).
-# Full provider implementations (AWS KMS, GCP KMS, HashiCorp Vault, local key
-# file) ship in v1.0.0.  This flag gates the EncryptionEnvelope trait and the
-# four stub provider structs so the API surface can be referenced in tests and
-# documentation before the implementation sprint.
-# Sub-features for individual providers (all unimplemented in v0.33.0):
+# v0.44.0: LocalKeyFile is the only supported encryption provider. Cloud
+# provider feature names remain compatibility-only and are not in a production
+# profile; unsupported providers fail before a worker polls messages.
 kms             = []
 kms-aws         = ["kms"]
 kms-gcp         = ["kms"]
@@ -114,6 +111,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 futures-util = "0.3"
+libc = "0.2"
 
 # Metrics + health (always required — axum powers the /metrics and /health endpoints)
 axum = "0.8"

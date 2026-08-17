@@ -19,6 +19,10 @@ PROFILE_END = "# END GENERATED CONNECTOR PROFILES"
 README_START = "<!-- BEGIN GENERATED CONNECTORS -->"
 README_END = "<!-- END GENERATED CONNECTORS -->"
 INTERNAL_FEATURES = {"test-failpoints"}
+# KMS compatibility names are deliberately not part of the generated
+# evaluation profile. LocalKeyFile remains available through `kms-local`;
+# cloud provider names are unsupported until they have real implementations.
+PROFILE_EXCLUDED_FEATURES = {"kms", "kms-aws", "kms-gcp", "kms-vault"}
 MATURITY = {"supported", "preview", "experimental"}
 KINDS = {"connector", "diagnostic", "compatibility"}
 EVIDENCE_FIELDS = (
@@ -156,7 +160,9 @@ def profile_lines(rows: list[dict], features: set[str]) -> str:
             if feature and feature not in core:
                 core.append(feature)
     core.sort()
-    all_features = sorted(features - profile_names - INTERNAL_FEATURES)
+    all_features = sorted(
+        features - profile_names - INTERNAL_FEATURES - PROFILE_EXCLUDED_FEATURES
+    )
     return "\n".join(
         [
             'default = ["core"]',

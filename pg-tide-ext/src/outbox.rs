@@ -62,8 +62,12 @@ pub fn outbox_exists(outbox_name: &str) -> Result<bool, PgTideError> {
         "SELECT EXISTS(SELECT 1 FROM tide.tide_outbox_config WHERE outbox_name = $1)",
         &[outbox_name.into()],
     )
-    .map(|r| r.unwrap_or(false))
-    .map_err(|e| PgTideError::SpiError(format!("outbox_exists SPI error: {e}")))
+    .map_err(|e| PgTideError::SpiError(format!("outbox_exists SPI error: {e}")))?
+    .ok_or_else(|| {
+        PgTideError::SpiError(format!(
+            "outbox_exists returned NULL for outbox '{outbox_name}'"
+        ))
+    })
 }
 
 // ── TIDE-API: outbox_create ───────────────────────────────────────────────
@@ -267,14 +271,14 @@ fn outbox_publish_impl(
 
     // 2. Resolve the caller and authorization role state; every lookup is
     // fail-closed so a missing row cannot become an implicit allow.
-    let current_role = Spi::get_one::<String>("SELECT current_user::text")
+    let current_role = Spi::get_one::<String>("SELECT session_user::text")
         .map_err(|e| PgTideError::AuthorizationError {
             outbox: name.to_string(),
-            detail: format!("current_user lookup failed: {e}"),
+            detail: format!("session_user lookup failed: {e}"),
         })?
         .ok_or_else(|| PgTideError::AuthorizationError {
             outbox: name.to_string(),
-            detail: "current_user lookup returned no row".to_string(),
+            detail: "session_user lookup returned no row".to_string(),
         })?;
     let is_superuser = Spi::get_one_with_args::<bool>(
         "SELECT rolsuper FROM pg_roles WHERE rolname = $1",
@@ -311,12 +315,17 @@ fn outbox_publish_impl(
     // inherited role membership before allowing the insert.
     let acl_verdict: Option<String> = Spi::get_one_with_args::<String>(
         "SELECT CASE
+           WHEN $2::bool THEN 'superuser'
+           WHEN $3::bool THEN 'extension_owner'
+           WHEN NOT EXISTS(
+                  SELECT 1
+                  FROM pg_roles r
+                  WHERE r.rolname = 'tide_publisher'
+                    AND pg_has_role($4::name, r.rolname, 'member')
+                )
+             THEN 'denied'
            WHEN NOT EXISTS(SELECT 1 FROM tide.outbox_publishers WHERE outbox_name = $1)
-             THEN 'no_acl'
-           WHEN $2::bool
-             THEN 'superuser'
-           WHEN $3::bool
-             THEN 'extension_owner'
+             THEN 'denied'
            WHEN EXISTS(SELECT 1 FROM tide.outbox_publishers
                        WHERE outbox_name = $1
                          AND pg_has_role($4::name, role_name::name, 'member'))
@@ -335,12 +344,10 @@ fn outbox_publish_impl(
         detail: format!("ACL verdict query failed: {e}"),
     })?;
 
-    // 3–5. Accept only explicit no_acl / superuser / allowed. Reject 'denied'
+    // 3–5. Accept only explicit superuser / extension_owner / allowed. Reject 'denied'
     // and treat any unknown or null verdict as an internal authorization error.
     match acl_verdict.as_deref() {
-        Some("no_acl") | Some("superuser") | Some("extension_owner") | Some("allowed") => {
-            /* publish proceeds */
-        }
+        Some("superuser") | Some("extension_owner") | Some("allowed") => { /* publish proceeds */ }
         Some("denied") => {
             return Err(PgTideError::PublishDenied {
                 role: current_role,
@@ -377,7 +384,8 @@ fn outbox_publish_impl(
     .map_err(|e| PgTideError::SpiError(format!("INSERT outbox_messages: {e}")))?;
 
     // Notify consumers.
-    let _ = Spi::run_with_args("SELECT pg_notify('tide_outbox_new', $1)", &[name.into()]);
+    Spi::run_with_args("SELECT pg_notify('tide_outbox_new', $1)", &[name.into()])
+        .map_err(|e| PgTideError::SpiError(format!("notify outbox '{name}': {e}")))?;
 
     Ok(())
 }
@@ -478,7 +486,9 @@ fn outbox_disable_impl(name: &str) -> Result<(), PgTideError> {
         &[name.into()],
     )
     .map_err(|e| PgTideError::SpiError(format!("disable outbox '{name}': {e}")))?;
-    if updated.unwrap_or(0) == 0 {
+    let updated = updated
+        .ok_or_else(|| PgTideError::SpiError(format!("disable outbox '{name}' returned NULL")))?;
+    if updated == 0 {
         return Err(PgTideError::OutboxNotFound(name.to_string()));
     }
     Ok(())
@@ -497,7 +507,9 @@ fn outbox_enable_impl(name: &str) -> Result<(), PgTideError> {
         &[name.into()],
     )
     .map_err(|e| PgTideError::SpiError(format!("enable outbox '{name}': {e}")))?;
-    if updated.unwrap_or(0) == 0 {
+    let updated = updated
+        .ok_or_else(|| PgTideError::SpiError(format!("enable outbox '{name}' returned NULL")))?;
+    if updated == 0 {
         return Err(PgTideError::OutboxNotFound(name.to_string()));
     }
     Ok(())
@@ -896,9 +908,12 @@ fn drop_consumer_group_impl(name: &str, if_exists: bool) -> Result<(), PgTideErr
          SELECT COUNT(*) FROM d",
         &[name.into()],
     )
-    .unwrap_or(None);
+    .map_err(|e| PgTideError::SpiError(format!("drop consumer group '{name}': {e}")))?;
 
-    if deleted.unwrap_or(0) == 0 && !if_exists {
+    let deleted = deleted.ok_or_else(|| {
+        PgTideError::SpiError(format!("drop consumer group '{name}' returned NULL"))
+    })?;
+    if deleted == 0 && !if_exists {
         return Err(PgTideError::InvalidArgument(format!(
             "consumer group '{}' not found",
             name
@@ -943,10 +958,11 @@ fn commit_offset_impl(group: &str, consumer: &str, last_offset: i64) -> Result<(
     }
 
     // Clear lease.
-    let _ = Spi::run_with_args(
+    Spi::run_with_args(
         "DELETE FROM tide.tide_consumer_leases WHERE group_name = $1 AND consumer_id = $2",
         &[group.into(), consumer.into()],
-    );
+    )
+    .map_err(|e| PgTideError::SpiError(format!("clear consumer lease: {e}")))?;
 
     Ok(())
 }
@@ -965,6 +981,7 @@ pub fn outbox_grant_publish(p_outbox: &str, p_role: &str) {
 
 fn outbox_grant_publish_impl(outbox: &str, role: &str) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(outbox)?;
+    crate::validation::validate_identifier(role)?;
     if !outbox_exists(outbox)? {
         return Err(PgTideError::OutboxNotFound(outbox.to_string()));
     }
@@ -990,6 +1007,7 @@ pub fn outbox_revoke_publish(p_outbox: &str, p_role: &str) {
 
 fn outbox_revoke_publish_impl(outbox: &str, role: &str) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(outbox)?;
+    crate::validation::validate_identifier(role)?;
     Spi::run_with_args(
         "DELETE FROM tide.outbox_publishers WHERE outbox_name = $1 AND role_name = $2",
         &[outbox.into(), role.into()],
@@ -1010,11 +1028,12 @@ pub fn consumer_heartbeat(p_group: &str, p_consumer: &str) {
 }
 
 fn consumer_heartbeat_impl(group: &str, consumer: &str) -> Result<(), PgTideError> {
-    let _ = Spi::run_with_args(
+    Spi::run_with_args(
         "UPDATE tide.tide_consumer_offsets SET last_heartbeat = now() \
          WHERE group_name = $1 AND consumer_id = $2",
         &[group.into(), consumer.into()],
-    );
+    )
+    .map_err(|e| PgTideError::SpiError(format!("consumer heartbeat: {e}")))?;
     Ok(())
 }
 

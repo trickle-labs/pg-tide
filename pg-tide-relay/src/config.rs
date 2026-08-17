@@ -278,86 +278,142 @@ pub fn validate_relay_identifier(name: &str) -> Result<(), crate::error::RelayEr
 
 /// Recursively resolve `${env:VAR}` and `${file:/path}` tokens in every
 /// string value within a pipeline config JSONB.///
-/// On success returns the fully-resolved value.  On error (unknown env var,
-/// missing file, invalid var name) returns `RelayError::SecretNotFound` or
-/// similar so the coordinator can disable only the affected pipeline rather
-/// than crashing the process.
+/// On success returns the fully-resolved value. On error (unknown env var,
+/// missing/unsafe file, invalid reference) returns a secret error so the
+/// coordinator can disable only the affected pipeline rather than starting it
+/// with an unsafe or silently unresolved value.
 pub fn resolve_pipeline_secrets(
     config: serde_json::Value,
 ) -> Result<serde_json::Value, crate::error::RelayError> {
-    resolve_json_value(config)
+    resolve_json_value(config, SecretFieldPolicy::None)
 }
 
-fn resolve_json_value(v: serde_json::Value) -> Result<serde_json::Value, crate::error::RelayError> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SecretFieldPolicy {
+    None,
+    Strict,
+    Embedded,
+}
+
+fn resolve_json_value(
+    v: serde_json::Value,
+    policy: SecretFieldPolicy,
+) -> Result<serde_json::Value, crate::error::RelayError> {
     match v {
-        serde_json::Value::String(s) => Ok(serde_json::Value::String(resolve_secret_str(&s)?)),
+        serde_json::Value::String(s) if policy == SecretFieldPolicy::Strict => {
+            let reference = crate::secret::parse_reference(&s).map_err(|_| {
+                crate::error::RelayError::InvalidSecretToken(
+                    "inline secret values must use an env/file reference".to_string(),
+                )
+            })?;
+            Ok(serde_json::Value::String(
+                crate::secret::resolve_reference(&reference)?
+                    .expose()
+                    .to_string(),
+            ))
+        }
+        serde_json::Value::String(s) if policy == SecretFieldPolicy::Embedded => {
+            Ok(serde_json::Value::String(resolve_embedded_references(&s)?))
+        }
+        serde_json::Value::String(s) => {
+            if s.contains("${") {
+                return Err(crate::error::RelayError::InvalidSecretToken(
+                    "secret references are only valid in declared secret fields".to_string(),
+                ));
+            }
+            Ok(serde_json::Value::String(s))
+        }
         serde_json::Value::Object(map) => {
             let mut out = serde_json::Map::new();
             for (k, v) in map {
-                out.insert(k, resolve_json_value(v)?);
+                out.insert(k.clone(), resolve_json_value(v, field_policy(&k))?);
             }
             Ok(serde_json::Value::Object(out))
         }
         serde_json::Value::Array(arr) => {
-            let out: Result<Vec<_>, _> = arr.into_iter().map(resolve_json_value).collect();
+            let out: Result<Vec<_>, _> = arr
+                .into_iter()
+                .map(|value| resolve_json_value(value, policy))
+                .collect();
             Ok(serde_json::Value::Array(out?))
         }
         other => Ok(other),
     }
 }
 
-fn resolve_secret_str(s: &str) -> Result<String, crate::error::RelayError> {
-    let mut result = String::with_capacity(s.len());
-    let mut rest = s;
+fn field_policy(name: &str) -> SecretFieldPolicy {
+    if is_strict_secret_field(name) {
+        SecretFieldPolicy::Strict
+    } else if is_embedded_reference_field(name) {
+        SecretFieldPolicy::Embedded
+    } else {
+        SecretFieldPolicy::None
+    }
+}
+
+fn is_strict_secret_field(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "password"
+            | "token"
+            | "access_token"
+            | "auth_token"
+            | "api_key"
+            | "secret"
+            | "secret_key"
+            | "client_secret"
+            | "private_key"
+            | "credentials"
+            | "credentials_json"
+            | "webhook_url"
+    )
+}
+
+fn is_embedded_reference_field(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "url"
+            | "endpoint"
+            | "connection_string"
+            | "catalog_connection"
+            | "postgres_url"
+            | "brokers"
+            | "queue_url"
+            | "target_url"
+            | "private_key_path"
+            | "account"
+            | "project_id"
+    )
+}
+
+fn resolve_embedded_references(value: &str) -> Result<String, crate::error::RelayError> {
+    let mut result = String::with_capacity(value.len());
+    let mut rest = value;
     while let Some(start) = rest.find("${") {
         result.push_str(&rest[..start]);
-        let after = &rest[start + 2..];
-        if let Some(end) = after.find('}') {
-            let token = &after[..end];
-            if let Some(var_name) = token.strip_prefix("env:") {
-                validate_secret_var_name(var_name)?;
-                match std::env::var(var_name) {
-                    Ok(val) => result.push_str(&val),
-                    Err(_) => {
-                        return Err(crate::error::RelayError::SecretNotFound {
-                            token: format!("${{{token}}}"),
-                        });
-                    }
-                }
-            } else if let Some(path) = token.strip_prefix("file:") {
-                let val = std::fs::read_to_string(path).map_err(|e| {
-                    crate::error::RelayError::SecretReadError {
-                        path: path.to_string(),
-                        reason: e.to_string(),
-                    }
-                })?;
-                result.push_str(val.trim_end_matches('\n'));
-            } else {
-                // Unknown token type — pass through verbatim.
-                result.push_str("${");
-                result.push_str(token);
-                result.push('}');
-            }
-            rest = &after[end + 1..];
-        } else {
-            // Malformed — no closing brace, pass through verbatim.
-            result.push_str("${");
-            rest = after;
-        }
+        let token_start = start + 2;
+        let after = &rest[token_start..];
+        let end = after.find('}').ok_or_else(|| {
+            crate::error::RelayError::InvalidSecretToken(
+                "unterminated secret reference".to_string(),
+            )
+        })?;
+        let token = &after[..end];
+        let reference = parse_compatible_reference(token)?;
+        result.push_str(crate::secret::resolve_reference(&reference)?.expose());
+        rest = &after[end + 1..];
     }
     result.push_str(rest);
     Ok(result)
 }
 
-/// Only ASCII letters, digits, and underscores are allowed in variable names.
-fn validate_secret_var_name(name: &str) -> Result<(), crate::error::RelayError> {
-    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        Ok(())
-    } else {
-        Err(crate::error::RelayError::InvalidSecretToken(
-            name.to_string(),
-        ))
+fn parse_compatible_reference(
+    token: &str,
+) -> Result<crate::secret::SecretRef, crate::error::RelayError> {
+    if let Some(name) = token.strip_prefix("ENV:") {
+        return crate::secret::parse_reference(&format!("${{env:{name}}}"));
     }
+    crate::secret::parse_reference(&format!("${{{token}}}"))
 }
 
 #[cfg(test)]
@@ -394,6 +450,38 @@ mod tests {
     fn test_require_str_missing() {
         let cfg = make_pipeline(json!({"source_type": "outbox"}));
         assert!(cfg.require_str(&["source", "outbox"]).is_err());
+    }
+
+    #[test]
+    fn test_pipeline_secrets_require_declared_references() {
+        // SAFETY: test-only environment variable with no process-wide dependency.
+        unsafe { std::env::set_var("PG_TIDE_CONFIG_SECRET", "canary") };
+        let resolved = resolve_pipeline_secrets(json!({
+            "sink": {
+                "password": "${env:PG_TIDE_CONFIG_SECRET}",
+                "url": "https://example.com"
+            }
+        }))
+        .expect("secret reference should resolve");
+        assert_eq!(resolved["sink"]["password"], "canary");
+
+        assert!(resolve_pipeline_secrets(json!({
+            "sink": {"password": "inline-canary"}
+        }))
+        .is_err());
+        assert!(resolve_pipeline_secrets(json!({
+            "sink": {"description": "${env:PG_TIDE_CONFIG_SECRET}"}
+        }))
+        .is_err());
+        let resolved = resolve_pipeline_secrets(json!({
+            "sink": {
+                "url": "amqps://${ENV:PG_TIDE_CONFIG_SECRET}:5671/example"
+            }
+        }))
+        .expect("embedded compatibility reference should resolve");
+        assert_eq!(resolved["sink"]["url"], "amqps://canary:5671/example");
+        // SAFETY: test-only cleanup of the variable above.
+        unsafe { std::env::remove_var("PG_TIDE_CONFIG_SECRET") };
     }
 
     #[test]

@@ -162,6 +162,13 @@ test-unit:
     cargo test --package {{PG_TIDE_EXT}} --lib -- --test-threads=4
     cargo test --package {{PG_TIDE_RELAY}} --bins -- --test-threads=4
 
+# Security-focused tests, including the no-PostgreSQL v0.44 contract checks.
+# Service-backed privilege and migration tests remain in test-integration.
+test-security:
+    cargo test --package {{PG_TIDE_RELAY}} --lib --no-default-features --features core -- --test-threads=4
+    cargo test --package {{PG_TIDE_RELAY}} --bins -- --test-threads=4
+    cargo test --package {{PG_TIDE_RELAY}} --test v044_validation_test -- --test-threads=1
+
 # Run integration tests (requires Docker for testcontainers)
 test-integration:
     cargo test --package {{PG_TIDE_RELAY}} --test '*' -- --test-threads=1
@@ -205,19 +212,108 @@ docs-serve:
 docker-build:
     docker build -t ghcr.io/trickle-labs/pg-tide:latest .
 
-# Run cargo audit (known-unfixable advisories in optional-feature deps are ignored;
-# see audit.toml for justification. All ignored advisories are optional-feature only.)
+# Run cargo audit using the checked-in, time-bounded advisory policy.
+# Each exception is duplicated in supply-chain/advisory-exceptions.toml with
+# owner, expiry, removal condition, and production reachability.
 audit:
-    cargo audit \
-        --ignore RUSTSEC-2026-0119 \
-        --ignore RUSTSEC-2026-0118 \
-        --ignore RUSTSEC-2026-0104 \
-        --ignore RUSTSEC-2026-0098 \
-        --ignore RUSTSEC-2026-0099 \
-        --ignore RUSTSEC-2026-0049 \
-        --ignore RUSTSEC-2024-0436 \
-        --ignore RUSTSEC-2025-0134 \
-        --ignore RUSTSEC-2021-0127
+    #!/usr/bin/env python3
+    import re, subprocess
+
+    text = open("supply-chain/advisory-exceptions.toml", encoding="utf-8").read()
+    advisories = re.findall(r'^advisory = "([^"]+)"$', text, flags=re.M)
+    subprocess.run(
+        ["cargo", "audit", *sum((["--ignore", advisory] for advisory in advisories), [])],
+        check=True,
+    )
+
+audit-production:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FEATURES=$(cargo tree --package {{PG_TIDE_RELAY}} --no-default-features --features core --locked --edges normal)
+    for forbidden in kms-aws kms-gcp kms-vault; do
+        if grep -q "$forbidden" <<< "$FEATURES"; then
+            echo "ERROR: production profile enables ${forbidden}" >&2
+            exit 1
+        fi
+    done
+    python3 - <<'PY'
+    import json
+    import subprocess
+    import tomllib
+
+    tree = subprocess.check_output(
+        [
+            "cargo",
+            "tree",
+            "--package",
+            "pg-tide-relay",
+            "--no-default-features",
+            "--features",
+            "core",
+            "--locked",
+            "--edges",
+            "normal",
+        ],
+        text=True,
+    )
+    policy = tomllib.loads(
+        open("supply-chain/advisory-exceptions.toml", encoding="utf-8").read()
+    )
+    exceptions = {
+        item["advisory"]: item
+        for item in policy.get("exception", [])
+    }
+    report = subprocess.run(
+        ["cargo", "audit", "--json", "--no-fetch"],
+        capture_output=True,
+        text=True,
+    )
+    findings = json.loads(report.stdout).get("vulnerabilities", {}).get("list", [])
+    ignore = set()
+    failures = []
+    for finding in findings:
+        advisory = finding["advisory"]["id"]
+        package = finding["package"]
+        exact = f'{package["name"]} v{package["version"]}'
+        exception = exceptions.get(advisory)
+        if exact in tree:
+            failures.append(f"{advisory}: {exact} is reachable from core")
+        elif exception is None:
+            failures.append(f"{advisory}: no reviewed exception")
+        elif exception.get("production_reachable", True):
+            failures.append(f"{advisory}: production_reachable=true")
+        else:
+            ignore.add(advisory)
+    if failures:
+        raise SystemExit("\n".join(failures))
+    subprocess.run(
+        ["cargo", "audit", "--no-fetch"]
+        + sum((["--ignore", advisory] for advisory in sorted(ignore)), []),
+        check=True,
+    )
+    PY
+
+# Verify that advisory exceptions are documented, owned, and not expired.
+validate-advisory-exceptions:
+    #!/usr/bin/env python3
+    import datetime, re, sys
+
+    text = open("supply-chain/advisory-exceptions.toml", encoding="utf-8").read()
+    today = datetime.date.today()
+    failures = []
+    for advisory, expiry, production in re.findall(
+        r'advisory = "([^"]+)".*?expires = "([^"]+)".*?production_reachable = (true|false)',
+        text,
+        flags=re.S,
+    ):
+        if datetime.date.fromisoformat(expiry) < today:
+            failures.append(f"{advisory}: expired {expiry}")
+        if production == "true":
+            failures.append(f"{advisory}: marked production_reachable=true")
+    if failures:
+        print("\n".join(failures))
+        sys.exit(1)
+    print("OK: advisory exceptions are owned, current, and experimental-only.")
 
 # Run Criterion benchmarks
 bench:

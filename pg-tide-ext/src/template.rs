@@ -35,7 +35,7 @@ fn relay_template_list_impl() -> Result<pgrx::JsonB, PgTideError> {
     )
     .map_err(|e| PgTideError::SpiError(format!("relay_template_list SPI error: {e}")))?;
 
-    Ok(result.unwrap_or_else(|| pgrx::JsonB(serde_json::json!([]))))
+    result.ok_or_else(|| PgTideError::SpiError("relay_template_list returned NULL".to_string()))
 }
 
 // ── TIDE-API: relay_template_get ──────────────────────────────────────────

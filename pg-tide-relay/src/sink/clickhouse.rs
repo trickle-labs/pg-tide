@@ -64,10 +64,14 @@ impl ClickHouseSink {
             config.allow_http,
             config.ssrf_protection,
         )?;
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .map_err(|e| RelayError::sink("clickhouse", e))?;
+        let client = crate::http_util::secure_client_for_url(
+            &config.url,
+            "clickhouse",
+            std::time::Duration::from_secs(60),
+            config.allow_http,
+            config.ssrf_protection,
+        )
+        .map_err(|e| RelayError::sink("clickhouse", e))?;
         Ok(Self { client, config })
     }
 

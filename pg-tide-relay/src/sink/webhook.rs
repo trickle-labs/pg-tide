@@ -25,66 +25,7 @@ pub fn validate_webhook_url(
     allow_http: bool,
     ssrf_protection: bool,
 ) -> Result<(), RelayError> {
-    if !allow_http && url.scheme() != "https" {
-        return Err(RelayError::config(format!(
-            "webhook URL must use HTTPS (got '{}'). Set allow_http=true to override.",
-            url.scheme()
-        )));
-    }
-
-    if !ssrf_protection {
-        return Ok(());
-    }
-
-    let host = url.host_str().unwrap_or("");
-
-    // Block loopback.
-    if host == "localhost" || host == "127.0.0.1" || host == "::1" || host.starts_with("127.") {
-        return Err(RelayError::config(format!(
-            "SSRF guard: loopback target '{}' is not allowed in production",
-            host
-        )));
-    }
-
-    // Block link-local metadata service (AWS/GCP/Azure instance metadata).
-    if host == "169.254.169.254" || host.starts_with("169.254.") {
-        return Err(RelayError::config(format!(
-            "SSRF guard: link-local/metadata target '{}' is blocked",
-            host
-        )));
-    }
-
-    // Block other link-local ranges.
-    if host.starts_with("fe80:") || host.starts_with("[fe80:") {
-        return Err(RelayError::config(format!(
-            "SSRF guard: IPv6 link-local target '{}' is blocked",
-            host
-        )));
-    }
-
-    // Block private ranges (RFC 1918).
-    if host.starts_with("10.") || host.starts_with("192.168.") || is_private_172(host) {
-        return Err(RelayError::config(format!(
-            "SSRF guard: private-range target '{}' is blocked. \
-             Set ssrf_protection=false to allow private targets in dev mode.",
-            host
-        )));
-    }
-
-    Ok(())
-}
-
-/// Check whether an IP string falls in the 172.16.0.0/12 range.
-#[cfg(feature = "webhook")]
-fn is_private_172(host: &str) -> bool {
-    if let Some(rest) = host.strip_prefix("172.") {
-        if let Some(second_octet_str) = rest.split('.').next() {
-            if let Ok(n) = second_octet_str.parse::<u8>() {
-                return (16..=31).contains(&n);
-            }
-        }
-    }
-    false
+    crate::http_util::validate_url(url.as_str(), "webhook", allow_http, ssrf_protection)
 }
 
 #[cfg(feature = "webhook")]
@@ -111,10 +52,14 @@ impl WebhookSink {
     ) -> Result<Self, RelayError> {
         let parsed = Url::parse(url).map_err(|e| RelayError::config(e.to_string()))?;
         validate_webhook_url(&parsed, allow_http, ssrf_protection)?;
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_secs))
-            .build()
-            .map_err(|e| RelayError::sink("webhook", e))?;
+        let client = crate::http_util::secure_client_for_url(
+            parsed.as_str(),
+            "webhook",
+            std::time::Duration::from_secs(timeout_secs),
+            allow_http,
+            ssrf_protection,
+        )
+        .map_err(|e| RelayError::sink("webhook", e))?;
         Ok(Self {
             client,
             url: parsed,

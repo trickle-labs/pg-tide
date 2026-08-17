@@ -12,7 +12,7 @@ jobs:
     name: Connector registry and generated output
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Check connector registry
         run: python3 scripts/generate_connector_surface.py --check
 
@@ -20,7 +20,7 @@ jobs:
     name: Operational budget and benchmark contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Validate operational budget configuration
         run: python3 scripts/check_operational_budgets.py --check-config
 
@@ -28,9 +28,11 @@ jobs:
     name: Clean checkout workspace build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
       - name: Assert no sibling RockLake checkout
         run: test ! -e ../rocklake2
       - name: Build and test the workspace
@@ -43,15 +45,16 @@ jobs:
     name: Format + Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
         with:
+          toolchain: 1.97.1
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -69,15 +72,16 @@ jobs:
     name: Clippy (pg-tide-ext)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
         with:
+          toolchain: 1.97.1
           components: clippy
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -115,13 +119,15 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -142,7 +148,7 @@ jobs:
     name: Relay Experimental-full Integration Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Free disk space for integration tests
         run: |
@@ -154,10 +160,12 @@ jobs:
           df -h
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -174,13 +182,15 @@ jobs:
     name: Integration Tests — Core (migration, sql-api, wire-format)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -208,13 +218,15 @@ jobs:
     env:
       CARGO_NET_RETRY: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -232,13 +244,15 @@ jobs:
     name: Integration Tests — DAG & HA Failover (v0.30.0)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -258,13 +272,15 @@ jobs:
     name: PostgreSQL Insert Microbenchmark
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -280,13 +296,15 @@ jobs:
     name: Integration Tests — Relay (coordinator, circuit breaker, DLQ)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -314,13 +332,15 @@ jobs:
     name: Extension pgrx Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -368,13 +388,15 @@ jobs:
     name: Public API Outbox → NATS JetStream E2E
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -427,7 +449,8 @@ jobs:
         env:
           PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e"
         run: |
-          cargo test --package pg-tide-relay --test public_api_outbox_to_nats_e2e -- \
+          PG_TIDE_E2E_DATABASE_URL="${PG_TIDE_E2E_DATABASE_URL}?sslmode=disable" \
+            cargo test --package pg-tide-relay --test public_api_outbox_to_nats_e2e -- \
             --test-threads=1 --nocapture
 
   # v0.40.0 (Workstream H.3): Execute the marked Quick Start SQL blocks against a
@@ -436,10 +459,12 @@ jobs:
     name: Executable Quick Start SQL
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Install PostgreSQL 18 and build dependencies
         run: |
@@ -487,10 +512,10 @@ jobs:
     name: Real Fresh Install vs Upgrade Parity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       # v0.40.0 still has a historical path dev-dependency on RockLake.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: trickle-labs/rocklake
           ref: v0.27.14
@@ -502,7 +527,9 @@ jobs:
           ln -s "$(dirname "$GITHUB_WORKSPACE")/rocklake2" "$GITHUB_WORKSPACE/rocklake2"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Install PostgreSQL 18 and build dependencies
         run: |
@@ -592,7 +619,7 @@ jobs:
     name: Docs & Migration Guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Reject active positional relay API calls in docs
         run: |
@@ -613,13 +640,15 @@ jobs:
     name: Supply-Chain Audit (cargo-deny)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable / rust-toolchain.toml
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -638,10 +667,10 @@ jobs:
     name: Link Checker
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Check links in README and docs
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           args: >-
             --exclude-loopback
@@ -661,7 +690,7 @@ jobs:
     name: Grafana Dashboard Metric Name Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Verify dashboard references known metric names
         run: |
@@ -701,7 +730,7 @@ jobs:
     name: No Stale PGTRICKLE_RELAY_* References
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Assert no docs reference PGTRICKLE_ prefix
         run: |
@@ -718,7 +747,7 @@ jobs:
     name: No bare expect() in production relay code
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Assert no bare expect() in production relay source
         run: |
@@ -787,7 +816,7 @@ jobs:
           - 5432:5432
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Wait for PostgreSQL to be ready
         run: |
@@ -870,13 +899,15 @@ jobs:
     name: Wire Format Fuzz (60 s corpus run)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb # nightly
+        with:
+          toolchain: nightly
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -892,14 +923,14 @@ jobs:
       - name: Run wire format fuzz target (60 seconds)
         run: |
           cd pg-tide-relay
-          cargo fuzz run fuzz_wire_format -- -max_total_time=60 -jobs=1
+          cargo +nightly fuzz run fuzz_wire_format -- -max_total_time=60 -jobs=1
 
   # v0.30.0: Helm chart version-alignment CI check.
   helm-version-check:
     name: Helm Chart Version Alignment
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install yq
         run: sudo snap install yq
@@ -933,7 +964,7 @@ jobs:
     name: No unquoted SQL identifier interpolation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Assert no unquoted SQL identifiers in relay source
         run: |
@@ -994,7 +1025,7 @@ jobs:
     name: Migration Test Currency Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Assert migration_test.rs covers current workspace version
         run: |
@@ -1041,10 +1072,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 

@@ -30,7 +30,7 @@ fn relay_fanin_enable_impl(name: &str) -> Result<(), PgTideError> {
         &[name.into()],
     )
     .map_err(|e| PgTideError::SpiError(format!("relay_fanin_enable lookup: {e}")))?
-    .unwrap_or(false);
+    .ok_or_else(|| PgTideError::SpiError("relay_fanin_enable lookup returned NULL".to_string()))?;
     if !exists {
         return Err(PgTideError::InvalidArgument(format!(
             "fan-in pipeline '{}' not found",
@@ -57,8 +57,8 @@ fn relay_fanin_set_enabled_impl(name: &str, enabled: bool) -> Result<(), PgTideE
          WHERE name = $1 RETURNING 1) SELECT COUNT(*)::bigint FROM u",
         &[name.into(), enabled.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(0);
+    .map_err(|e| PgTideError::SpiError(format!("update fan-in '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("update fan-in '{name}' returned NULL")))?;
 
     if updated == 0 {
         return Err(PgTideError::InvalidArgument(format!(
@@ -88,8 +88,8 @@ fn relay_fanin_delete_impl(name: &str) -> Result<(), PgTideError> {
          SELECT COUNT(*)::bigint FROM d",
         &[name.into()],
     )
-    .unwrap_or(None)
-    .unwrap_or(0);
+    .map_err(|e| PgTideError::SpiError(format!("delete fan-in '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("delete fan-in '{name}' returned NULL")))?;
 
     if deleted == 0 {
         return Err(PgTideError::InvalidArgument(format!(
@@ -126,7 +126,7 @@ fn relay_fanin_list_impl() -> Result<pgrx::JsonB, PgTideError> {
     )
     .map_err(|e| PgTideError::SpiError(format!("relay_fanin_list SPI error: {e}")))?;
 
-    Ok(result.unwrap_or_else(|| pgrx::JsonB(serde_json::json!([]))))
+    result.ok_or_else(|| PgTideError::SpiError("relay_fanin_list returned NULL".to_string()))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

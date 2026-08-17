@@ -99,6 +99,7 @@ async fn test_ha_failover_surviving_coordinator_takes_over() {
         .await
         .expect("insert test pipeline");
 
+    let pg_url = format!("{pg_url}?sslmode=disable");
     let metrics_a = RelayMetrics::new().expect("metrics_a");
     let metrics_b = RelayMetrics::new().expect("metrics_b");
     let health_a: Arc<RwLock<HealthState>> = Arc::new(RwLock::new(HealthState::default()));

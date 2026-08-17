@@ -8,14 +8,15 @@
 //!   when `sslmode=require` and no TLS backend is compiled in.
 //! - `test_pg_tls_connect_succeeds_with_disable` — verifies that
 //!   `sslmode=disable` works with a standard (no-TLS) PostgreSQL server.
-//! - `test_pg_tls_connect_succeeds_with_prefer` — verifies that
-//!   `sslmode=prefer` falls back to plaintext when the server does not offer TLS.
+//! - `test_pg_tls_connect_rejects_sslmode_prefer` — verifies that
+//!   `sslmode=prefer` is rejected instead of falling back to plaintext.
 
 mod common;
 
 use common::PgTideTestDb;
-#[cfg(not(feature = "native-tls"))]
 use pg_tide_relay::error::RelayError;
+#[cfg(feature = "native-tls")]
+use pg_tide_relay::pg_tls::PgConnection;
 use pg_tide_relay::pg_tls::{parse_ssl_mode, with_ssl_mode, PgSslMode};
 
 #[test]
@@ -161,10 +162,10 @@ async fn test_pg_tls_connect_succeeds_with_sslmode_disable() {
     }
 }
 
-/// v0.15.0: Verify `sslmode=prefer` falls back to plaintext when the server
-/// does not offer TLS (the standard testcontainer PostgreSQL image).
+/// v0.44.0: Verify `sslmode=prefer` is rejected instead of falling back to
+/// plaintext.
 #[tokio::test]
-async fn test_pg_tls_connect_succeeds_with_sslmode_prefer() {
+async fn test_pg_tls_connect_rejects_sslmode_prefer() {
     let db = PgTideTestDb::start().await;
     let url = format!(
         "host=127.0.0.1 port={} user=postgres password=postgres dbname=postgres sslmode=prefer",
@@ -172,9 +173,12 @@ async fn test_pg_tls_connect_succeeds_with_sslmode_prefer() {
     );
     let result = pg_tide_relay::pg_tls::connect(&url).await;
     assert!(
-        result.is_ok(),
-        "sslmode=prefer should succeed (plaintext fallback): {:?}",
-        result.err()
+        matches!(
+            &result,
+            Err(RelayError::InsecureTransport { mode, .. }) if mode == "prefer"
+        ),
+        "sslmode=prefer should be rejected: {:?}",
+        result.as_ref().err()
     );
     if let Ok((client, conn)) = result {
         tokio::spawn(async move {
@@ -186,19 +190,26 @@ async fn test_pg_tls_connect_succeeds_with_sslmode_prefer() {
     }
 }
 
-/// v0.15.0: Verify that a URL with no sslmode (defaults to prefer/disable)
-/// connects successfully.
+/// v0.44.0: Verify that a URL with no sslmode requires TLS rather than
+/// silently falling back to plaintext.
 #[tokio::test]
-async fn test_pg_tls_connect_succeeds_with_no_sslmode() {
+async fn test_pg_tls_connect_requires_tls_with_no_sslmode() {
     let db = PgTideTestDb::start().await;
     let url = format!(
         "host=127.0.0.1 port={} user=postgres password=postgres dbname=postgres",
         db.host_port
     );
     let result = pg_tide_relay::pg_tls::connect(&url).await;
+    #[cfg(feature = "native-tls")]
     assert!(
-        result.is_ok(),
-        "connection without sslmode should succeed: {:?}",
-        result.err()
+        matches!(&result, Ok((_, PgConnection::Tls(_)))),
+        "missing sslmode should use TLS: {:?}",
+        result.as_ref().err()
+    );
+    #[cfg(not(feature = "native-tls"))]
+    assert!(
+        matches!(&result, Err(RelayError::TlsRequired { .. })),
+        "missing sslmode should fail closed: {:?}",
+        result.as_ref().err()
     );
 }

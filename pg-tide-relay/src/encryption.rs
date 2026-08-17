@@ -231,10 +231,7 @@ pub struct LocalKeyFile {
 impl LocalKeyFile {
     /// Read and decode a 32-byte AES-256 key from a hex file.
     fn read_key(path: &std::path::Path) -> Result<[u8; 32], RelayError> {
-        let content = std::fs::read_to_string(path).map_err(|e| RelayError::SecretReadError {
-            path: path.display().to_string(),
-            reason: e.to_string(),
-        })?;
+        let content = crate::secret::load_file(path)?.expose().to_owned();
         let hex = content.trim();
         if hex.len() != 64 {
             return Err(RelayError::Config(format!(

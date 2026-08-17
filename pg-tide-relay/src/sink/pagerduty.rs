@@ -38,10 +38,14 @@ impl PagerDutySink {
         source: Option<String>,
         component: Option<String>,
     ) -> Result<Self, RelayError> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| RelayError::sink("pagerduty", e))?;
+        let client = crate::http_util::secure_client_for_url(
+            PAGERDUTY_API_URL,
+            "pagerduty",
+            std::time::Duration::from_secs(30),
+            false,
+            true,
+        )
+        .map_err(|e| RelayError::sink("pagerduty", e))?;
         Ok(Self {
             client,
             routing_key: routing_key.into(),

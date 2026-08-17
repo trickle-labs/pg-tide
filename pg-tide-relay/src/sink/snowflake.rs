@@ -87,10 +87,16 @@ pub struct SnowflakeSink {
 #[cfg(feature = "snowflake")]
 impl SnowflakeSink {
     pub fn new(config: SnowflakeConfig) -> Result<Self, RelayError> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .map_err(|e| RelayError::sink("snowflake", e))?;
+        crate::http_util::validate_url(&config.endpoint_url(), "snowflake", false, true)?;
+        let endpoint = config.endpoint_url();
+        let client = crate::http_util::secure_client_for_url(
+            &endpoint,
+            "snowflake",
+            std::time::Duration::from_secs(60),
+            false,
+            true,
+        )
+        .map_err(|e| RelayError::sink("snowflake", e))?;
         Ok(Self { client, config })
     }
 }

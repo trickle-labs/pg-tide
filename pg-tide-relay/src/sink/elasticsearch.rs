@@ -41,10 +41,14 @@ impl ElasticsearchSink {
             allow_http,
             ssrf_protection,
         )?;
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| RelayError::sink("elasticsearch", e))?;
+        let client = crate::http_util::secure_client_for_url(
+            &base_url_str,
+            "elasticsearch",
+            std::time::Duration::from_secs(30),
+            allow_http,
+            ssrf_protection,
+        )
+        .map_err(|e| RelayError::sink("elasticsearch", e))?;
         Ok(Self {
             client,
             base_url: base_url_str.trim_end_matches('/').to_string(),

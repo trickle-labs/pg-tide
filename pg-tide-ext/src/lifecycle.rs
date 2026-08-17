@@ -104,7 +104,9 @@ fn relay_auto_resume_candidates_impl() -> Result<pgrx::JsonB, PgTideError> {
     )
     .map_err(|e| PgTideError::SpiError(format!("relay_auto_resume_candidates: {e}")))?;
 
-    Ok(result.unwrap_or_else(|| pgrx::JsonB(serde_json::json!([]))))
+    result.ok_or_else(|| {
+        PgTideError::SpiError("relay_auto_resume_candidates returned NULL".to_string())
+    })
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

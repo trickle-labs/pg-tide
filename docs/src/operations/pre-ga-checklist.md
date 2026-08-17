@@ -8,7 +8,7 @@
 ## 1. TLS Configuration
 
 - [ ] Verify `sslmode` is set appropriately for your PostgreSQL deployment:
-  - Development: `sslmode=disable` or `sslmode=prefer` (acceptable)
+  - Development: `sslmode=disable` (explicit plaintext override only)
   - Staging/Production: `sslmode=require` or `sslmode=verify-full` (required)
 - [ ] If using `sslmode=require`, compile with `--features native-tls` or use the `latest-experimental` Docker image.
 - [ ] Run `pg-tide doctor` and confirm: `[OK] TLS connection: TLSv1.2` or `TLSv1.3`.

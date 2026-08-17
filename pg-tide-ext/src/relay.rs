@@ -19,14 +19,14 @@ fn relay_exists(name: &str) -> Result<bool, PgTideError> {
         "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = $1)",
         &[name.into()],
     )
-    .map(|r| r.unwrap_or(false))
-    .map_err(|e| PgTideError::SpiError(format!("relay_exists SPI error: {e}")))?;
+    .map_err(|e| PgTideError::SpiError(format!("relay_exists outbox SPI error: {e}")))?
+    .ok_or_else(|| PgTideError::SpiError("relay_exists outbox result was NULL".to_string()))?;
     let in_inbox = Spi::get_one_with_args::<bool>(
         "SELECT EXISTS(SELECT 1 FROM tide.relay_inbox_config WHERE name = $1)",
         &[name.into()],
     )
-    .map(|r| r.unwrap_or(false))
-    .map_err(|e| PgTideError::SpiError(format!("relay_exists SPI error: {e}")))?;
+    .map_err(|e| PgTideError::SpiError(format!("relay_exists inbox SPI error: {e}")))?
+    .ok_or_else(|| PgTideError::SpiError("relay_exists inbox result was NULL".to_string()))?;
     Ok(in_outbox || in_inbox)
 }
 
@@ -139,7 +139,8 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
     )
     .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_outbox_config: {e}")))?;
 
-    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
+    Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()])
+        .map_err(|e| PgTideError::SpiError(format!("notify relay config '{name}': {e}")))?;
 
     Ok(())
 }
@@ -226,7 +227,8 @@ fn relay_set_inbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
     )
     .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_inbox_config: {e}")))?;
 
-    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
+    Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()])
+        .map_err(|e| PgTideError::SpiError(format!("notify relay config '{name}': {e}")))?;
 
     Ok(())
 }
@@ -244,17 +246,26 @@ pub fn relay_enable(p_name: &str) -> bool {
 
 fn relay_enable_impl(name: &str) -> Result<bool, PgTideError> {
     if !relay_exists(name)? {
-        return Ok(false); // pipeline not found — return false, no-op
+        return Err(PgTideError::RelayNotFound(name.to_string()));
     }
-    let _ = Spi::run_with_args(
-        "UPDATE tide.relay_outbox_config SET enabled = true WHERE name = $1",
+    let changed = Spi::get_one_with_args::<i64>(
+        "WITH outbox AS (
+             UPDATE tide.relay_outbox_config SET enabled = true WHERE name = $1 RETURNING 1
+         ), inbox AS (
+             UPDATE tide.relay_inbox_config SET enabled = true WHERE name = $1 RETURNING 1
+         )
+         SELECT count(*)::bigint FROM (
+             SELECT 1 FROM outbox UNION ALL SELECT 1 FROM inbox
+         ) changed",
         &[name.into()],
-    );
-    let _ = Spi::run_with_args(
-        "UPDATE tide.relay_inbox_config SET enabled = true WHERE name = $1",
-        &[name.into()],
-    );
-    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
+    )
+    .map_err(|e| PgTideError::SpiError(format!("enable relay '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("enable relay '{name}' returned NULL")))?;
+    if changed == 0 {
+        return Err(PgTideError::RelayNotFound(name.to_string()));
+    }
+    Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()])
+        .map_err(|e| PgTideError::SpiError(format!("notify relay config '{name}': {e}")))?;
     Ok(true)
 }
 
@@ -269,17 +280,26 @@ pub fn relay_disable(p_name: &str) -> bool {
 
 fn relay_disable_impl(name: &str) -> Result<bool, PgTideError> {
     if !relay_exists(name)? {
-        return Ok(false); // pipeline not found — return false, no-op
+        return Err(PgTideError::RelayNotFound(name.to_string()));
     }
-    let _ = Spi::run_with_args(
-        "UPDATE tide.relay_outbox_config SET enabled = false WHERE name = $1",
+    let changed = Spi::get_one_with_args::<i64>(
+        "WITH outbox AS (
+             UPDATE tide.relay_outbox_config SET enabled = false WHERE name = $1 RETURNING 1
+         ), inbox AS (
+             UPDATE tide.relay_inbox_config SET enabled = false WHERE name = $1 RETURNING 1
+         )
+         SELECT count(*)::bigint FROM (
+             SELECT 1 FROM outbox UNION ALL SELECT 1 FROM inbox
+         ) changed",
         &[name.into()],
-    );
-    let _ = Spi::run_with_args(
-        "UPDATE tide.relay_inbox_config SET enabled = false WHERE name = $1",
-        &[name.into()],
-    );
-    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
+    )
+    .map_err(|e| PgTideError::SpiError(format!("disable relay '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("disable relay '{name}' returned NULL")))?;
+    if changed == 0 {
+        return Err(PgTideError::RelayNotFound(name.to_string()));
+    }
+    Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()])
+        .map_err(|e| PgTideError::SpiError(format!("notify relay config '{name}': {e}")))?;
     Ok(true)
 }
 
@@ -293,15 +313,24 @@ fn relay_delete_impl(name: &str) -> Result<(), PgTideError> {
     if !relay_exists(name)? {
         return Err(PgTideError::RelayNotFound(name.to_string()));
     }
-    let _ = Spi::run_with_args(
-        "DELETE FROM tide.relay_outbox_config WHERE name = $1",
+    let deleted = Spi::get_one_with_args::<i64>(
+        "WITH outbox AS (
+             DELETE FROM tide.relay_outbox_config WHERE name = $1 RETURNING 1
+         ), inbox AS (
+             DELETE FROM tide.relay_inbox_config WHERE name = $1 RETURNING 1
+         )
+         SELECT count(*)::bigint FROM (
+             SELECT 1 FROM outbox UNION ALL SELECT 1 FROM inbox
+         ) deleted",
         &[name.into()],
-    );
-    let _ = Spi::run_with_args(
-        "DELETE FROM tide.relay_inbox_config WHERE name = $1",
-        &[name.into()],
-    );
-    let _ = Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()]);
+    )
+    .map_err(|e| PgTideError::SpiError(format!("delete relay '{name}': {e}")))?
+    .ok_or_else(|| PgTideError::SpiError(format!("delete relay '{name}' returned NULL")))?;
+    if deleted == 0 {
+        return Err(PgTideError::RelayNotFound(name.to_string()));
+    }
+    Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()])
+        .map_err(|e| PgTideError::SpiError(format!("notify relay config '{name}': {e}")))?;
     Ok(())
 }
 
@@ -319,7 +348,7 @@ fn relay_get_config_impl(name: &str) -> Result<pgrx::JsonB, PgTideError> {
         "SELECT config FROM tide.relay_outbox_config WHERE name = $1",
         &[name.into()],
     )
-    .unwrap_or(None);
+    .map_err(|e| PgTideError::SpiError(format!("get outbox relay config '{name}': {e}")))?;
 
     if let Some(c) = config {
         return Ok(c);
@@ -329,7 +358,7 @@ fn relay_get_config_impl(name: &str) -> Result<pgrx::JsonB, PgTideError> {
         "SELECT config FROM tide.relay_inbox_config WHERE name = $1",
         &[name.into()],
     )
-    .unwrap_or(None);
+    .map_err(|e| PgTideError::SpiError(format!("get inbox relay config '{name}': {e}")))?;
 
     config2.ok_or_else(|| PgTideError::RelayNotFound(name.to_string()))
 }
@@ -344,17 +373,17 @@ fn relay_list_configs_impl() -> Result<pgrx::JsonB, PgTideError> {
     let outbox_rows = Spi::connect(|client| {
         let mut rows = Vec::new();
         let tup = client.select(
-            "SELECT name, enabled, config FROM tide.relay_outbox_config ORDER BY name",
+            "SELECT name::text, enabled, config FROM tide.relay_outbox_config ORDER BY name",
             None,
             &[],
         )?;
         for row in tup {
-            let name: String = row.get(1)?.unwrap_or_default();
-            let enabled: bool = row.get(2)?.unwrap_or(true);
+            let name: String = row.get(1)?.ok_or(pgrx::spi::SpiError::NoTupleTable)?;
+            let enabled: bool = row.get(2)?.ok_or(pgrx::spi::SpiError::NoTupleTable)?;
             let config: serde_json::Value = row
                 .get::<pgrx::JsonB>(3)?
-                .map(|j| j.0)
-                .unwrap_or(serde_json::Value::Object(Default::default()));
+                .ok_or(pgrx::spi::SpiError::NoTupleTable)?
+                .0;
             rows.push(serde_json::json!({
                 "name": name,
                 "direction": "outbox",
@@ -369,17 +398,17 @@ fn relay_list_configs_impl() -> Result<pgrx::JsonB, PgTideError> {
     let inbox_rows = Spi::connect(|client| {
         let mut rows = Vec::new();
         let tup = client.select(
-            "SELECT name, enabled, config FROM tide.relay_inbox_config ORDER BY name",
+            "SELECT name::text, enabled, config FROM tide.relay_inbox_config ORDER BY name",
             None,
             &[],
         )?;
         for row in tup {
-            let name: String = row.get(1)?.unwrap_or_default();
-            let enabled: bool = row.get(2)?.unwrap_or(true);
+            let name: String = row.get(1)?.ok_or(pgrx::spi::SpiError::NoTupleTable)?;
+            let enabled: bool = row.get(2)?.ok_or(pgrx::spi::SpiError::NoTupleTable)?;
             let config: serde_json::Value = row
                 .get::<pgrx::JsonB>(3)?
-                .map(|j| j.0)
-                .unwrap_or(serde_json::Value::Object(Default::default()));
+                .ok_or(pgrx::spi::SpiError::NoTupleTable)?
+                .0;
             rows.push(serde_json::json!({
                 "name": name,
                 "direction": "inbox",
@@ -405,21 +434,25 @@ pub fn relay_set_tenant(p_name: &str, p_tenant: &str) {
 
 fn relay_set_tenant_impl(name: &str, tenant: &str) -> Result<(), PgTideError> {
     crate::validation::validate_identifier(name)?;
+    crate::validation::validate_identifier(tenant)?;
     if !relay_exists(name)? {
         return Err(PgTideError::RelayNotFound(name.to_string()));
     }
-    let _ = Spi::run_with_args(
+    Spi::run_with_args(
         "UPDATE tide.relay_outbox_config SET tenant_name = $2 WHERE name = $1",
         &[name.into(), tenant.into()],
-    );
-    let _ = Spi::run_with_args(
+    )
+    .map_err(|e| PgTideError::SpiError(format!("set outbox relay tenant '{name}': {e}")))?;
+    Spi::run_with_args(
         "UPDATE tide.relay_inbox_config SET tenant_name = $2 WHERE name = $1",
         &[name.into(), tenant.into()],
-    );
-    let _ = Spi::run_with_args(
+    )
+    .map_err(|e| PgTideError::SpiError(format!("set inbox relay tenant '{name}': {e}")))?;
+    Spi::run_with_args(
         "UPDATE tide.relay_consumer_offsets SET tenant_name = $2 WHERE pipeline_id = $1",
         &[name.into(), tenant.into()],
-    );
+    )
+    .map_err(|e| PgTideError::SpiError(format!("set relay offset tenant '{name}': {e}")))?;
     Ok(())
 }
 
@@ -430,6 +463,8 @@ pub fn relay_grant_tenant(p_tenant: &str, p_role: &str) {
 }
 
 fn relay_grant_tenant_impl(tenant: &str, role: &str) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(tenant)?;
+    crate::validation::validate_identifier(role)?;
     Spi::run_with_args(
         "INSERT INTO tide.relay_tenant_grants (tenant_name, role_name)
          VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -446,6 +481,8 @@ pub fn relay_revoke_tenant(p_tenant: &str, p_role: &str) {
 }
 
 fn relay_revoke_tenant_impl(tenant: &str, role: &str) -> Result<(), PgTideError> {
+    crate::validation::validate_identifier(tenant)?;
+    crate::validation::validate_identifier(role)?;
     Spi::run_with_args(
         "DELETE FROM tide.relay_tenant_grants WHERE tenant_name = $1 AND role_name = $2",
         &[tenant.into(), role.into()],
@@ -670,10 +707,9 @@ mod tests {
 
     // ── error paths ────────────────────────────────────────────────────────
 
-    #[pg_test]
+    #[pg_test(error = "relay pipeline not found: does-not-exist")]
     fn test_relay_enable_unknown_pipeline_is_safe() {
-        // Enabling a non-existent pipeline with our implementation is a no-op
-        // (no rows updated). Verify the function does not panic.
+        // Missing pipelines fail closed rather than becoming a successful no-op.
         crate::relay::relay_enable("does-not-exist");
     }
 
