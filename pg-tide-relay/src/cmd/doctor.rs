@@ -67,7 +67,7 @@ async fn run_doctor_json(url: &str) -> Result<(), Box<dyn std::error::Error>> {
             .try_get(0)?;
         checks_ok &= exists;
         table_checks.push(serde_json::json!({
-            "component": format!("postgres.tide.{table}"),
+            "component": format!("postgres.{}.{}", "tide", table),
             "status": if exists { "pass" } else { "fail" },
         }));
     }
