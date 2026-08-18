@@ -1,6 +1,56 @@
 /// RelayError — all errors that can occur in the relay binary.
 use thiserror::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryClass {
+    Transient,
+    Permanent,
+}
+
+impl std::fmt::Display for RetryClass {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Transient => "transient",
+            Self::Permanent => "permanent",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectorFailureCode {
+    Unavailable,
+    Timeout,
+    Throttled,
+    Authentication,
+    Authorization,
+    TlsVerification,
+    InvalidDestination,
+    MessageTooLarge,
+    ProtocolRejection,
+    InvalidConfig,
+    Shutdown,
+    Unknown,
+}
+
+impl std::fmt::Display for ConnectorFailureCode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "unavailable",
+            Self::Timeout => "timeout",
+            Self::Throttled => "throttled",
+            Self::Authentication => "authentication",
+            Self::Authorization => "authorization",
+            Self::TlsVerification => "tls_verification",
+            Self::InvalidDestination => "invalid_destination",
+            Self::MessageTooLarge => "message_too_large",
+            Self::ProtocolRejection => "protocol_rejection",
+            Self::InvalidConfig => "invalid_config",
+            Self::Shutdown => "shutdown",
+            Self::Unknown => "unknown",
+        })
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum RelayError {
     // Database errors
@@ -42,6 +92,14 @@ pub enum RelayError {
     SinkPublish {
         sink: String,
         source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("connector '{connector}' failed ({code}, {retry_class}): {summary}")]
+    ConnectorFailure {
+        connector: String,
+        code: ConnectorFailureCode,
+        retry_class: RetryClass,
+        summary: String,
     },
 
     #[error("sink '{sink}' unhealthy: {reason}")]
@@ -129,6 +187,121 @@ impl RelayError {
         }
     }
 
+    pub fn connector_failure(
+        connector: impl Into<String>,
+        code: ConnectorFailureCode,
+        retry_class: RetryClass,
+        summary: impl Into<String>,
+    ) -> Self {
+        Self::ConnectorFailure {
+            connector: connector.into(),
+            code,
+            retry_class,
+            summary: summary.into(),
+        }
+    }
+
+    pub fn retry_class(&self) -> RetryClass {
+        match self {
+            Self::ConnectorFailure { retry_class, .. } => *retry_class,
+            _ if self.is_transient() => RetryClass::Transient,
+            _ => RetryClass::Permanent,
+        }
+    }
+
+    pub fn connector_code(&self) -> Option<ConnectorFailureCode> {
+        match self {
+            Self::ConnectorFailure { code, .. } => Some(*code),
+            _ => None,
+        }
+    }
+
+    pub fn public_code(&self) -> ConnectorFailureCode {
+        self.connector_code()
+            .unwrap_or(ConnectorFailureCode::Unknown)
+    }
+
+    pub fn public_summary(&self) -> &str {
+        match self {
+            Self::ConnectorFailure { summary, .. } => summary,
+            _ => "relay operation failed",
+        }
+    }
+
+    pub fn owned_connector_failure(&self) -> Option<Self> {
+        match self {
+            Self::ConnectorFailure {
+                connector,
+                code,
+                retry_class,
+                summary,
+            } => Some(Self::connector_failure(
+                connector.clone(),
+                *code,
+                *retry_class,
+                summary.clone(),
+            )),
+            _ => None,
+        }
+    }
+
+    pub fn postgres_connector_failure(
+        connector: impl Into<String>,
+        error: &tokio_postgres::Error,
+    ) -> Self {
+        let (code, retry_class, summary) = match error.code().map(|state| state.code()) {
+            Some("08001" | "08003" | "08006" | "08007" | "57P01") => (
+                ConnectorFailureCode::Unavailable,
+                RetryClass::Transient,
+                "database unavailable",
+            ),
+            Some("57014") => (
+                ConnectorFailureCode::Timeout,
+                RetryClass::Transient,
+                "database operation timed out",
+            ),
+            Some("28P01") => (
+                ConnectorFailureCode::Authentication,
+                RetryClass::Permanent,
+                "database authentication rejected",
+            ),
+            Some("42501") => (
+                ConnectorFailureCode::Authorization,
+                RetryClass::Permanent,
+                "database authorization rejected",
+            ),
+            Some("23505" | "42P01" | "42703" | "42883") => (
+                ConnectorFailureCode::ProtocolRejection,
+                RetryClass::Permanent,
+                "database rejected the inbox write",
+            ),
+            _ => (
+                ConnectorFailureCode::Unknown,
+                RetryClass::Transient,
+                "database operation failed",
+            ),
+        };
+        Self::connector_failure(connector, code, retry_class, summary)
+    }
+
+    pub fn into_connector_failure(self, connector: impl Into<String>) -> Self {
+        let connector = connector.into();
+        match self {
+            Self::ConnectionFailed { err, .. } | Self::Postgres(err) => {
+                Self::postgres_connector_failure(connector, &err)
+            }
+            Self::TlsRequired { .. } | Self::InsecureTransport { .. } | Self::TlsSetup(_) => {
+                Self::connector_failure(
+                    connector,
+                    ConnectorFailureCode::TlsVerification,
+                    RetryClass::Permanent,
+                    "connector TLS verification failed",
+                )
+            }
+            other => other,
+        }
+    }
+
     /// Returns `true` if this error is transient (may succeed on retry).
     ///
     /// Permanent errors (bad credentials, schema mismatch, auth rejection,
@@ -149,6 +322,7 @@ impl RelayError {
             | Self::TlsSetup(_)
             | Self::SourceDecode { .. }
             | Self::NotImplemented { .. } => false,
+            Self::ConnectorFailure { retry_class, .. } => *retry_class == RetryClass::Transient,
             // Transient: network / I/O / temporary backend issues
             _ => true,
         }

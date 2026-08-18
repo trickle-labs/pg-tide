@@ -14,6 +14,7 @@ pg-tide config validate --output json
 | Pipeline not discovered | [Pipeline is not discovered](#pipeline-is-not-discovered) | `pg-tide status --output json` | status ownership/config result |
 | Lag alert | [Pipeline has lag](#pipeline-has-lag) | `pg-tide status --output json` | lag, retry, latency trends |
 | Publish errors | [Sink authentication failure](#sink-authentication-failure) | `pg-tide doctor --output json` | redacted connector check |
+| Bounded connector failures | [Sink authentication failure](#sink-authentication-failure) and the connector runbooks | `pg-tide status --output json` | code, retry class, and connector metric |
 | DLQ alert | [DLQ is growing](#dlq-is-growing) | `pg-tide status --output json` | unresolved depth and write rate |
 | Ownership unclear | [Advisory lock is stuck](#advisory-lock-is-stuck-or-ownership-is-unclear) | `pg-tide doctor --output json` | PostgreSQL session evidence |
 | PostgreSQL failover | [PostgreSQL failover occurred](#postgresql-failover-occurred) | `pg-tide status --output json` | primary, owner, checkpoint |

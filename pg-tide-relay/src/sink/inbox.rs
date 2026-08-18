@@ -67,7 +67,7 @@ impl super::Sink for InboxSink {
                 &[&event_ids, &sources, &payloads, &headers],
             )
             .await
-            .map_err(RelayError::from)?;
+            .map_err(|error| RelayError::postgres_connector_failure("postgresql-inbox", &error))?;
 
         let duplicates = messages.len() as u64 - inserted;
         if duplicates > 0 {

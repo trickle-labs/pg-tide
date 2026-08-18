@@ -23,8 +23,9 @@
 //!   cargo test --package pg-tide-relay --test public_api_outbox_to_nats_e2e -- --nocapture
 //! ```
 //!
-//! When the variable is absent the test skips (prints a notice and returns).
-//! NATS is provided by testcontainers with JetStream (`-js`) enabled.
+//! The tests are ignored by the broad integration suite and must be run with
+//! `PG_TIDE_E2E_DATABASE_URL` by the dedicated CI job. NATS is provided by
+//! testcontainers with JetStream (`-js`) enabled.
 
 #![allow(clippy::needless_range_loop)]
 
@@ -206,22 +207,14 @@ async fn receive(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires an installed pg_tide extension and PG_TIDE_E2E_DATABASE_URL"]
 async fn public_api_outbox_to_nats_e2e() {
-    let admin_url = match std::env::var(E2E_ENV) {
-        Ok(u) if !u.is_empty() => u,
-        _ => {
-            eprintln!(
-                "skipping public_api_outbox_to_nats_e2e: set {E2E_ENV} to a PostgreSQL 18 URL \
-                 with the pg_tide extension installed (cargo pgrx install)."
-            );
-            return;
-        }
-    };
+    let admin_url = std::env::var(E2E_ENV).expect("PG_TIDE_E2E_DATABASE_URL must be set");
 
     // ── NATS JetStream via testcontainers ────────────────────────────────
     use testcontainers::runners::AsyncRunner;
     use testcontainers::ImageExt;
-    let nats = testcontainers::GenericImage::new("nats", "latest")
+    let nats = testcontainers::GenericImage::new("nats", "2.11.0")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(4222))
         .with_cmd(["-js"])
         .start()
@@ -389,18 +382,13 @@ async fn public_api_outbox_to_nats_e2e() {
 /// another outbox (`payments`), and its offset may cross global-ID gaps left by
 /// the interleaved `payments` rows without treating them as missing events.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires an installed pg_tide extension and PG_TIDE_E2E_DATABASE_URL"]
 async fn public_api_orders_only_ignores_other_outbox() {
-    let admin_url = match std::env::var(E2E_ENV) {
-        Ok(u) if !u.is_empty() => u,
-        _ => {
-            eprintln!("skipping public_api_orders_only_ignores_other_outbox: set {E2E_ENV}.");
-            return;
-        }
-    };
+    let admin_url = std::env::var(E2E_ENV).expect("PG_TIDE_E2E_DATABASE_URL must be set");
 
     use testcontainers::runners::AsyncRunner;
     use testcontainers::ImageExt;
-    let nats = testcontainers::GenericImage::new("nats", "latest")
+    let nats = testcontainers::GenericImage::new("nats", "2.11.0")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(4222))
         .with_cmd(["-js"])
         .start()

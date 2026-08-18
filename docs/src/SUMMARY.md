@@ -156,6 +156,10 @@
 - [DLQ Replay](operations/runbook-dlq-replay.md)
 - [Schema Migration](operations/runbook-schema-migration.md)
 - [Relay Upgrade](operations/runbook-relay-upgrade.md)
+- [PostgreSQL Inbox](operations/runbook-pg-inbox.md)
+- [NATS JetStream](operations/runbook-nats.md)
+- [Apache Kafka](operations/runbook-kafka.md)
+- [HTTPS Webhook](operations/runbook-webhook.md)
 
 ---
 

@@ -1,0 +1,2 @@
+-- pg_tide 0.45.0 -> 0.46.0
+-- No schema changes in this connector-only release.

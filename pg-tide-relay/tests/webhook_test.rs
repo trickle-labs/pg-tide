@@ -6,13 +6,22 @@
 mod common;
 
 use common::PgTideTestDb;
+use pg_tide_relay::envelope::RelayMessage;
+use pg_tide_relay::sink::{webhook::WebhookSink, Sink};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
+#[derive(Debug)]
+struct RecordedRequest {
+    body: serde_json::Value,
+    idempotency_key: Option<String>,
+    signature: Option<String>,
+}
+
 /// A minimal HTTP server that records every POST body it receives.
 struct MockWebhook {
-    /// Collected request bodies (JSON).
-    pub bodies: Arc<Mutex<Vec<serde_json::Value>>>,
+    /// Collected request bodies and delivery headers.
+    pub requests: Arc<Mutex<Vec<RecordedRequest>>>,
     /// Shut-down signal.
     shutdown_tx: Option<oneshot::Sender<()>>,
     /// Bound port on localhost.
@@ -24,16 +33,27 @@ impl MockWebhook {
     async fn start() -> Self {
         use axum::{extract::State, http::StatusCode, routing::post, Router};
 
-        let bodies: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
-        let state = Arc::clone(&bodies);
+        let requests: Arc<Mutex<Vec<RecordedRequest>>> = Arc::new(Mutex::new(Vec::new()));
+        let state = Arc::clone(&requests);
 
         let app = Router::new()
             .route(
                 "/events",
                 post(
-                    |State(s): State<Arc<Mutex<Vec<serde_json::Value>>>>,
+                    |State(s): State<Arc<Mutex<Vec<RecordedRequest>>>>,
+                     headers: axum::http::HeaderMap,
                      axum::Json(body): axum::Json<serde_json::Value>| async move {
-                        s.lock().unwrap().push(body);
+                        s.lock().unwrap().push(RecordedRequest {
+                            body,
+                            idempotency_key: headers
+                                .get("Idempotency-Key")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                            signature: headers
+                                .get("X-Pg-Tide-Signature")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                        });
                         StatusCode::OK
                     },
                 ),
@@ -57,7 +77,7 @@ impl MockWebhook {
         });
 
         Self {
-            bodies,
+            requests,
             shutdown_tx: Some(shutdown_tx),
             port,
         }
@@ -82,35 +102,48 @@ impl Drop for MockWebhook {
 async fn test_webhook_sink_posts_messages() {
     let mock = MockWebhook::start().await;
     let webhook_url = mock.url();
+    let mut sink = WebhookSink::new_with_options(
+        &webhook_url,
+        30,
+        true,
+        false,
+        Some("test-secret"),
+        "hmac-sha256",
+    )
+    .expect("webhook sink should construct");
 
-    let db = PgTideTestDb::start().await;
-    db.setup_outbox("webhook-outbox").await;
-
-    let payloads: Vec<serde_json::Value> = (1..=3)
-        .map(|i| serde_json::json!({"order_id": i, "event": "order.placed"}))
+    let messages: Vec<RelayMessage> = (1..=3)
+        .map(|i| {
+            RelayMessage::new_reverse(
+                format!("event-{i}"),
+                "orders.placed",
+                serde_json::json!({"order_id": i, "event": "order.placed"}),
+            )
+        })
         .collect();
-    db.publish_messages("webhook-outbox", &payloads).await;
 
-    // Simulate relay delivery via HTTP POST.
-    let http = reqwest::Client::new();
-    for payload in &payloads {
-        let resp = http
-            .post(&webhook_url)
-            .json(payload)
-            .send()
-            .await
-            .expect("failed to POST to mock webhook");
-        assert!(resp.status().is_success(), "webhook must return 2xx");
-    }
+    sink.publish(&messages)
+        .await
+        .expect("webhook sink should publish");
 
     // Give the server a tick to process incoming requests.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let received = mock.bodies.lock().unwrap();
-    assert_eq!(received.len(), 3, "mock webhook must have received 3 POSTs");
-    assert_eq!(received[0]["order_id"], 1);
-    assert_eq!(received[1]["order_id"], 2);
-    assert_eq!(received[2]["order_id"], 3);
+    let received = mock.requests.lock().unwrap();
+    assert_eq!(
+        received.len(),
+        1,
+        "mock webhook must have received one batch"
+    );
+    assert_eq!(received[0].body.as_array().map(Vec::len), Some(3));
+    assert!(received[0]
+        .idempotency_key
+        .as_deref()
+        .is_some_and(|key| key.starts_with("batch-")));
+    assert!(received[0]
+        .signature
+        .as_deref()
+        .is_some_and(|signature| signature.starts_with("sha256=")));
 }
 
 /// Verifies that the webhook sink retries on transient HTTP 503 and eventually
@@ -140,19 +173,18 @@ async fn test_webhook_sink_handles_large_payload() {
 
     // Build a payload just over 64 KB.
     let large_data: String = "x".repeat(70_000);
-    let payload = serde_json::json!({"data": large_data});
-
-    let http = reqwest::Client::new();
-    let resp = http
-        .post(&webhook_url)
-        .json(&payload)
-        .send()
-        .await
-        .expect("large POST failed");
-
-    assert!(resp.status().is_success(), "must accept large payloads");
+    let mut sink =
+        WebhookSink::new_with_options(&webhook_url, 30, true, false, None, "hmac-sha256")
+            .expect("webhook sink should construct");
+    sink.publish(&[RelayMessage::new_reverse(
+        "large-event",
+        "orders.large",
+        serde_json::json!({"data": large_data}),
+    )])
+    .await
+    .expect("large webhook publish failed");
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    let received = mock.bodies.lock().unwrap();
+    let received = mock.requests.lock().unwrap();
     assert_eq!(received.len(), 1);
 }

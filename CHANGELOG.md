@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.46.0 — Connector Contract & Supported Destinations](#0460--connector-contract--supported-destinations)
 - [0.45.0 — Operators First](#0450--operators-first)
 - [0.44.0 — Security Boundary Hardening](#0440--security-boundary-hardening)
 - [0.43.0 — Operational Cost Contract](#0430--operational-cost-contract)
@@ -52,6 +53,33 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.46.0] — 2026-08-18 — Connector Contract & Supported Destinations
+
+v0.46.0 makes the four outbound destination contracts explicit and testable:
+PostgreSQL inbox, NATS JetStream, Apache Kafka, and HTTPS webhook. Delivery
+remains at-least-once, with durable source checkpoints advanced only after the
+destination acknowledgment boundary.
+
+### Connector behavior
+- **Registry**: added direction-aware generated descriptors, strict supported
+  configuration fields, capability limits, and bounded failure codes.
+- **Delivery**: added NATS JetStream acknowledgments and stable message IDs,
+  Kafka idempotent producer settings and flush behavior, and webhook HMAC and
+  deterministic idempotency keys.
+- **Safety**: added encoded message and batch limits before downstream I/O,
+  typed transient/permanent failure policy, sanitized status and DLQ reasons,
+  and SSRF-safe webhook validation.
+
+### Operations and evidence
+- Added connector-specific runbooks, bounded connector failure metrics, and
+  generated compatibility/release surfaces.
+- Added a real Apache Kafka 3.8.0 KRaft producer/consumer integration path in
+  the explicit `core-kafka` CI profile.
+- Added a no-op SQL migration because this release changes connector behavior,
+  not the PostgreSQL catalog schema.
 
 ---
 
