@@ -494,7 +494,8 @@ jobs:
           set -euo pipefail
           IMAGE="ghcr.io/trickle-labs/pg-tide:${GITHUB_REF_NAME#v}"
           docker pull --platform linux/amd64 "${IMAGE}"
-          syft "docker:${IMAGE}" -o cyclonedx-json \
+          docker save --output /tmp/pg-tide-image.tar "${IMAGE}"
+          syft "docker-archive:/tmp/pg-tide-image.tar" -o cyclonedx-json \
             > release-evidence/pg-tide-image.sbom.cyclonedx.json
           digest="$(docker buildx imagetools inspect "${IMAGE}" |
             awk '/Digest:/ {print $2; exit}')"
