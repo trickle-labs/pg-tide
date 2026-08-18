@@ -494,9 +494,7 @@ jobs:
           set -euo pipefail
           IMAGE="ghcr.io/trickle-labs/pg-tide:${GITHUB_REF_NAME#v}"
           docker pull --platform linux/amd64 "${IMAGE}"
-          docker save --output /tmp/pg-tide-image.tar "${IMAGE}"
-          syft "docker-archive:/tmp/pg-tide-image.tar" -o cyclonedx-json \
-            > release-evidence/pg-tide-image.sbom.cyclonedx.json
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
           digest="$(docker buildx imagetools inspect "${IMAGE}" |
             awk '/Digest:/ {print $2; exit}')"
           test -n "${digest}"
@@ -508,6 +506,14 @@ jobs:
             "subject": [{"name": "${IMAGE}", "digest": {"sha256": "${digest#sha256:}"}}]
           }
           EOF
+
+      - name: Generate image SBOM
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: cyclonedx
+          output: release-evidence/pg-tide-image.sbom.cyclonedx.json
+          exit-code: '0'
 
       - name: Extract changelog for this version
         id: changelog
