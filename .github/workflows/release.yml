@@ -11,9 +11,77 @@ permissions:
   id-token: write
 
 jobs:
+  release-gates:
+    name: v0.47.0 release evidence and blocker gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check v1 contract manifest
+        run: |
+          if command -v just >/dev/null 2>&1; then
+            just check-v1-contracts
+          else
+            python3 scripts/check_v1_contracts.py
+          fi
+      - name: Check v1 machine-readable artifacts
+        run: python3 scripts/check_v1_artifacts.py
+      - name: Verify release evidence and zero P0/P1 issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" != "v0.47.0" ]]; then
+            echo "v0.47.0 evidence gate is not applicable to ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          root = Path("release-evidence")
+
+          def load(name):
+              value = json.loads((root / name).read_text(encoding="utf-8"))
+              assert value["schema_version"] == 1
+              assert value["release"] == "v0.47.0"
+              return value
+
+          release = load("v0.47.0-index.json")
+          pilots = load("v0.47.0-pilots.json")
+          reviews = load("v0.47.0-reviews.json")
+          assert release["status"] == "ready", "release evidence is not ready"
+          assert release["candidate"]["commit"] == os.environ["TAG_SHA"]
+          assert release["open_blockers"] == 0
+          assert release["release_manager"]["status"] == "approved"
+          assert all(p["status"] == "complete" for p in pilots["required_profiles"])
+          assert all(p["operator_signoff"]["status"] == "approved" for p in pilots["required_profiles"])
+          assert all(r["status"] == "approved" for r in reviews["required_disciplines"])
+          assert all(r["approval"]["status"] == "approved" for r in reviews["required_disciplines"])
+          assert all(p["candidate_commit"] == os.environ["TAG_SHA"] for p in pilots["required_profiles"])
+          assert all(r["candidate_commit"] == os.environ["TAG_SHA"] for r in reviews["required_disciplines"])
+
+          issues = json.loads(subprocess.check_output([
+              "gh", "issue", "list", "--state", "open", "--search", "is:issue",
+              "--limit", "1000", "--json", "number,labels",
+          ], text=True))
+          blockers = [
+              issue["number"] for issue in issues
+              if any(label["name"] in {"priority/P0", "priority/P1"} for label in issue["labels"])
+          ]
+          if blockers:
+              raise SystemExit(f"open P0/P1 issues: {blockers}")
+          print("release evidence ready; zero open P0/P1 issues")
+          PY
+
   connector-registry:
     name: Check connector registry
     runs-on: ubuntu-latest
+    needs: release-gates
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Check generated connector surface
@@ -514,6 +582,41 @@ jobs:
           format: cyclonedx
           output: release-evidence/pg-tide-image.sbom.cyclonedx.json
           exit-code: '0'
+
+      - name: Record final release evidence
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          artifacts = []
+          for path in sorted(Path("artifacts").rglob("*")):
+              if path.suffix in {".gz", ".zip"}:
+                  artifacts.append({
+                      "name": path.name,
+                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                  })
+          provenance = json.loads(Path(
+              "release-evidence/pg-tide-image.provenance.json"
+          ).read_text())
+          record = {
+              "schema_version": 1,
+              "release": os.environ["GITHUB_REF_NAME"],
+              "candidate_commit": os.environ["GITHUB_SHA"],
+              "source_index": "release-evidence/v0.47.0-index.json",
+              "artifacts": artifacts,
+              "image": provenance["subject"][0],
+              "evidence_files": sorted(
+                  str(path) for path in Path("release-evidence").iterdir()
+                  if path.is_file()
+              ),
+          }
+          Path("release-evidence/v0.47.0-final.json").write_text(
+              json.dumps(record, indent=2) + "\n"
+          )
+          PY
 
       - name: Extract changelog for this version
         id: changelog

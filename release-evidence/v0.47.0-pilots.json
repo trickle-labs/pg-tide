@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "release": "v0.47.0",
+  "status": "pending",
+  "required_profiles": [
+    {
+      "id": "pilot-nats",
+      "profile": "postgresql-outbox-to-nats-jetstream",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "scenarios": {
+        "installation": "required",
+        "steady_state": "required",
+        "planned_failure": "required",
+        "restart_recovery": "required",
+        "upgrade": "required",
+        "rollback": "required",
+        "duplicates": "required",
+        "operator_diagnosis": "required"
+      },
+      "issues": [],
+      "operator_signoff": {
+        "status": "required",
+        "pilot_id": "pilot-nats",
+        "approved_by": null,
+        "approved_at": null
+      }
+    },
+    {
+      "id": "pilot-kafka",
+      "profile": "postgresql-outbox-to-kafka",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "scenarios": {
+        "installation": "required",
+        "steady_state": "required",
+        "planned_failure": "required",
+        "restart_recovery": "required",
+        "upgrade": "required",
+        "rollback": "required",
+        "duplicates": "required",
+        "operator_diagnosis": "required"
+      },
+      "issues": [],
+      "operator_signoff": {
+        "status": "required",
+        "pilot_id": "pilot-kafka",
+        "approved_by": null,
+        "approved_at": null
+      }
+    },
+    {
+      "id": "pilot-postgresql-inbox",
+      "profile": "postgresql-outbox-to-postgresql-inbox",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "scenarios": {
+        "installation": "required",
+        "steady_state": "required",
+        "planned_failure": "required",
+        "restart_recovery": "required",
+        "upgrade": "required",
+        "rollback": "required",
+        "duplicates": "required",
+        "operator_diagnosis": "required"
+      },
+      "issues": [],
+      "operator_signoff": {
+        "status": "required",
+        "pilot_id": "pilot-postgresql-inbox",
+        "approved_by": null,
+        "approved_at": null
+      }
+    },
+    {
+      "id": "pilot-webhook",
+      "profile": "postgresql-outbox-to-https-webhook",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "scenarios": {
+        "installation": "required",
+        "steady_state": "required",
+        "planned_failure": "required",
+        "restart_recovery": "required",
+        "upgrade": "required",
+        "rollback": "required",
+        "duplicates": "required",
+        "operator_diagnosis": "required"
+      },
+      "issues": [],
+      "operator_signoff": {
+        "status": "required",
+        "pilot_id": "pilot-webhook",
+        "approved_by": null,
+        "approved_at": null
+      }
+    }
+  ]
+}

@@ -1,28 +1,29 @@
 # v1 scope
 
-v1.0.0 is not a feature promise for every connector or every design listed in
-older planning documents. It will be defined only after the focused v0.x
-support policy is proven and the project publishes a reviewed v1 plan.
+v1.0.0 will be defined only after the v0.47.0 contract freeze, external
+pilots, independent review, and release evidence are complete. This is a
+reviewed candidate boundary, not a GA feature list.
 
-## In scope for the supported foundation
+## Foundation
 
-- Transactional PostgreSQL outbox.
-- Idempotent PostgreSQL inbox.
+- Transactional PostgreSQL outbox and idempotent PostgreSQL inbox.
 - Relay catalog configuration and the documented `core` relay path.
-- Observable delivery, retry, and failure behavior covered by the release
-  evidence.
+- PostgreSQL inbox, NATS JetStream, Apache Kafka, and HTTPS webhook outbound
+  support.
+- Stable, documented delivery, retry, failure, health, metrics, CLI, and
+  envelope behavior covered by release evidence.
 
-## Explicitly outside the current promise
+## Outside the current scope
 
-- Unproven connector ecosystems and protocol adapters.
-- PostgreSQL 17 support until its complete feasibility gate passes.
-- A stable plugin ABI, broad wire-format compatibility, or a promise that all
-  compiling feature combinations are production-ready.
-- Historical v1 features listed in archived roadmaps without current
-  implementation and evidence.
+- Inbound NATS, Kafka, and webhook paths and all other preview or experimental
+  connectors.
+- Fan-in, DAG orchestration, managed backfill, data-lake, and other unproven
+  roadmap surfaces.
+- PostgreSQL versions below 18, arbitrary source-to-sink combinations,
+  exactly-once transport, and a stable Rust or plugin ABI.
+- Internal tables and Rust types, undocumented configuration, and historical
+  roadmap items without current implementation and evidence.
 
-The [support policy](support/support-policy.md),
-[production-supported definition](support/production-supported.md), and
-[focused roadmap](../../plans/pg-tide-roadmap-to-focused-production-grade.md)
-are the authoritative boundaries for v0.41.0.
-
+Read the [stability guarantees](stability-guarantees.md),
+[support policy](support/support-policy.md), and
+[release evidence guidance](operations/release-evidence.md) together.

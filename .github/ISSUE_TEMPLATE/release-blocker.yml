@@ -1,0 +1,71 @@
+name: Release-blocking issue
+description: Record a complete v0.47.0 P0/P1 release blocker or pilot/review finding.
+title: "[v0.47.0 blocker] "
+labels:
+  - release-blocking
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include payloads, credentials, certificates, customer names, internal hostnames, IPs, or raw logs.
+  - type: input
+    id: affected-promise
+    attributes:
+      label: Affected public promise or contract surface
+      placeholder: "pipeline.config.v1, event.native.v1, or non-contract"
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Current and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Failure, data, or security impact
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reproduction or sanitized evidence
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Owner
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - priority/P0
+        - priority/P1
+        - priority/P2
+        - priority/P3
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Required tests and resolution verification
+    validations:
+      required: true
+  - type: textarea
+    id: release-impact
+    attributes:
+      label: Migration, documentation, and candidate rerun decision
+    validations:
+      required: true
+  - type: input
+    id: milestone
+    attributes:
+      label: v0.47.0 milestone
+      placeholder: "v0.47.0"
+    validations:
+      required: true

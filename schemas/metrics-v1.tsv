@@ -1,0 +1,34 @@
+name	type	unit	labels	description	buckets
+pg_tide_relay_messages_published_total	counter	messages	pipeline,direction,tenant	Total messages published to sink
+pg_tide_relay_messages_consumed_total	counter	messages	pipeline,direction,tenant	Total messages consumed from source
+pg_tide_relay_publish_errors_total	counter	errors	pipeline,direction,tenant	Total publish errors
+pg_tide_relay_connector_failures_total	counter	errors	pipeline,direction,tenant,connector,code,retry_class	Total sink failures by bounded connector code and retry class
+pg_tide_relay_dedup_skipped_total	counter	messages	pipeline,tenant	Total messages skipped due to deduplication
+pg_tide_relay_dlq_entries_written_total	counter	entries	pipeline,direction,tenant	Total entries written to the dead-letter queue
+pg_tide_relay_pipeline_healthy	gauge	boolean	pipeline,tenant	1 if pipeline is healthy, 0 otherwise
+pg_tide_relay_consumer_lag	gauge	messages	pipeline,tenant	Pending messages in the outbox not yet consumed by the relay
+pg_tide_relay_delivery_latency_seconds	histogram	seconds	pipeline,tenant	End-to-end latency from outbox publish to sink acknowledgement	0.001,0.005,0.01,0.05,0.1,0.5,1,5,30
+pg_tide_relay_owned_pipelines	gauge	pipelines	relay_group	Number of pipeline workers currently owned by this coordinator instance
+pg_tide_relay_reconcile_duration_seconds	histogram	seconds	relay_group	Duration of coordinator reconcile loop iterations in seconds	0.001,0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5
+pg_tide_relay_pipeline_errors_total	counter	errors	pipeline,error_class	Total pipeline errors labelled by error class
+pg_tide_relay_dlq_write_errors_total	counter	errors	pipeline	Total DLQ write failures that caused a pipeline pause
+pg_tide_relay_sink_publish_duration_seconds	histogram	seconds	pipeline,sink_type	Wall-clock time from Sink::publish() call entry to return, in seconds	0.001,0.005,0.01,0.05,0.1,0.25,0.5,1,5,30
+pg_tide_relay_pool_connections	gauge	connections	state	Connection pool state counts (idle/busy/waiting)
+pg_tide_relay_pool_acquire_duration_seconds	histogram	seconds	relay_group	Time to acquire a connection from the pool, in seconds	0.0001,0.001,0.005,0.01,0.05,0.1,0.5,1,5
+pg_tide_relay_receipts_written_total	counter	receipts	pipeline,sink_type,tenant	Total delivery receipt rows written after confirmed sink publish
+pg_tide_relay_fanin_source_lag	gauge	messages	pipeline,outbox,tenant	Consumer lag per source outbox in fan-in pipelines
+pg_tide_relay_fanin_messages_merged_total	counter	messages	pipeline,outbox,tenant	Total messages merged from each source outbox in fan-in pipelines
+pg_tide_relay_delivery_stage_total	counter	transitions	pipeline,stage,outcome	Delivery state-machine transitions
+pg_tide_relay_checkpoint_commit_errors_total	counter	errors	pipeline,source	Source checkpoint commit failures
+pg_tide_relay_ownership_events_total	counter	events	relay_group,event	Pipeline ownership transitions
+pg_tide_relay_forced_shutdown_total	counter	events	pipeline	Workers aborted with in-flight work during shutdown
+pg_tide_relay_source_poll_queries_total	counter	queries	pipeline,source	Source poll queries issued by the relay
+pg_tide_relay_offset_writes_total	counter	writes	pipeline,source	Durable source offset writes issued by the relay
+pg_tide_relay_catalog_discovery_queries_total	counter	queries	relay_group	Coordinator pipeline catalog discovery queries
+pg_tide_relay_retry_state	gauge	state	pipeline,state	Current retry state for a pipeline
+pg_tide_relay_dlq_depth	gauge	entries	pipeline	Unresolved dead-letter entries
+pg_tide_relay_status_refresh_total	counter	refreshes	result	Operational status refreshes
+pg_tide_relay_status_refresh_errors_total	counter	errors	component	Operational status refresh failures
+pg_tide_relay_pipeline_heartbeat_age_seconds	gauge	seconds	pipeline	Age of the last pipeline heartbeat
+pg_tide_relay_pipeline_last_success_timestamp_seconds	gauge	unix_seconds	pipeline	Unix timestamp of the last checkpointed success
+pg_tide_relay_pipeline_last_error_timestamp_seconds	gauge	unix_seconds	pipeline	Unix timestamp of the last safe pipeline error

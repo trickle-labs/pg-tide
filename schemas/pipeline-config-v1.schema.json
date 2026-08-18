@@ -1,190 +1,5 @@
 {
   "$defs": {
-    "connector": {
-      "additionalProperties": false,
-      "description": "Connector-owned fields; values may contain secret references.",
-      "properties": {
-        "access_token": {
-          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
-          "type": "string"
-        },
-        "account": {
-          "type": "string"
-        },
-        "addr": {
-          "type": "string"
-        },
-        "allow_http": {
-          "type": "boolean"
-        },
-        "atomic_lake_writes": {},
-        "auth_token": {
-          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
-          "type": "string"
-        },
-        "avatar_url": {},
-        "batch_limit": {},
-        "batch_size": {
-          "type": "integer"
-        },
-        "brokers": {
-          "type": "string"
-        },
-        "bucket": {},
-        "buffer_max_bytes": {},
-        "buffer_max_rows": {},
-        "buffer_max_seconds": {},
-        "catalog_connection": {},
-        "catalog_schema": {},
-        "change_data_feed": {},
-        "client_id": {},
-        "collection_template": {},
-        "component": {},
-        "configured_catalog": {},
-        "connection_string": {
-          "type": "string"
-        },
-        "consumer": {
-          "type": "string"
-        },
-        "consumer_group": {
-          "type": "string"
-        },
-        "consumer_id": {
-          "type": "string"
-        },
-        "container": {},
-        "data_path": {},
-        "database": {},
-        "dataset_id": {},
-        "descriptor_path": {},
-        "destination_args": {},
-        "destination_command": {},
-        "destination_config": {},
-        "destination_image": {},
-        "destination_name": {},
-        "doc_id_field": {},
-        "endpoint": {},
-        "entity": {},
-        "event_hub": {},
-        "event_type": {
-          "type": "string"
-        },
-        "exchange": {},
-        "format": {
-          "type": "string"
-        },
-        "group": {
-          "type": "string"
-        },
-        "group_id": {},
-        "icon_emoji": {},
-        "inbox": {},
-        "index_template": {},
-        "inline_row_limit": {},
-        "is_fifo": {},
-        "iterator_type": {},
-        "last_snapshot_id": {},
-        "max_len": {},
-        "max_messages": {},
-        "namespace": {},
-        "on_schema_change": {},
-        "outbox": {
-          "type": "string"
-        },
-        "partition": {},
-        "partition_by_date": {},
-        "partition_count": {},
-        "partition_key_template": {},
-        "password": {
-          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
-          "type": "string"
-        },
-        "path": {
-          "type": "string"
-        },
-        "postgres_url": {},
-        "prefix": {},
-        "project_id": {
-          "type": "string"
-        },
-        "provider": {},
-        "qos": {},
-        "queue": {
-          "type": "string"
-        },
-        "queue_url": {
-          "type": "string"
-        },
-        "region": {},
-        "root": {},
-        "routing_key": {},
-        "routing_key_template": {},
-        "rows_per_file": {},
-        "schema": {
-          "type": "string"
-        },
-        "secret": {
-          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
-          "type": "string"
-        },
-        "severity": {},
-        "signing_algorithm": {},
-        "signing_secret": {
-          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
-          "type": "string"
-        },
-        "snapshot_poll_interval_ms": {},
-        "source": {},
-        "source_args": {},
-        "source_command": {},
-        "source_config": {},
-        "source_image": {},
-        "source_name": {},
-        "storage_provider": {},
-        "stream": {
-          "type": "string"
-        },
-        "stream_key": {},
-        "stream_key_template": {},
-        "stream_name": {},
-        "stream_name_template": {},
-        "subject": {
-          "type": "string"
-        },
-        "subject_template": {},
-        "subscription": {},
-        "table": {},
-        "table_path": {},
-        "table_template": {},
-        "tap_args": {},
-        "tap_command": {},
-        "tap_name": {},
-        "target_args": {},
-        "target_command": {},
-        "target_name": {},
-        "timeout_secs": {},
-        "topic": {
-          "type": "string"
-        },
-        "topic_template": {},
-        "url": {
-          "type": "string"
-        },
-        "user": {},
-        "username": {
-          "type": "string"
-        },
-        "visibility_seconds": {},
-        "warehouse_path": {},
-        "webhook_url": {
-          "type": "string"
-        },
-        "write_concern": {},
-        "write_mode": {}
-      },
-      "type": "object"
-    },
     "dlq": {
       "additionalProperties": false,
       "properties": {
@@ -229,11 +44,316 @@
         }
       },
       "type": "object"
+    },
+    "sink_inbox": {
+      "additionalProperties": false,
+      "description": "PostgreSQL inbox in the local catalog; postgres_url selects a remote inbox.",
+      "properties": {
+        "inbox": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "postgres_url": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "inbox"
+      ],
+      "type": "object"
+    },
+    "sink_kafka": {
+      "additionalProperties": false,
+      "description": "Apache Kafka outbound sink.",
+      "not": {
+        "required": [
+          "topic",
+          "topic_template"
+        ]
+      },
+      "properties": {
+        "brokers": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "topic": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "topic_template": {
+          "default": "{stream_table}",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "brokers"
+      ],
+      "type": "object"
+    },
+    "sink_nats": {
+      "additionalProperties": false,
+      "description": "NATS JetStream outbound sink.",
+      "not": {
+        "required": [
+          "subject",
+          "subject_template"
+        ]
+      },
+      "properties": {
+        "subject": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "subject_template": {
+          "default": "{outbox}.{op}",
+          "minLength": 1,
+          "type": "string"
+        },
+        "url": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "sink_pg_outbox": {
+      "additionalProperties": false,
+      "description": "Deprecated PostgreSQL inbox alias; use sink_type 'inbox' with postgres_url.",
+      "properties": {
+        "inbox": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "postgres_url": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "inbox",
+        "postgres_url"
+      ],
+      "type": "object"
+    },
+    "sink_webhook": {
+      "additionalProperties": false,
+      "description": "HTTPS webhook outbound sink.",
+      "oneOf": [
+        {
+          "properties": {
+            "allow_http": {
+              "const": true
+            },
+            "url": {
+              "pattern": "^https?://"
+            }
+          },
+          "required": [
+            "allow_http"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "allow_http"
+            ]
+          },
+          "properties": {
+            "url": {
+              "pattern": "^https://"
+            }
+          }
+        },
+        {
+          "properties": {
+            "allow_http": {
+              "const": false
+            },
+            "url": {
+              "pattern": "^https://"
+            }
+          },
+          "required": [
+            "allow_http"
+          ]
+        }
+      ],
+      "properties": {
+        "allow_http": {
+          "default": false,
+          "type": "boolean"
+        },
+        "signing_algorithm": {
+          "default": "hmac-sha256",
+          "enum": [
+            "hmac-sha256"
+          ],
+          "type": "string"
+        },
+        "signing_secret": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
+        "ssrf_protection": {
+          "default": true,
+          "type": "boolean"
+        },
+        "timeout_secs": {
+          "default": 30,
+          "maximum": 300,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "url": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "source_outbox": {
+      "additionalProperties": false,
+      "description": "Native PostgreSQL outbox source.",
+      "properties": {
+        "consumer_group": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "consumer_id": {
+          "default": "pg-tide",
+          "minLength": 1,
+          "type": "string"
+        },
+        "outbox": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "subject_template": {
+          "default": "{outbox}.{op}",
+          "minLength": 1,
+          "type": "string"
+        },
+        "visibility_seconds": {
+          "default": 30,
+          "maximum": 2147483647,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "outbox"
+      ],
+      "type": "object"
     }
   },
   "$id": "https://pg-tide.dev/schemas/pipeline-config-v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "sink_type": {
+            "const": "inbox"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "batch_size": {
+            "maximum": 1000
+          },
+          "sink": {
+            "$ref": "#/$defs/sink_inbox"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "sink_type": {
+            "const": "pg_outbox"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "batch_size": {
+            "maximum": 1000
+          },
+          "sink": {
+            "$ref": "#/$defs/sink_pg_outbox"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "sink_type": {
+            "const": "nats"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "batch_size": {
+            "maximum": 100
+          },
+          "sink": {
+            "$ref": "#/$defs/sink_nats"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "sink_type": {
+            "const": "kafka"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "batch_size": {
+            "maximum": 100
+          },
+          "sink": {
+            "$ref": "#/$defs/sink_kafka"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "sink_type": {
+            "const": "webhook"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "batch_size": {
+            "maximum": 100
+          },
+          "sink": {
+            "$ref": "#/$defs/sink_webhook"
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "batch_size": {
       "maximum": 1000000,
@@ -251,91 +371,28 @@
     },
     "schema_version": {
       "const": 1,
+      "default": 1,
       "type": "integer"
     },
     "sink": {
-      "$ref": "#/$defs/connector"
+      "type": "object"
     },
     "sink_type": {
       "enum": [
-        "airbyte",
-        "bigquery",
-        "clickhouse",
-        "delta",
-        "discord",
-        "ducklake",
-        "elasticsearch",
-        "eventhubs",
-        "fanin",
-        "file",
-        "iceberg",
         "inbox",
         "kafka",
-        "kinesis",
-        "mongodb",
-        "mqtt",
         "nats",
-        "object_storage",
-        "outbox",
-        "pagerduty",
-        "pg_logical",
         "pg_outbox",
-        "pg_trickle_outbox",
-        "pubsub",
-        "rabbitmq",
-        "redis",
-        "rocklake",
-        "servicebus",
-        "singer",
-        "slack",
-        "snowflake",
-        "sqs",
-        "stdin",
-        "stdout",
         "webhook"
       ],
       "type": "string"
     },
     "source": {
-      "$ref": "#/$defs/connector"
+      "$ref": "#/$defs/source_outbox"
     },
     "source_type": {
       "enum": [
-        "airbyte",
-        "bigquery",
-        "clickhouse",
-        "delta",
-        "discord",
-        "ducklake",
-        "elasticsearch",
-        "eventhubs",
-        "fanin",
-        "file",
-        "iceberg",
-        "inbox",
-        "kafka",
-        "kinesis",
-        "mongodb",
-        "mqtt",
-        "nats",
-        "object_storage",
-        "outbox",
-        "pagerduty",
-        "pg_logical",
-        "pg_outbox",
-        "pg_trickle_outbox",
-        "pubsub",
-        "rabbitmq",
-        "redis",
-        "rocklake",
-        "servicebus",
-        "singer",
-        "slack",
-        "snowflake",
-        "sqs",
-        "stdin",
-        "stdout",
-        "webhook"
+        "outbox"
       ],
       "type": "string"
     },

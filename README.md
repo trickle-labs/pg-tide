@@ -105,6 +105,14 @@ docker pull ghcr.io/trickle-labs/pg-tide:latest-experimental
 
 Release artifacts and Docker images are signed with [sigstore/cosign](https://github.com/sigstore/cosign-installer) using keyless OIDC signing.
 
+## Project policies
+
+- [Security policy](SECURITY.md)
+- [Support policy](SUPPORT.md)
+- [Governance](GOVERNANCE.md)
+- [Stability guarantees](docs/src/stability-guarantees.md)
+- [v1 scope](docs/src/v1-scope.md)
+
 <!-- BEGIN GENERATED CONNECTORS -->
 ## Connector surface
 

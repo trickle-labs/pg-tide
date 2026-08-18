@@ -1,48 +1,45 @@
 # Support policy
 
-v0.41.0 supports the product surface that is tested and documented in this
-repository. The policy is intentionally narrow: compiling a connector does not
-make it production-supported.
+Support follows the generated [connector compatibility matrix](connector-compatibility.md)
+and its source of truth, [`connectors.toml`](../../../connectors.toml).
 
-## Supported baseline
+## Support levels
+
+- **Production-supported:** documented behavior, an owner and security
+  contact, an intentional production profile, and complete applicable
+  contract, integration, failure, restart, duplicate, security, metrics,
+  runbook, upgrade, and packaging evidence.
+- **Preview:** usable for evaluation, but interfaces, compatibility, and
+  upgrade behavior may change or be removed.
+- **Experimental:** compile or test coverage only; no production promise.
+- **Diagnostic:** local output or test assistance, not a production
+  integration.
+
+Maturity is direction-aware. A supported outbound connector does not make its
+inbound path supported.
+
+## v0.47.0 baseline
 
 - PostgreSQL 18 is the supported PostgreSQL version.
-- Only extension/relay version combinations exercised by the fresh-install,
-  upgrade, and public NATS E2E checks are supported; newer relays are not
-  assumed to work with older extensions.
-- Production builds use the `core` profile. Other profiles are opt-in and may
-  contain preview or experimental connectors.
-- The Linux amd64 and arm64 Docker images are the runtime-tested container
-  targets. Linux amd64, Linux arm64, Windows MSVC, and macOS arm64 archives are
-  build artifacts; compilation alone does not make an OS/runtime combination
-  supported.
-- Standalone binary and Docker deployment are the maintained v0.41 paths.
-  Helm and CloudNativePG installation are preview deployment modes until their
-  install and upgrade gates are maintained in CI.
-- Connector versions and evidence are listed only in the [generated
-  matrix](connector-compatibility.md); there is no blanket compatibility claim
-  for unlisted service versions.
+- Use matching extension and relay minor versions.
+- `core` is the normal production profile; `core-kafka` is an explicit
+  opt-in profile for Apache Kafka.
+- Production-supported destinations are PostgreSQL inbox, NATS JetStream
+  outbound, Apache Kafka outbound, and HTTPS webhook outbound.
+- PostgreSQL native outbox is the supported source. Diagnostics are supported
+  only as diagnostics.
+- Linux amd64 and arm64 Docker images are the runtime-tested container targets.
+  Other archives are build artifacts unless the release matrix says otherwise.
+- Helm and CloudNativePG remain preview deployment modes until their install
+  and upgrade gates are maintained in CI.
 
-## Experimental and preview terms
-
-Preview and experimental features are best effort. They have no compatibility,
-upgrade, response-time, or retention guarantee, may change or be removed, and
-must not be used to infer production support from a successful compile. Security
-reports are still accepted for every surface.
+Unlisted service versions and compiling feature combinations are not covered.
+See the [version compatibility](../reference/version-compatibility.md) guide.
 
 ## Maintenance
 
-Patch releases address security issues, data-loss or correctness bugs, and
-regressions in the supported surface. Preview and experimental interfaces may
-change or be removed in a minor release and are not covered by the production
-support promise.
-
-PostgreSQL 17 is not supported in v0.41.0; see
-[the feasibility report](postgresql-17-feasibility.md).
-
-Before v1.0, routine fixes target only the latest 0.x minor line. Older minor
-lines are upgrade-only unless a separate security exception is announced.
-
-Documented supported SQL APIs and the `core` relay path are the public
-supported surface. Preview and experimental configuration keys, connectors,
-and protocol adapters have no deprecation-period promise.
+Routine fixes target the latest 0.x minor line. Older minor lines are
+upgrade-only unless a separate security exception is announced. Preview and
+experimental interfaces may change in a minor release without a deprecation
+period. Supported deprecations follow the
+[deprecation policy](deprecation-policy.md).

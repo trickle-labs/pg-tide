@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "release": "v0.47.0",
+  "status": "pending",
+  "candidate": {"commit": null, "artifact_digests": [], "image_digests": []},
+  "contract": {"manifest": "schemas/v1-contract-manifest.toml", "checker": "just check-v1-contracts", "status": "required"},
+  "pilots": "release-evidence/v0.47.0-pilots.json",
+  "reviews": "release-evidence/v0.47.0-reviews.json",
+  "blocker_query": "open issues labeled priority/P0 or priority/P1",
+  "open_blockers": null,
+  "gates": {"fresh_install": "required", "upgrade": "required", "rollback": "required", "mixed_version": "required", "regressions": "required", "security": "required", "operational": "required", "packaging": "required"},
+  "known_non_blocking_issues": [],
+  "release_manager": {"status": "required", "approved_by": null, "approved_at": null}
+}

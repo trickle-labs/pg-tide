@@ -1,0 +1,2 @@
+-- pg_tide 0.46.0 -> 0.47.0
+-- No schema changes in this release.

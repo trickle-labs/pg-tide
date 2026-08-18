@@ -16,6 +16,61 @@ jobs:
       - name: Check connector registry
         run: python3 scripts/generate_connector_surface.py --check
 
+  v1-contracts:
+    name: v1 contract and release-evidence indexes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check v1 contract manifest
+        run: |
+          if command -v just >/dev/null 2>&1; then
+            just check-v1-contracts
+          else
+            python3 scripts/check_v1_contracts.py
+          fi
+      - name: Check v1 machine-readable artifacts
+        run: python3 scripts/check_v1_artifacts.py
+      - name: Check release-evidence indexes
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("release-evidence")
+
+          def load(name):
+              value = json.loads((root / name).read_text(encoding="utf-8"))
+              assert value["schema_version"] == 1
+              assert value["release"] == "v0.47.0"
+              return value
+
+          release = load("v0.47.0-index.json")
+          pilots = load("v0.47.0-pilots.json")
+          reviews = load("v0.47.0-reviews.json")
+          assert release["status"] in {"pending", "ready"}
+          assert release["contract"]["checker"] == "just check-v1-contracts"
+          assert [pilot["id"] for pilot in pilots["required_profiles"]] == [
+              "pilot-nats",
+              "pilot-kafka",
+              "pilot-postgresql-inbox",
+              "pilot-webhook",
+          ]
+          assert [review["id"] for review in reviews["required_disciplines"]] == [
+              "postgresql-extension",
+              "rust-async-concurrency",
+              "delivery-semantics",
+              "security",
+              "operations",
+          ]
+          for pilot in pilots["required_profiles"]:
+              assert pilot["status"] in {"pending", "complete"}
+              assert pilot["operator_signoff"]["pilot_id"] == pilot["id"]
+          for review in reviews["required_disciplines"]:
+              assert review["status"] in {"pending", "approved"}
+              assert review["approval"]["status"] in {"required", "approved"}
+          print("release-evidence indexes: structurally valid")
+          PY
+
   operational-contract:
     name: Operational budget and benchmark contract
     runs-on: ubuntu-latest

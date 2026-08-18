@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pg-tide.dev/schemas/cli-json-v1.schema.json",
+  "title": "pg-tide CLI JSON envelope",
+  "type": "object",
+  "oneOf": [{"$ref": "#/$defs/success"}, {"$ref": "#/$defs/failure"}],
+  "$defs": {
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "component", "message", "likely_cause", "next_action"],
+      "properties": {
+        "code": {"type": "string"},
+        "component": {"type": "string"},
+        "message": {"type": "string"},
+        "likely_cause": {"type": "string"},
+        "next_action": {"type": "string"}
+      }
+    },
+    "common": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "command", "ok", "observed_at", "data", "error"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "command": {"enum": ["doctor", "status", "config validate", "config export", "maintenance sweep"]},
+        "ok": {"type": "boolean"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "data": {},
+        "error": {}
+      }
+    },
+    "success": {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {"type": "object", "properties": {"ok": {"const": true}, "error": {"type": "null"}}},
+        {
+          "oneOf": [
+            {"properties": {"command": {"const": "doctor"}, "data": {"$ref": "#/$defs/doctor"}}},
+            {"properties": {"command": {"const": "status"}, "data": {"$ref": "#/$defs/status"}}},
+            {"properties": {"command": {"const": "config validate"}, "data": {"$ref": "#/$defs/config_validate"}}},
+            {"properties": {"command": {"const": "config export"}, "data": {"$ref": "#/$defs/config_export"}}},
+            {"properties": {"command": {"const": "maintenance sweep"}, "data": {"$ref": "#/$defs/sweep"}}}
+          ]
+        }
+      ]
+    },
+    "failure": {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {"type": "object", "properties": {"ok": {"const": false}, "data": {"type": "null"}, "error": {"$ref": "#/$defs/diagnostic"}}}
+      ]
+    },
+    "doctor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extension_version", "schema", "tables", "pipelines"],
+      "properties": {
+        "extension_version": {"type": ["string", "null"]},
+        "schema": {"type": "object", "additionalProperties": false, "required": ["status"], "properties": {"status": {"enum": ["pass", "fail"]}}},
+        "tables": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["component", "status"], "properties": {"component": {"type": "string"}, "status": {"enum": ["pass", "fail"]}}}},
+        "pipelines": {"type": "object", "additionalProperties": false, "required": ["count", "preflight_issues"], "properties": {"count": {"type": "integer", "minimum": 0}, "preflight_issues": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["pipeline", "severity", "reason"], "properties": {"pipeline": {"type": "string"}, "severity": {"type": "string"}, "reason": {"type": "string"}}}}}}
+      }
+    },
+    "status_value": {"oneOf": [{"type": "string"}, {"type": "integer"}]},
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pipelines"],
+      "properties": {
+        "pipelines": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["pipeline_id", "direction", "enabled", "ownership", "health", "consumer_lag", "last_offset", "last_checkpoint_success_at", "last_error_code", "last_error_component", "last_error_class", "last_error_at", "retry_attempt", "retry_state", "unresolved_dlq_depth"], "properties": {
+          "pipeline_id": {"type": "string"}, "direction": {"enum": ["forward", "reverse"]}, "enabled": {"type": "boolean"},
+          "ownership": {"type": "string"}, "health": {"type": "string"}, "consumer_lag": {"$ref": "#/$defs/status_value"}, "last_offset": {"$ref": "#/$defs/status_value"},
+          "last_checkpoint_success_at": {"type": "string"}, "last_error_code": {"type": "string"}, "last_error_component": {"type": "string"}, "last_error_class": {"type": "string"},
+          "last_error_at": {"type": "string"}, "retry_attempt": {"$ref": "#/$defs/status_value"}, "retry_state": {"type": "string"}, "unresolved_dlq_depth": {"$ref": "#/$defs/status_value"}
+        }}}
+      }
+    },
+    "config_validate": {"type": "object", "additionalProperties": false, "required": ["pipeline", "direction", "enabled", "valid"], "properties": {"pipeline": {"type": "string"}, "direction": {"enum": ["forward", "reverse"]}, "enabled": {"type": "boolean"}, "valid": {"const": true}}},
+    "config_export": {"type": "object", "additionalProperties": false, "required": ["schema_version", "pipelines"], "properties": {"schema_version": {"const": 1}, "pipelines": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "direction", "enabled", "config"], "properties": {"name": {"type": "string"}, "direction": {"enum": ["forward", "reverse"]}, "enabled": {"type": "boolean"}, "config": {"type": "object"}}}}}},
+    "sweep": {"type": "object", "additionalProperties": false, "required": ["outboxes", "total_deleted", "dry_run"], "properties": {"outboxes": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["outbox", "affected_rows", "completed_batches"], "properties": {"outbox": {"type": "string"}, "affected_rows": {"type": "integer"}, "completed_batches": {"type": "integer"}}}}, "total_deleted": {"type": "integer"}, "dry_run": {"type": "boolean"}}}
+  }
+}

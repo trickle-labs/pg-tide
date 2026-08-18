@@ -1,0 +1,18 @@
+# Current project and connector owner: see connectors.toml.
+* @grove
+
+# Principal review boundaries.
+/pg-tide-ext/ @grove
+/sql/ @grove
+/pg-tide-relay/src/coordinator.rs @grove
+/pg-tide-relay/src/source/ @grove
+/pg-tide-relay/src/sink/ @grove
+/connectors.toml @grove
+/schemas/ @grove
+/.github/workflows/ @grove
+/deploy/ @grove
+/helm/ @grove
+/SECURITY.md @grove
+/SUPPORT.md @grove
+/GOVERNANCE.md @grove
+/docs/src/ @grove

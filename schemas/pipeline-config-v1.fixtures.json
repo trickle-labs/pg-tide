@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "valid": [
+    {
+      "name": "outbox-to-inbox",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "inbox",
+        "sink": {"inbox": "orders-copy"}
+      }
+    },
+    {
+      "name": "outbox-to-nats",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "nats",
+        "sink": {"url": "${env:NATS_URL}", "subject": "orders.events"}
+      }
+    },
+    {
+      "name": "outbox-to-kafka",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "kafka",
+        "sink": {"brokers": "${env:KAFKA_BROKERS}", "topic": "orders"}
+      }
+    },
+    {
+      "name": "outbox-to-webhook",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "webhook",
+        "sink": {
+          "url": "https://hooks.example.test/pg-tide",
+          "signing_secret": "${file:/run/secrets/webhook}"
+        }
+      }
+    },
+    {
+      "name": "outbox-to-legacy-inbox-alias",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "pg_outbox",
+        "sink": {"inbox": "orders-copy", "postgres_url": "${env:DESTINATION_URL}"}
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "preview-source",
+      "config": {
+        "schema_version": 1,
+        "source_type": "nats",
+        "source": {"url": "nats://localhost"},
+        "sink_type": "inbox",
+        "sink": {"inbox": "orders-copy"}
+      }
+    },
+    {
+      "name": "unknown-sink-key",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "nats",
+        "sink": {"url": "nats://localhost", "credential": "inline"}
+      }
+    },
+    {
+      "name": "both-nats-destinations",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "nats",
+        "sink": {
+          "url": "nats://localhost",
+          "subject": "orders.events",
+          "subject_template": "{outbox}.{op}"
+        }
+      }
+    },
+    {
+      "name": "insecure-webhook",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "webhook",
+        "sink": {"url": "http://hooks.example.test/pg-tide"}
+      }
+    },
+    {
+      "name": "oversized-batch",
+      "config": {
+        "schema_version": 1,
+        "source_type": "outbox",
+        "source": {"outbox": "orders"},
+        "sink_type": "kafka",
+        "sink": {"brokers": "localhost:9092", "topic": "orders"},
+        "batch_size": 101
+      }
+    }
+  ]
+}
