@@ -157,9 +157,8 @@ lint-quoting:
     else:
         print("OK: No unquoted SQL identifier interpolation found.")
 
-# Run unit tests (no DB required)
+# Run unit tests (pgrx extension tests use test-pgrx)
 test-unit:
-    cargo test --package {{PG_TIDE_EXT}} --lib -- --test-threads=4
     cargo test --package {{PG_TIDE_RELAY}} --bins -- --test-threads=4
 
 # Security-focused tests, including the no-PostgreSQL v0.44 contract checks.

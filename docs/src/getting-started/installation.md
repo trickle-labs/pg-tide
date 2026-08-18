@@ -15,6 +15,9 @@ pg_tide has two components to install: the **PostgreSQL extension** (SQL functio
 
 ### From Source (pgrx)
 
+On macOS, the repository Cargo configuration supplies the linker flag required
+for PostgreSQL symbols that are resolved when the extension is loaded.
+
 ```bash
 # Install cargo-pgrx if you haven't already
 cargo install cargo-pgrx --version "=0.18.0" --locked
