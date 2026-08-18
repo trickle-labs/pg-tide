@@ -172,17 +172,35 @@ This checklist should live in the repository as `docs/support/production-support
 
 ## 5. Roadmap at a Glance
 
-| Version | Theme | The question it must answer |
-|---|---|---|
-| **v0.40.0** | One Real Pipeline | Does the documented core workflow actually work end to end? |
-| **v0.41.0** | Promise Only What We Prove | Is the product surface focused, honest, and buildable from a clean checkout? |
-| **v0.42.0** | Crash-Safe by Construction | Can the relay survive every important failure window without losing data? |
-| **v0.43.0** | A Good PostgreSQL Citizen | Can operators understand and control load, bloat, retention, and capacity? |
-| **v0.44.0** | Secure by Default | Are privileges, TLS, secrets, dependencies, and network access safe by default? |
-| **v0.45.0** | Operators First | Can a normal operator install, observe, upgrade, and recover the system confidently? |
-| **v0.46.0** | Four Connectors, Fully Trusted | Are the core connectors genuinely production-supported? |
-| **v0.47.0** | Public Beta and API Freeze | Is the product contract ready for external production pilots and independent review? |
-| **v1.0.0** | The Trust Release | Has pg_tide earned a stable production promise? |
+### Phase 1: Focused Foundation (v0.40.0 – v0.47.0) — *Complete*
+
+| Version | Theme | The question it must answer | Status |
+|---|---|---|---|
+| **v0.40.0** | One Real Pipeline | Does the documented core workflow actually work end to end? | Delivered |
+| **v0.41.0** | Promise Only What We Prove | Is the product surface focused, honest, and buildable from a clean checkout? | Delivered |
+| **v0.42.0** | Crash-Safe by Construction | Can the relay survive every important failure window without losing data? | Delivered |
+| **v0.43.0** | A Good PostgreSQL Citizen | Can operators understand and control load, bloat, retention, and capacity? | Delivered |
+| **v0.44.0** | Secure by Default | Are privileges, TLS, secrets, dependencies, and network access safe by default? | Delivered |
+| **v0.45.0** | Operators First | Can a normal operator install, observe, upgrade, and recover the system confidently? | Delivered |
+| **v0.46.0** | Four Connectors, Fully Trusted | Are the core connectors genuinely production-supported? | Delivered |
+| **v0.47.0** | Public Beta and API Freeze | Is the product contract ready for external production pilots and independent review? | Delivered |
+
+### Phase 2: Pre-v1.0 Hardening, Simplification, and Trust (v0.48.0 – v1.0.0) — *Active*
+
+> Detailed implementation plan: [Pre-v1.0 Hardening, Simplification, and Trust Plan](PLAN_PRE_V1_0.md)
+
+| Version | Theme | Scope | Dependency | Main outcome |
+|---|---|---|---|---|
+| **v0.48.0** | Baseline Closure and Deterministic CI | Medium | v0.47.0 | Reconcile evidence baseline, authoritative clean-room extension test environment, required-test inventory |
+| **v0.49.0** | Focused Product Surface | Large, split | v0.48.0 | Remove/relocate non-core connectors, protocols, features, dependencies; drop `experimental-full` |
+| **v0.50.0** | Delivery Correctness and Failure Semantics | Large | v0.49.0 | Prove no-silent-loss invariant across all supported destinations and crash windows; executable model |
+| **v0.51.0** | Upgrade, Rollback, and Recovery Integrity | Medium–Large | v0.50.0 | Declare v1 upgrade floor; fresh vs upgrade parity; sequential & interrupted migrations; rollback; DR |
+| **v0.52.0** | Security and Supply-Chain Assurance | Medium–Large | v0.51.0 | Reduced-product threat model, privilege review, TLS/SSRF testing, secret canaries, minimal artifacts |
+| **v0.53.0** | Performance, Capacity, and Long-Run Stability | Medium–Large | v0.52.0 | Versioned budgets, reference environment, regression checks, leak detection, 24h & 72h soaks |
+| **v0.54.0** | Operator Experience, Documentation, and Hygiene | Medium–Large | v0.53.0 | Consolidated operator journey, executable docs in CI, runbook drills, archive cleanup, repository hygiene |
+| **v0.55.0** | Independent Validation and Release Readiness | Medium | v0.54.0 | 4 production pilots, 5 independent reviews, ownership succession, full release rehearsal, zero blockers |
+| **v1.0.0-rc.N** | Release Candidate Series | Blocker fixes | v0.55.0 | Blocker fixes only, exact candidate artifact verification |
+| **v1.0.0** | The Trust Release | Promotion | Final RC | GA promotion of the validated candidate with full production guarantees |
 
 The next version must not start until the previous version’s exit criteria pass on `main`.
 
@@ -1037,6 +1055,22 @@ No open P0 or P1 issue may be deferred into v1.0.0.
 - [ ] Governance, support, and security policies are published.
 - [ ] All P0 and P1 issues are closed.
 - [ ] Upgrade and rollback are successful in pilot-like environments.
+
+---
+
+## Post-v0.47.0 Hardening Program (v0.48.0 – v1.0.0)
+
+Following the v0.47.0 contract freeze, the project executes an eight-release hardening, simplification, and validation program detailed in [Pre-v1.0 Hardening, Simplification, and Trust Plan](PLAN_PRE_V1_0.md):
+
+- **v0.48.0 — Baseline Closure and Deterministic CI** — Reconcile evidence baseline, build reproducible clean-room extension test environment, establish required-test manifest and flake registry.
+- **v0.49.0 — Focused Product Surface** — Remove non-core connectors (warehouses, data lakes, ETL, preview queues), drop `experimental-full` profile, simplify pipeline configuration and relay internals.
+- **v0.50.0 — Delivery Correctness and Failure Semantics** — Model executable delivery state machine, add black-box E2E tests for all 4 supported destinations, prove crash matrix and checkpoint monotonicity.
+- **v0.51.0 — Upgrade, Rollback, and Recovery Integrity** — Declare v1 upgrade floor, verify fresh-install vs upgrade parity, test sequential/interrupted migrations, mixed-version operation, and backup/restore.
+- **v0.52.0 — Security and Supply-Chain Assurance** — Refresh threat model, review privilege boundaries, enforce TLS/SSRF controls, verify secret redaction, audit production dependencies, verify signatures, SBOM, and provenance.
+- **v0.53.0 — Performance, Capacity, and Long-Run Stability** — Commit versioned operational budgets, add statistical regression checks and leak detection, execute 24-hour and 72-hour sustained soak profiles.
+- **v0.54.0 — Operator Experience, Documentation, and Repository Quality** — Standardize canonical operator journey, improve machine-compatible errors, execute documentation in CI, drill runbooks, clean up repository hygiene.
+- **v0.55.0 — Independent Validation and Release Readiness** — Complete 4 external production pilots, 5 independent reviews, ownership succession, full release rehearsal, and zero-blocker gate.
+- **v1.0.0-rc.N — Release-Candidate Series** — Blocker fixes only, revalidating exact candidate artifacts.
 
 ---
 
