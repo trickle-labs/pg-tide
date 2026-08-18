@@ -83,6 +83,7 @@ impl PipelineDocument {
         validate_connector(name, "sink_type", &self.sink_type)?;
         validate_connector_fields(name, "source", &self.source_type, &self.source)?;
         validate_connector_fields(name, "sink", &self.sink_type, &self.sink)?;
+        validate_supported_source(name, &self.source_type, &self.source)?;
         validate_supported_sink(name, &self.sink_type, &self.sink)?;
         if let Some(size) = self.batch_size {
             if let Some(descriptor) = descriptors::sink_type_to_descriptor(&self.sink_type) {
@@ -151,24 +152,52 @@ fn invalid(name: &str, reason: impl Into<String>) -> RelayError {
 }
 
 fn validate_connector(name: &str, field: &str, connector: &str) -> Result<(), RelayError> {
-    let known = match field {
-        "source_type" => descriptors::source_type_to_descriptor(connector),
-        "sink_type" => descriptors::sink_type_to_descriptor(connector),
-        _ => None,
+    let supported = match field {
+        "source_type" => descriptors::V1_SUPPORTED_SOURCE_TYPES.contains(&connector),
+        "sink_type" => descriptors::V1_SUPPORTED_SINK_TYPES.contains(&connector),
+        _ => false,
     };
-    if known.is_some() {
+    if supported {
         return Ok(());
     }
     Err(invalid(
         name,
-        format!("{field} '{connector}' is not a known connector"),
+        format!("{field} '{connector}' is not supported by pipeline schema v1"),
     ))
 }
 
 pub fn connector_available(connector: &str) -> bool {
-    descriptors::source_type_to_descriptor(connector)
-        .or_else(|| descriptors::sink_type_to_descriptor(connector))
-        .is_some_and(descriptors::is_available)
+    (descriptors::V1_SUPPORTED_SOURCE_TYPES.contains(&connector)
+        || descriptors::V1_SUPPORTED_SINK_TYPES.contains(&connector))
+        && descriptors::source_type_to_descriptor(connector)
+            .or_else(|| descriptors::sink_type_to_descriptor(connector))
+            .is_some_and(descriptors::is_available)
+}
+
+fn validate_supported_source(
+    name: &str,
+    source_type: &str,
+    values: &Map<String, Value>,
+) -> Result<(), RelayError> {
+    if source_type != "outbox" {
+        return Ok(());
+    }
+    require_string_field(name, "source.outbox", values, true)?;
+    optional_non_empty_string_field(name, "source.consumer_group", values)?;
+    optional_non_empty_string_field(name, "source.consumer_id", values)?;
+    if let Some(value) = values.get("subject_template") {
+        validate_destination_text(name, "source.subject_template", value)?;
+    }
+    if let Some(value) = values.get("visibility_seconds") {
+        require_integer(
+            name,
+            "source.visibility_seconds",
+            value,
+            1,
+            i64::from(i32::MAX),
+        )?;
+    }
+    Ok(())
 }
 
 const CONNECTOR_FIELDS: &[&str] = &[
@@ -314,7 +343,7 @@ fn validate_supported_sink(
     match sink_type {
         "inbox" => {
             require_string_field(name, "sink.inbox", values, true)?;
-            optional_string_field(name, "sink.postgres_url", values)?;
+            optional_non_empty_string_field(name, "sink.postgres_url", values)?;
         }
         "pg_outbox" => {
             require_string_field(name, "sink.inbox", values, true)?;
@@ -343,10 +372,10 @@ fn validate_supported_sink(
         }
         "kafka" => {
             require_string_field(name, "sink.brokers", values, true)?;
-            if !values.contains_key("topic") && !values.contains_key("topic_template") {
+            if values.contains_key("topic") && values.contains_key("topic_template") {
                 return Err(invalid(
                     name,
-                    "sink.topic or sink.topic_template is required",
+                    "sink.topic and sink.topic_template are mutually exclusive",
                 ));
             }
             for field in ["topic", "topic_template"] {
@@ -384,7 +413,7 @@ fn validate_supported_sink(
             }
             optional_bool_field(name, "sink.ssrf_protection", values)?;
             optional_bool_field(name, "sink.allow_http", values)?;
-            optional_string_field(name, "sink.signing_secret", values)?;
+            optional_secret_reference_field(name, "sink.signing_secret", values)?;
             if let Some(algorithm) = values.get("signing_algorithm") {
                 let algorithm = algorithm
                     .as_str()
@@ -435,6 +464,23 @@ fn optional_string_field(
     Ok(())
 }
 
+fn optional_non_empty_string_field(
+    name: &str,
+    field: &str,
+    values: &Map<String, Value>,
+) -> Result<(), RelayError> {
+    let key = field.rsplit('.').next().unwrap_or(field);
+    if let Some(value) = values.get(key) {
+        let text = value
+            .as_str()
+            .ok_or_else(|| invalid(name, format!("{field} must be a string")))?;
+        if text.trim().is_empty() {
+            return Err(invalid(name, format!("{field} must not be empty")));
+        }
+    }
+    Ok(())
+}
+
 fn optional_bool_field(
     name: &str,
     field: &str,
@@ -447,6 +493,39 @@ fn optional_bool_field(
         }
     }
     Ok(())
+}
+
+fn optional_secret_reference_field(
+    name: &str,
+    field: &str,
+    values: &Map<String, Value>,
+) -> Result<(), RelayError> {
+    let key = field.rsplit('.').next().unwrap_or(field);
+    if let Some(value) = values.get(key) {
+        let text = value
+            .as_str()
+            .ok_or_else(|| invalid(name, format!("{field} must be a string")))?;
+        if !is_secret_reference(text) {
+            return Err(invalid(
+                name,
+                format!("{field} must be an env/file secret reference"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_secret_reference(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix("${") else {
+        return false;
+    };
+    let Some(token) = rest.strip_suffix('}') else {
+        return false;
+    };
+    let Some((kind, name)) = token.split_once(':') else {
+        return false;
+    };
+    matches!(kind, "env" | "file") && !name.is_empty()
 }
 
 fn validate_destination_text(name: &str, field: &str, value: &Value) -> Result<(), RelayError> {
@@ -530,7 +609,7 @@ pub fn validate_secret_references(name: &str, value: &Value) -> Result<(), Relay
 
 /// Stable schema document used by the checked-in schema and regeneration check.
 pub fn pipeline_schema() -> Value {
-    let mut schema = serde_json::json!({
+    serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "https://pg-tide.dev/schemas/pipeline-config-v1.schema.json",
         "title": "pg_tide pipeline configuration v1",
@@ -538,51 +617,184 @@ pub fn pipeline_schema() -> Value {
         "additionalProperties": false,
         "required": ["source_type", "source", "sink_type", "sink"],
         "properties": {
-            "schema_version": {"const": 1, "type": "integer"},
-            "source_type": {"type": "string", "enum": descriptors::RUNTIME_TYPES},
-            "source": {"$ref": "#/$defs/connector"},
-            "sink_type": {"type": "string", "enum": descriptors::RUNTIME_TYPES},
-            "sink": {"$ref": "#/$defs/connector"},
+            "schema_version": {"const": 1, "default": 1, "type": "integer"},
+            "source_type": {"type": "string", "enum": descriptors::V1_SUPPORTED_SOURCE_TYPES},
+            "source": {"$ref": "#/$defs/source_outbox"},
+            "sink_type": {"type": "string", "enum": descriptors::V1_SUPPORTED_SINK_TYPES},
+            "sink": {"type": "object"},
             "batch_size": {"type": "integer", "minimum": 1, "maximum": 1000000},
             "retry": {"$ref": "#/$defs/retry"},
             "dlq": {"$ref": "#/$defs/dlq"},
             "transforms": {"type": "array"},
             "encoding": {"$ref": "#/$defs/encoding"}
         },
+        "allOf": [
+            {
+                "if": {"properties": {"sink_type": {"const": "inbox"}}},
+                "then": {
+                    "properties": {
+                        "sink": {"$ref": "#/$defs/sink_inbox"},
+                        "batch_size": {"maximum": 1000}
+                    }
+                }
+            },
+            {
+                "if": {"properties": {"sink_type": {"const": "pg_outbox"}}},
+                "then": {
+                    "properties": {
+                        "sink": {"$ref": "#/$defs/sink_pg_outbox"},
+                        "batch_size": {"maximum": 1000}
+                    }
+                }
+            },
+            {
+                "if": {"properties": {"sink_type": {"const": "nats"}}},
+                "then": {
+                    "properties": {
+                        "sink": {"$ref": "#/$defs/sink_nats"},
+                        "batch_size": {"maximum": 100}
+                    }
+                }
+            },
+            {
+                "if": {"properties": {"sink_type": {"const": "kafka"}}},
+                "then": {
+                    "properties": {
+                        "sink": {"$ref": "#/$defs/sink_kafka"},
+                        "batch_size": {"maximum": 100}
+                    }
+                }
+            },
+            {
+                "if": {"properties": {"sink_type": {"const": "webhook"}}},
+                "then": {
+                    "properties": {
+                        "sink": {"$ref": "#/$defs/sink_webhook"},
+                        "batch_size": {"maximum": 100}
+                    }
+                }
+            }
+        ],
         "$defs": {
-            "connector": {
+            "source_outbox": {
                 "type": "object",
                 "additionalProperties": false,
+                "required": ["outbox"],
                 "properties": {
-                    "access_token": {"type": "string"},
-                    "account": {"type": "string"},
-                    "addr": {"type": "string"},
-                    "allow_http": {"type": "boolean"},
-                    "auth_token": {"type": "string"},
-                    "batch_size": {"type": "integer"},
-                    "brokers": {"type": "string"},
-                    "connection_string": {"type": "string"},
-                    "consumer": {"type": "string"},
-                    "consumer_group": {"type": "string"},
-                    "consumer_id": {"type": "string"},
-                    "event_type": {"type": "string"},
-                    "format": {"type": "string"},
-                    "group": {"type": "string"},
-                    "outbox": {"type": "string"},
-                    "password": {"type": "string"},
-                    "path": {"type": "string"},
-                    "project_id": {"type": "string"},
-                    "queue": {"type": "string"},
-                    "queue_url": {"type": "string"},
-                    "schema": {"type": "string"},
-                    "stream": {"type": "string"},
-                    "subject": {"type": "string"},
-                    "topic": {"type": "string"},
-                    "url": {"type": "string"},
-                    "username": {"type": "string"},
-                    "webhook_url": {"type": "string"}
+                    "outbox": {"type": "string", "minLength": 1},
+                    "subject_template": {
+                        "type": "string",
+                        "minLength": 1,
+                        "default": "{outbox}.{op}"
+                    },
+                    "consumer_group": {"type": "string", "minLength": 1},
+                    "consumer_id": {"type": "string", "minLength": 1, "default": "pg-tide"},
+                    "visibility_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647,
+                        "default": 30
+                    }
                 },
-                "description": "Connector-owned fields; values may contain secret references."
+                "description": "Native PostgreSQL outbox source."
+            },
+            "sink_inbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["inbox"],
+                "properties": {
+                    "inbox": {"type": "string", "minLength": 1},
+                    "postgres_url": {"type": "string", "minLength": 1}
+                },
+                "description": "PostgreSQL inbox in the local catalog; postgres_url selects a remote inbox."
+            },
+            "sink_pg_outbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["inbox", "postgres_url"],
+                "properties": {
+                    "inbox": {"type": "string", "minLength": 1},
+                    "postgres_url": {"type": "string", "minLength": 1}
+                },
+                "description": "Deprecated PostgreSQL inbox alias; use sink_type 'inbox' with postgres_url."
+            },
+            "sink_nats": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["url"],
+                "properties": {
+                    "url": {"type": "string", "minLength": 1},
+                    "subject": {"type": "string", "minLength": 1},
+                    "subject_template": {
+                        "type": "string",
+                        "minLength": 1,
+                        "default": "{outbox}.{op}"
+                    }
+                },
+                "not": {"required": ["subject", "subject_template"]},
+                "description": "NATS JetStream outbound sink."
+            },
+            "sink_kafka": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["brokers"],
+                "properties": {
+                    "brokers": {"type": "string", "minLength": 1},
+                    "topic": {"type": "string", "minLength": 1},
+                    "topic_template": {
+                        "type": "string",
+                        "minLength": 1,
+                        "default": "{stream_table}"
+                    }
+                },
+                "not": {"required": ["topic", "topic_template"]},
+                "description": "Apache Kafka outbound sink."
+            },
+            "sink_webhook": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["url"],
+                "properties": {
+                    "url": {"type": "string", "minLength": 1},
+                    "timeout_secs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 300,
+                        "default": 30
+                    },
+                    "allow_http": {"type": "boolean", "default": false},
+                    "ssrf_protection": {"type": "boolean", "default": true},
+                    "signing_secret": {
+                        "type": "string",
+                        "pattern": "^\\$\\{(?:env|file):[^}]+\\}$"
+                    },
+                    "signing_algorithm": {
+                        "type": "string",
+                        "enum": ["hmac-sha256"],
+                        "default": "hmac-sha256"
+                    }
+                },
+                "oneOf": [
+                    {
+                        "required": ["allow_http"],
+                        "properties": {
+                            "allow_http": {"const": true},
+                            "url": {"pattern": "^https?://"}
+                        }
+                    },
+                    {
+                        "not": {"required": ["allow_http"]},
+                        "properties": {"url": {"pattern": "^https://"}}
+                    },
+                    {
+                        "required": ["allow_http"],
+                        "properties": {
+                            "allow_http": {"const": false},
+                            "url": {"pattern": "^https://"}
+                        }
+                    }
+                ],
+                "description": "HTTPS webhook outbound sink."
             },
             "retry": {
                 "type": "object",
@@ -608,30 +820,7 @@ pub fn pipeline_schema() -> Value {
                 }
             }
         }
-    });
-    if let Some(properties) = schema["$defs"]["connector"]["properties"].as_object_mut() {
-        for field in CONNECTOR_FIELDS {
-            properties
-                .entry((*field).to_string())
-                .or_insert_with(|| serde_json::json!({}));
-        }
-        for field in [
-            "access_token",
-            "auth_token",
-            "password",
-            "secret",
-            "signing_secret",
-        ] {
-            properties.insert(
-                field.to_string(),
-                serde_json::json!({
-                    "type": "string",
-                    "pattern": "^\\$\\{(?:env|file):[^}]+\\}$"
-                }),
-            );
-        }
-    }
-    schema
+    })
 }
 
 #[cfg(test)]
@@ -739,7 +928,73 @@ mod tests {
             "https://json-schema.org/draft/2020-12/schema"
         );
         assert_eq!(schema["additionalProperties"], false);
-        assert_eq!(schema["$defs"]["connector"]["additionalProperties"], false);
+        assert_eq!(
+            schema["$defs"]["source_outbox"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            schema["$defs"]["sink_webhook"]["additionalProperties"],
+            false
+        );
         assert_eq!(schema["$defs"]["retry"]["additionalProperties"], false);
+        assert_eq!(
+            schema["properties"]["source_type"]["enum"],
+            serde_json::json!(["outbox"])
+        );
+        assert_eq!(
+            schema["properties"]["sink_type"]["enum"],
+            serde_json::json!(["inbox", "kafka", "nats", "pg_outbox", "webhook"])
+        );
+    }
+
+    #[test]
+    fn rejects_preview_and_experimental_connector_types() {
+        for (field, value) in [("source_type", "nats"), ("sink_type", "redis")] {
+            let mut config = json!({
+                "source_type": "outbox",
+                "source": {"outbox": "orders"},
+                "sink_type": "nats",
+                "sink": {"url": "nats://localhost"}
+            });
+            config[field] = json!(value);
+            assert!(
+                PipelineDocument::parse("orders", &config).is_err(),
+                "{field}={value} must remain outside v1"
+            );
+        }
+    }
+
+    #[test]
+    fn validates_supported_variant_fields_and_defaults() {
+        PipelineDocument::parse(
+            "orders",
+            &json!({
+                "schema_version": 1,
+                "source_type": "outbox",
+                "source": {"outbox": "orders", "visibility_seconds": 30},
+                "sink_type": "webhook",
+                "sink": {
+                    "url": "https://example.test/hook",
+                    "signing_secret": "${env:WEBHOOK_SECRET}"
+                }
+            }),
+        )
+        .expect("supported webhook config should validate");
+
+        let err = PipelineDocument::parse(
+            "orders",
+            &json!({
+                "source_type": "outbox",
+                "source": {"outbox": "orders"},
+                "sink_type": "kafka",
+                "sink": {
+                    "brokers": "localhost:9092",
+                    "topic": "orders",
+                    "topic_template": "{stream_table}"
+                }
+            }),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"));
     }
 }

@@ -33,7 +33,8 @@ impl PreflightReport {
 
 /// Validate every catalog row before ownership, polling, or worker creation.
 /// Disabled rows are structurally validated too; unavailable disabled
-/// connectors are warnings, while malformed rows remain errors.
+/// supported connectors are warnings, while unsupported types and malformed
+/// rows remain errors.
 pub fn validate_pipelines(pipelines: &[PipelineConfig]) -> PreflightReport {
     let mut issues = Vec::new();
     for pipeline in pipelines {
@@ -60,19 +61,6 @@ pub fn validate_pipelines(pipelines: &[PipelineConfig]) -> PreflightReport {
                                 PreflightSeverity::Warning
                             },
                             reason: format!("{field} '{connector}' is not compiled in"),
-                        });
-                    }
-                }
-                if let Some(descriptor) = descriptors::sink_type_to_descriptor(&document.sink_type)
-                {
-                    if !descriptors::is_supported_sink_type(&document.sink_type) {
-                        issues.push(PreflightIssue {
-                            pipeline: pipeline.name.clone(),
-                            severity: PreflightSeverity::Warning,
-                            reason: format!(
-                                "sink_type '{}' is {} and is not a production-supported destination",
-                                document.sink_type, descriptor.maturity
-                            ),
                         });
                     }
                 }
@@ -124,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn report_order_is_deterministic_and_disabled_unavailable_is_warning() {
+    fn report_order_is_deterministic_and_unsupported_types_are_errors() {
         let report = validate_pipelines(&[
             pipeline("z", false, "pg_logical"),
             pipeline("a", true, "unknown"),
@@ -133,7 +121,7 @@ mod tests {
         assert_eq!(report.issues[1].pipeline, "z");
         assert!(matches!(
             report.issues[1].severity,
-            PreflightSeverity::Warning
+            PreflightSeverity::Error
         ));
     }
 }

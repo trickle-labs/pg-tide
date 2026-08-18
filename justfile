@@ -204,6 +204,15 @@ generate-connectors:
 check-connectors:
     python3 scripts/generate_connector_surface.py --check
 
+# Validate the v1 contract inventory and frozen connector matrix.
+check-v1-contracts:
+    python3 scripts/check_v1_contracts.py
+
+# Explicitly refresh generated contract inputs; CI only runs check-v1-contracts.
+update-v1-contracts:
+    python3 scripts/generate_connector_surface.py
+    bash scripts/generate_pipeline_schema.sh
+
 # Serve documentation locally
 docs-serve:
     mdbook serve --open

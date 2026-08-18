@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "release": "v0.47.0",
+  "status": "pending",
+  "required_disciplines": [
+    {
+      "id": "postgresql-extension",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "findings": [],
+      "approval": {
+        "status": "required",
+        "reviewer": null,
+        "reviewed_at": null,
+        "reapproval": null
+      }
+    },
+    {
+      "id": "rust-async-concurrency",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "findings": [],
+      "approval": {
+        "status": "required",
+        "reviewer": null,
+        "reviewed_at": null,
+        "reapproval": null
+      }
+    },
+    {
+      "id": "delivery-semantics",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "findings": [],
+      "approval": {
+        "status": "required",
+        "reviewer": null,
+        "reviewed_at": null,
+        "reapproval": null
+      }
+    },
+    {
+      "id": "security",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "findings": [],
+      "approval": {
+        "status": "required",
+        "reviewer": null,
+        "reviewed_at": null,
+        "reapproval": null
+      }
+    },
+    {
+      "id": "operations",
+      "status": "pending",
+      "candidate_commit": null,
+      "artifact_digests": [],
+      "findings": [],
+      "approval": {
+        "status": "required",
+        "reviewer": null,
+        "reviewed_at": null,
+        "reapproval": null
+      }
+    }
+  ]
+}

@@ -274,6 +274,11 @@ pgrx::extension_sql_file!(
     name = "pg_tide_m_0_46",
     requires = ["pg_tide_m_0_45"]
 );
+pgrx::extension_sql_file!(
+    "../../sql/pg_tide--0.46.0--0.47.0.sql",
+    name = "pg_tide_m_0_47",
+    requires = ["pg_tide_m_0_46"]
+);
 
 /// Extension initialization — runs once when the extension is loaded.
 #[pg_guard]

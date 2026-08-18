@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.47.0 — Public Beta & API Freeze](#0470--public-beta--api-freeze)
 - [0.46.0 — Connector Contract & Supported Destinations](#0460--connector-contract--supported-destinations)
 - [0.45.0 — Operators First](#0450--operators-first)
 - [0.44.0 — Security Boundary Hardening](#0440--security-boundary-hardening)
@@ -53,6 +54,22 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.47.0] — 2026-08-18 — Public Beta & API Freeze
+
+v0.47.0 records the public-beta compatibility baseline for the supported
+pg_tide contract and ties release evidence to the versioned extension, relay,
+Helm chart, and container image artifacts.
+
+### Release integration
+- **Compatibility**: froze the supported SQL, configuration, operational,
+  event-envelope, and outbound connector surfaces for the public beta.
+- **Evidence**: carried forward the v0.46.0 connector evidence and linked
+  versioned upgrade, rollback, packaging, and release checks.
+- **Migration**: added a no-op SQL migration because the frozen catalog schema
+  is unchanged.
 
 ---
 

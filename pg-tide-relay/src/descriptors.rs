@@ -635,6 +635,9 @@ pub const RUNTIME_TYPES: &[&str] = &[
     "webhook",
 ];
 
+pub const V1_SUPPORTED_SOURCE_TYPES: &[&str] = &["outbox"];
+pub const V1_SUPPORTED_SINK_TYPES: &[&str] = &["inbox", "kafka", "nats", "pg_outbox", "webhook"];
+
 pub fn sink_type_to_descriptor(sink_type: &str) -> Option<&'static ConnectorDescriptor> {
     CONNECTORS
         .iter()
@@ -648,9 +651,7 @@ pub fn source_type_to_descriptor(source_type: &str) -> Option<&'static Connector
 }
 
 pub fn is_supported_sink_type(sink_type: &str) -> bool {
-    sink_type_to_descriptor(sink_type).is_some_and(|descriptor| {
-        descriptor.direction == Direction::Sink && descriptor.maturity == "supported"
-    })
+    V1_SUPPORTED_SINK_TYPES.contains(&sink_type)
 }
 
 pub fn is_available(descriptor: &ConnectorDescriptor) -> bool {

@@ -41,7 +41,7 @@ The relay runs as a sidecar in the same pod as PostgreSQL. It connects to
 spec:
   sidecars:
     - name: pg-tide-relay
-      image: ghcr.io/trickle-labs/pg-tide:0.46.0
+      image: ghcr.io/trickle-labs/pg-tide:0.47.0
       env:
         - name: PG_TIDE_POSTGRES_URL
           valueFrom:

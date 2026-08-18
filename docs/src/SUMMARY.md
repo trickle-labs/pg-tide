@@ -149,6 +149,10 @@
 - [Partition Management](operations/partition-management.md)
 - [Troubleshooting](operations/troubleshooting.md)
 - [Troubleshooting Guide](operations/troubleshooting-guide.md)
+- [Pilot Evidence](operations/pilot-evidence.md)
+- [Independent Review](operations/independent-review.md)
+- [Release Evidence](operations/release-evidence.md)
+- [Release Manager Checklist](operations/release-manager-checklist.md)
 
 ## Runbooks
 
@@ -205,6 +209,8 @@
 
 # Reference
 
+- [Stability Guarantees](stability-guarantees.md)
+- [v1 Scope](v1-scope.md)
 - [Security](reference/security.md)
 - [Threat Model](reference/threat-model.md)
 - [Security Evidence](reference/security-evidence.md)
@@ -219,6 +225,10 @@
 
 - [Support Policy](support/support-policy.md)
 - [Production-Supported Definition](support/production-supported.md)
+- [Connector Compatibility](support/connector-compatibility.md)
+- [Connector Release Checklist](support/connector-release-checklist.md)
+- [Deprecation Policy](support/deprecation-policy.md)
+- [Connector Promotion](support/connector-promotion.md)
 - [Test Levels](support/test-levels.md)
 - [PostgreSQL 17 Feasibility](support/postgresql-17-feasibility.md)
 

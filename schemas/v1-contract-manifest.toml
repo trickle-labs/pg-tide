@@ -1,0 +1,106 @@
+schema_version = 1
+contract_version = 1
+
+[[surface]]
+id = "sql.public.v1"
+version = 1
+normative_doc = "docs/src/sql-reference/outbox-api.md"
+artifact = "sql/pg_tide--0.1.0.sql"
+source = "pg-tide-ext/src/lib.rs"
+check = "just test-pgrx"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "additive functions only; signature and documented behavior changes are breaking"
+last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "pipeline.config.v1"
+version = 1
+normative_doc = "docs/src/relay-guide/configuration.md"
+artifact = "schemas/pipeline-config-v1.schema.json"
+source = "pg-tide-relay/src/config/schema_support.rs"
+check = "scripts/generate_pipeline_schema.sh"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "optional keys may be added; removing keys or changing types, defaults, or meaning is breaking"
+last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "metrics.core.v1"
+version = 1
+normative_doc = "docs/src/features/metrics.md"
+artifact = "schemas/metrics-v1.tsv"
+source = "pg-tide-relay/src/metrics.rs"
+check = "python3 scripts/check_v1_artifacts.py"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "add bounded metric families; do not rename families or change labels, units, or meanings"
+last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "health.http.v1"
+version = 1
+normative_doc = "docs/src/relay-guide/cli-reference.md"
+artifact = "schemas/health-v1.json"
+source = "pg-tide-relay/src/metrics.rs"
+check = "python3 scripts/check_v1_artifacts.py"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "add endpoints only; existing routes, status codes, content types, and readiness semantics are stable"
+last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "cli.machine.v1"
+version = 1
+normative_doc = "docs/src/relay-guide/cli-reference.md"
+artifact = "schemas/cli-json-v1.schema.json"
+source = "pg-tide-relay/src/cmd/output.rs"
+check = "python3 scripts/check_v1_artifacts.py"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "optional fields may be added when consumers ignore unknown fields; envelope and exit-code changes are breaking"
+last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "event.native.v1"
+version = 1
+normative_doc = "docs/src/wire-formats/native.md"
+artifact = "schemas/event-envelopes-v1.schema.json"
+source = "pg-tide-relay/src/wire_format/native.rs"
+check = "python3 scripts/check_v1_artifacts.py"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "add versioned optional extensions; changing required fields, IDs, timestamps, or payload encoding is breaking"
+last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "event.cloudevents.v1"
+version = 1
+normative_doc = "docs/src/wire-formats/overview.md"
+artifact = "schemas/event-envelopes-v1.schema.json"
+source = "pg-tide-relay/src/wire_format/cloudevents.rs"
+check = "python3 scripts/check_v1_artifacts.py"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "add versioned optional extensions; changing required fields or CloudEvents mapping is breaking"
+last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "connectors.supported.v1"
+version = 1
+normative_doc = "docs/src/support/connector-compatibility.md"
+artifact = "docs/src/support/connector-compatibility.md"
+source = "connectors.toml"
+check = "python3 scripts/generate_connector_surface.py --check"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "add versions only with compatibility evidence; removing a supported connector requires deprecation and review"
+last_reviewed = "v0.47.0"
