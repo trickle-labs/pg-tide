@@ -38,6 +38,17 @@ fn default_schema_version() -> u8 {
 
 impl PipelineDocument {
     pub fn parse(name: &str, raw: &Value) -> Result<Self, RelayError> {
+        Self::parse_with_mode(name, raw, true)
+    }
+
+    /// Parse a catalog row for runtime compatibility. Known preview,
+    /// experimental, and diagnostic connectors remain runnable but are not
+    /// accepted as part of the frozen v1 schema.
+    pub fn parse_runtime(name: &str, raw: &Value) -> Result<Self, RelayError> {
+        Self::parse_with_mode(name, raw, false)
+    }
+
+    fn parse_with_mode(name: &str, raw: &Value, v1_only: bool) -> Result<Self, RelayError> {
         let object = raw
             .as_object()
             .ok_or_else(|| invalid(name, "pipeline config must be an object"))?;
@@ -59,11 +70,15 @@ impl PipelineDocument {
         let value = Value::Object(normalized);
         let document: Self =
             serde_json::from_value(value).map_err(|error| invalid(name, error.to_string()))?;
-        document.validate(name)?;
+        document.validate_with_mode(name, v1_only)?;
         Ok(document)
     }
 
     pub fn validate(&self, name: &str) -> Result<(), RelayError> {
+        self.validate_with_mode(name, true)
+    }
+
+    fn validate_with_mode(&self, name: &str, v1_only: bool) -> Result<(), RelayError> {
         if self.schema_version != PIPELINE_SCHEMA_VERSION {
             return Err(invalid(
                 name,
@@ -79,8 +94,8 @@ impl PipelineDocument {
         {
             return Err(invalid(name, "batch_size must be between 1 and 1000000"));
         }
-        validate_connector(name, "source_type", &self.source_type)?;
-        validate_connector(name, "sink_type", &self.sink_type)?;
+        validate_connector(name, "source_type", &self.source_type, v1_only)?;
+        validate_connector(name, "sink_type", &self.sink_type, v1_only)?;
         validate_connector_fields(name, "source", &self.source_type, &self.source)?;
         validate_connector_fields(name, "sink", &self.sink_type, &self.sink)?;
         validate_supported_source(name, &self.source_type, &self.source)?;
@@ -151,13 +166,26 @@ fn invalid(name: &str, reason: impl Into<String>) -> RelayError {
     }
 }
 
-fn validate_connector(name: &str, field: &str, connector: &str) -> Result<(), RelayError> {
-    let supported = match field {
-        "source_type" => descriptors::V1_SUPPORTED_SOURCE_TYPES.contains(&connector),
-        "sink_type" => descriptors::V1_SUPPORTED_SINK_TYPES.contains(&connector),
-        _ => false,
+fn validate_connector(
+    name: &str,
+    field: &str,
+    connector: &str,
+    v1_only: bool,
+) -> Result<(), RelayError> {
+    let accepted = if v1_only {
+        match field {
+            "source_type" => descriptors::V1_SUPPORTED_SOURCE_TYPES.contains(&connector),
+            "sink_type" => descriptors::V1_SUPPORTED_SINK_TYPES.contains(&connector),
+            _ => false,
+        }
+    } else {
+        match field {
+            "source_type" => descriptors::source_type_to_descriptor(connector).is_some(),
+            "sink_type" => descriptors::sink_type_to_descriptor(connector).is_some(),
+            _ => false,
+        }
     };
-    if supported {
+    if accepted {
         return Ok(());
     }
     Err(invalid(
