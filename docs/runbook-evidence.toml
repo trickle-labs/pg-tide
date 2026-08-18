@@ -8,6 +8,42 @@ owner = "pg-tide maintainers"
 last_reviewed = "0.45.0"
 
 [[runbook]]
+id = "postgresql-inbox-connector"
+path = "docs/src/operations/runbook-pg-inbox.md"
+alerts = ["PgTidePublishErrors", "PgTideConsumerLagHigh"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/pg_inbox_sink_test.rs"]
+workflow = ".github/workflows/ci.yml:test-integration-relay"
+owner = "pg-tide maintainers"
+last_reviewed = "0.46.0"
+
+[[runbook]]
+id = "nats-jetstream-connector"
+path = "docs/src/operations/runbook-nats.md"
+alerts = ["PgTidePublishErrors", "PgTideConsumerLagHigh"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
+workflow = ".github/workflows/ci.yml:public-api-nats-e2e"
+owner = "pg-tide maintainers"
+last_reviewed = "0.46.0"
+
+[[runbook]]
+id = "kafka-connector"
+path = "docs/src/operations/runbook-kafka.md"
+alerts = ["PgTidePublishErrors", "PgTideConsumerLagHigh"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs"]
+workflow = ".github/workflows/ci.yml:public-api-kafka-e2e"
+owner = "pg-tide maintainers"
+last_reviewed = "0.46.0"
+
+[[runbook]]
+id = "webhook-connector"
+path = "docs/src/operations/runbook-webhook.md"
+alerts = ["PgTidePublishErrors", "PgTideConsumerLagHigh"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/webhook_test.rs"]
+workflow = ".github/workflows/ci.yml:test-integration"
+owner = "pg-tide maintainers"
+last_reviewed = "0.46.0"
+
+[[runbook]]
 id = "pipeline-not-discovered"
 path = "docs/src/operations/runbooks.md"
 alerts = ["PgTidePipelineUnhealthy"]

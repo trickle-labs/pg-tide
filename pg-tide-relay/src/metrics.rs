@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 pub const METRIC_MESSAGES_PUBLISHED: &str = "pg_tide_relay_messages_published_total";
 pub const METRIC_MESSAGES_CONSUMED: &str = "pg_tide_relay_messages_consumed_total";
 pub const METRIC_PUBLISH_ERRORS: &str = "pg_tide_relay_publish_errors_total";
+pub const METRIC_CONNECTOR_FAILURES: &str = "pg_tide_relay_connector_failures_total";
 pub const METRIC_DEDUP_SKIPPED: &str = "pg_tide_relay_dedup_skipped_total";
 pub const METRIC_DLQ_ENTRIES_WRITTEN: &str = "pg_tide_relay_dlq_entries_written_total";
 pub const METRIC_PIPELINE_HEALTHY: &str = "pg_tide_relay_pipeline_healthy";
@@ -55,6 +56,7 @@ pub struct RelayMetrics {
     pub messages_published: IntCounterVec,
     pub messages_consumed: IntCounterVec,
     pub publish_errors: IntCounterVec,
+    pub connector_failures_total: IntCounterVec,
     pub dedup_skipped: IntCounterVec,
     /// v0.13.0: DLQ entries written.
     pub dlq_entries_written: IntCounterVec,
@@ -127,6 +129,21 @@ impl RelayMetrics {
         let publish_errors = IntCounterVec::new(
             prometheus::opts!(METRIC_PUBLISH_ERRORS, "Total publish errors"),
             &["pipeline", "direction", "tenant"],
+        )?;
+
+        let connector_failures_total = IntCounterVec::new(
+            prometheus::opts!(
+                METRIC_CONNECTOR_FAILURES,
+                "Total sink failures by bounded connector code and retry class"
+            ),
+            &[
+                "pipeline",
+                "direction",
+                "tenant",
+                "connector",
+                "code",
+                "retry_class",
+            ],
         )?;
 
         let dedup_skipped = IntCounterVec::new(
@@ -241,6 +258,7 @@ impl RelayMetrics {
         registry.register(Box::new(messages_published.clone()))?;
         registry.register(Box::new(messages_consumed.clone()))?;
         registry.register(Box::new(publish_errors.clone()))?;
+        registry.register(Box::new(connector_failures_total.clone()))?;
         registry.register(Box::new(dedup_skipped.clone()))?;
         registry.register(Box::new(dlq_entries_written.clone()))?;
         registry.register(Box::new(pipeline_healthy.clone()))?;
@@ -392,6 +410,7 @@ impl RelayMetrics {
             messages_published,
             messages_consumed,
             publish_errors,
+            connector_failures_total,
             dedup_skipped,
             dlq_entries_written,
             pipeline_healthy,
@@ -552,6 +571,17 @@ mod tests {
             .with_label_values(&["test-pipeline", "transient"])
             .inc();
         metrics
+            .connector_failures_total
+            .with_label_values(&[
+                "test-pipeline",
+                "forward",
+                "default",
+                "webhook",
+                "timeout",
+                "transient",
+            ])
+            .inc();
+        metrics
             .source_poll_queries
             .with_label_values(&["test-pipeline", "outbox"])
             .inc();
@@ -571,6 +601,7 @@ mod tests {
         assert!(rendered.contains(METRIC_SOURCE_POLL_QUERIES));
         assert!(rendered.contains(METRIC_OFFSET_WRITES));
         assert!(rendered.contains(METRIC_CATALOG_DISCOVERY_QUERIES));
+        assert!(rendered.contains(METRIC_CONNECTOR_FAILURES));
         // v0.17.0: verify DLQ write errors metric is registered.
         metrics
             .dlq_write_errors

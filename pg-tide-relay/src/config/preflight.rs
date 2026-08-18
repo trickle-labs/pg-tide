@@ -1,7 +1,8 @@
 //! Shared, side-effect-free aggregate pipeline preflight.
 
-use super::schema_support::{connector_available, PipelineDocument, PIPELINE_SCHEMA_VERSION};
+use super::schema_support::{PipelineDocument, PIPELINE_SCHEMA_VERSION};
 use super::PipelineConfig;
+use crate::descriptors;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreflightSeverity {
@@ -38,11 +39,19 @@ pub fn validate_pipelines(pipelines: &[PipelineConfig]) -> PreflightReport {
     for pipeline in pipelines {
         match PipelineDocument::parse(&pipeline.name, &pipeline.config) {
             Ok(document) => {
-                for (field, connector) in [
-                    ("source_type", document.source_type.as_str()),
-                    ("sink_type", document.sink_type.as_str()),
+                for (field, connector, descriptor) in [
+                    (
+                        "source_type",
+                        document.source_type.as_str(),
+                        descriptors::source_type_to_descriptor(&document.source_type),
+                    ),
+                    (
+                        "sink_type",
+                        document.sink_type.as_str(),
+                        descriptors::sink_type_to_descriptor(&document.sink_type),
+                    ),
                 ] {
-                    if !connector_available(connector) {
+                    if !descriptor.is_some_and(descriptors::is_available) {
                         issues.push(PreflightIssue {
                             pipeline: pipeline.name.clone(),
                             severity: if pipeline.enabled {
@@ -51,6 +60,19 @@ pub fn validate_pipelines(pipelines: &[PipelineConfig]) -> PreflightReport {
                                 PreflightSeverity::Warning
                             },
                             reason: format!("{field} '{connector}' is not compiled in"),
+                        });
+                    }
+                }
+                if let Some(descriptor) = descriptors::sink_type_to_descriptor(&document.sink_type)
+                {
+                    if !descriptors::is_supported_sink_type(&document.sink_type) {
+                        issues.push(PreflightIssue {
+                            pipeline: pipeline.name.clone(),
+                            severity: PreflightSeverity::Warning,
+                            reason: format!(
+                                "sink_type '{}' is {} and is not a production-supported destination",
+                                document.sink_type, descriptor.maturity
+                            ),
                         });
                     }
                 }
@@ -104,7 +126,7 @@ mod tests {
     #[test]
     fn report_order_is_deterministic_and_disabled_unavailable_is_warning() {
         let report = validate_pipelines(&[
-            pipeline("z", false, "discord"),
+            pipeline("z", false, "pg_logical"),
             pipeline("a", true, "unknown"),
         ]);
         assert_eq!(report.issues[0].pipeline, "a");

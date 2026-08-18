@@ -1,10 +1,12 @@
-# Remote PostgreSQL Outbox
+# PostgreSQL Inbox Compatibility Alias
 
-The Remote PostgreSQL Outbox sink delivers messages from one outbox to another outbox on a different PostgreSQL instance. This enables multi-cluster federation — messages published in one data center or region can be forwarded to outboxes in other regions, where local relays deliver them to local consumers. This creates a hierarchical event distribution topology.
+`pg_outbox` is a compatibility alias for the remote PostgreSQL inbox sink. It
+does not replicate into a remote outbox and is not counted as a separate
+supported destination. New configurations should use `sink_type = "inbox"`.
 
 ## When to Use This Sink
 
-Choose this sink for multi-region deployments where events published in one region need to be available to consumers in other regions, or for organizational boundaries where different teams manage separate PostgreSQL clusters but need shared event streams.
+Use the alias only while migrating an existing remote inbox configuration.
 
 ## Configuration
 
@@ -15,8 +17,8 @@ SELECT tide.relay_set_outbox_v2(
     'outbox', 'orders',
     'sink_type', 'pg_outbox',
     'config', '{
-        "target_url": "${env:EU_DB_URL}",
-        "target_outbox": "orders_eu_replica",
+        "postgres_url": "${env:EU_DB_URL}",
+        "inbox": "orders_eu_events",
         "batch_size": 200
     }'::jsonb
   )
@@ -28,11 +30,11 @@ SELECT tide.relay_set_outbox_v2(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `sink_type` | string | — | Must be `"pg_outbox"` |
-| `target_url` | string | — | PostgreSQL URL for the target instance |
-| `target_outbox` | string | — | Target outbox name |
+| `postgres_url` | string | — | PostgreSQL URL for the remote target instance |
+| `inbox` | string | — | Target inbox name on the remote instance |
 | `batch_size` | int | `100` | Messages per batch |
 
 ## Further Reading
 
 - [PostgreSQL Inbox](pg-inbox.md) — For direct inbox delivery
-- [Cross-Region Tutorial](../tutorials/cross-region.md) — Multi-region event relay patterns
+- [Cross-Region Tutorial](../tutorials/cross-region.md) — Multi-region relay patterns

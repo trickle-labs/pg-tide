@@ -9,7 +9,11 @@ use crate::envelope::RelayMessage;
 use crate::error::RelayError;
 
 #[cfg(feature = "webhook")]
+use hmac::{Hmac, Mac};
+#[cfg(feature = "webhook")]
 use reqwest::{Client, Url};
+#[cfg(feature = "webhook")]
+use sha2::{Digest, Sha256};
 
 /// Check whether a URL target is safe (SSRF guard).
 ///
@@ -36,12 +40,13 @@ pub struct WebhookSink {
     timeout_secs: u64,
     allow_http: bool,
     ssrf_protection: bool,
+    signing_secret: Option<Vec<u8>>,
 }
 
 #[cfg(feature = "webhook")]
 impl WebhookSink {
     pub fn new(url: &str, timeout_secs: u64) -> Result<Self, RelayError> {
-        Self::new_with_options(url, timeout_secs, false, true)
+        Self::new_with_options(url, timeout_secs, false, true, None, "hmac-sha256")
     }
 
     pub fn new_with_options(
@@ -49,7 +54,25 @@ impl WebhookSink {
         timeout_secs: u64,
         allow_http: bool,
         ssrf_protection: bool,
+        signing_secret: Option<&str>,
+        signing_algorithm: &str,
     ) -> Result<Self, RelayError> {
+        if !(1..=300).contains(&timeout_secs) {
+            return Err(RelayError::InvalidConfig {
+                name: "webhook".to_string(),
+                reason: "timeout_secs must be between 1 and 300".to_string(),
+            });
+        }
+        if signing_algorithm != "hmac-sha256" {
+            return Err(RelayError::config(
+                "webhook: signing_algorithm must be 'hmac-sha256'",
+            ));
+        }
+        if signing_secret.is_some_and(str::is_empty) {
+            return Err(RelayError::config(
+                "webhook: signing_secret must not be empty",
+            ));
+        }
         let parsed = Url::parse(url).map_err(|e| RelayError::config(e.to_string()))?;
         validate_webhook_url(&parsed, allow_http, ssrf_protection)?;
         let client = crate::http_util::secure_client_for_url(
@@ -59,13 +82,21 @@ impl WebhookSink {
             allow_http,
             ssrf_protection,
         )
-        .map_err(|e| RelayError::sink("webhook", e))?;
+        .map_err(|_| {
+            RelayError::connector_failure(
+                "webhook",
+                crate::error::ConnectorFailureCode::TlsVerification,
+                crate::error::RetryClass::Permanent,
+                "webhook TLS client setup failed",
+            )
+        })?;
         Ok(Self {
             client,
             url: parsed,
             timeout_secs,
             allow_http,
             ssrf_protection,
+            signing_secret: signing_secret.map(str::as_bytes).map(ToOwned::to_owned),
         })
     }
 }
@@ -85,40 +116,121 @@ impl super::Sink for WebhookSink {
         // Re-validate URL on each publish (URL could have been mutated via config reload).
         validate_webhook_url(&self.url, self.allow_http, self.ssrf_protection)?;
 
-        // POST the full batch as a JSON array with idempotency key from the last message.
-        let idempotency_key = messages
-            .last()
-            .map(|m| m.dedup_key.clone())
-            .unwrap_or_default();
+        let idempotency_key = idempotency_key(messages);
+        let body = serde_json::to_vec(messages).map_err(RelayError::Json)?;
 
-        let payload = serde_json::to_value(messages).map_err(RelayError::Json)?;
-
-        let resp = self
+        let mut request = self
             .client
             .post(self.url.clone())
             .header("Content-Type", "application/json")
-            .header("Idempotency-Key", &idempotency_key)
-            .json(&payload)
+            .header("Idempotency-Key", &idempotency_key);
+        if let Some(secret) = &self.signing_secret {
+            let mut mac = Hmac::<Sha256>::new_from_slice(secret)
+                .map_err(|_| RelayError::config("webhook: invalid signing secret"))?;
+            mac.update(&body);
+            request = request.header(
+                "X-Pg-Tide-Signature",
+                format!("sha256={}", hex::encode(mac.finalize().into_bytes())),
+            );
+        }
+        let resp = request
+            .body(body)
             .send()
             .await
-            .map_err(|e| RelayError::sink("webhook", e))?;
+            .map_err(webhook_request_error)?;
 
         if !resp.status().is_success() {
-            return Err(RelayError::SinkPublish {
-                sink: "webhook".to_string(),
-                source: format!("HTTP {}", resp.status()).into(),
-            });
+            return Err(webhook_status_error(resp.status().as_u16()));
         }
         Ok(())
     }
 
     async fn is_healthy(&mut self) -> bool {
-        true // checked via metrics endpoint
+        validate_webhook_url(&self.url, self.allow_http, self.ssrf_protection).is_ok()
     }
 
     async fn close(&mut self) -> Result<(), RelayError> {
         Ok(())
     }
+}
+
+#[cfg(feature = "webhook")]
+fn idempotency_key(messages: &[RelayMessage]) -> String {
+    if messages.len() == 1 {
+        return messages[0].dedup_key.clone();
+    }
+    let mut digest = Sha256::new();
+    for message in messages {
+        digest.update((message.dedup_key.len() as u64).to_be_bytes());
+        digest.update(message.dedup_key.as_bytes());
+    }
+    format!("batch-{}", hex::encode(digest.finalize()))
+}
+
+#[cfg(feature = "webhook")]
+fn webhook_request_error(error: reqwest::Error) -> RelayError {
+    use crate::error::{ConnectorFailureCode, RetryClass};
+
+    let (code, class, summary) = if error.is_timeout() {
+        (
+            ConnectorFailureCode::Timeout,
+            RetryClass::Transient,
+            "webhook request timed out",
+        )
+    } else if error.is_connect() {
+        (
+            ConnectorFailureCode::Unavailable,
+            RetryClass::Transient,
+            "webhook endpoint is unavailable",
+        )
+    } else if error.is_redirect() {
+        (
+            ConnectorFailureCode::InvalidDestination,
+            RetryClass::Permanent,
+            "webhook redirects are not allowed",
+        )
+    } else {
+        (
+            ConnectorFailureCode::Unknown,
+            RetryClass::Transient,
+            "webhook request failed",
+        )
+    };
+    RelayError::connector_failure("webhook", code, class, summary)
+}
+
+#[cfg(feature = "webhook")]
+fn webhook_status_error(status: u16) -> RelayError {
+    use crate::error::{ConnectorFailureCode, RetryClass};
+
+    let (code, class, summary) = match status {
+        408 | 425 | 429 | 500..=599 => (
+            ConnectorFailureCode::Throttled,
+            RetryClass::Transient,
+            "webhook endpoint requested retry",
+        ),
+        300..=399 => (
+            ConnectorFailureCode::InvalidDestination,
+            RetryClass::Permanent,
+            "webhook redirects are not allowed",
+        ),
+        401 | 403 => (
+            ConnectorFailureCode::Authentication,
+            RetryClass::Permanent,
+            "webhook authentication was rejected",
+        ),
+        400..=499 => (
+            ConnectorFailureCode::ProtocolRejection,
+            RetryClass::Permanent,
+            "webhook request was rejected",
+        ),
+        _ => (
+            ConnectorFailureCode::Unknown,
+            RetryClass::Transient,
+            "webhook response was invalid",
+        ),
+    };
+    RelayError::connector_failure("webhook", code, class, summary)
 }
 
 #[cfg(all(test, feature = "webhook"))]
@@ -184,5 +296,38 @@ mod tests {
     fn test_ssrf_blocks_link_local() {
         let url = Url::parse("https://169.254.1.2/hook").unwrap();
         assert!(validate_webhook_url(&url, false, true).is_err());
+    }
+
+    #[test]
+    fn batch_idempotency_key_is_deterministic() {
+        let first = RelayMessage::new_reverse("event-1", "orders", serde_json::json!({}));
+        let second = RelayMessage::new_reverse("event-2", "orders", serde_json::json!({}));
+        let left = idempotency_key(&[first.clone(), second.clone()]);
+        let right = idempotency_key(&[first, second]);
+        assert_eq!(left, right);
+        assert_ne!(
+            left,
+            idempotency_key(&[RelayMessage::new_reverse(
+                "event-3",
+                "orders",
+                serde_json::json!({}),
+            )])
+        );
+    }
+
+    #[test]
+    fn retryable_webhook_statuses_are_typed() {
+        let error = webhook_status_error(429);
+        assert_eq!(error.retry_class(), crate::error::RetryClass::Transient);
+        assert_eq!(
+            error.connector_code(),
+            Some(crate::error::ConnectorFailureCode::Throttled)
+        );
+        let error = webhook_status_error(403);
+        assert_eq!(error.retry_class(), crate::error::RetryClass::Permanent);
+        assert_eq!(
+            error.connector_code(),
+            Some(crate::error::ConnectorFailureCode::Authentication)
+        );
     }
 }

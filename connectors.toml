@@ -1,30 +1,25 @@
-schema_version = 1
+schema_version = 2
 
 [[connector]]
 id = "postgresql-outbox"
 name = "PostgreSQL native outbox"
 kind = "connector"
 maturity = "supported"
+direction = "source"
 owner = "@grove"
 security_contact = "@grove"
 source_types = ["outbox"]
 sink_types = []
 default_build = true
+profiles = ["core"]
 tested_versions = ["PostgreSQL 18"]
+service_versions = { minimum = "PostgreSQL 18", recommended = "PostgreSQL 18", client = "tokio-postgres 0.7", tls = "PostgreSQL TLS 1.3" }
+capabilities = { max_batch_size = 1000, max_batch_bytes = 16777216, max_message_bytes = 1048576, ordering = "per_pipeline", ack_after = "source_poll", deduplication = "none", retryable_errors = ["unavailable", "timeout", "unknown"], permanent_errors = ["protocol_rejection", "invalid_config", "shutdown"], tls = "not_applicable", authentication = ["postgres-role"], backpressure = "bounded_batch", shutdown = "drain" }
+config_fields = ["outbox", "subject_template", "consumer_group", "consumer_id", "visibility_seconds"]
 docs = ["docs/src/sources/outbox.md"]
-contract_tests = ["pg-tide-relay/tests/outbox_source_test.rs"]
-integration_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-e2e_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-failure_before_publish_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-failure_after_publish_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-restart_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-duplicate_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-auth_tests = ["pg-tide-relay/tests/publisher_acl_test.rs"]
-tls_tests = ["pg-tide-relay/tests/tls_test.rs"]
-redaction_tests = ["pg-tide-relay/src/config/mod.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-runbooks = ["docs/src/operations/runbook-crash-recovery.md"]
-upgrade_tests = ["pg-tide-relay/tests/v042_validation_test.rs"]
+evidence = [
+	{ scenario = "postgresql-outbox-poll", level = "integration", direction = "source", test_path = "pg-tide-relay/tests/outbox_source_test.rs", test_name = "test_outbox_poll_returns_pending_messages", ci_job = "test-integration-core" },
+]
 
 [[connector]]
 id = "pg-trickle-compatibility"
@@ -53,88 +48,143 @@ default_build = true
 tested_versions = ["local process"]
 docs = ["docs/src/sources/stdin.md", "docs/src/sinks/stdout.md"]
 contract_tests = ["pg-tide-relay/tests/postgres_insert_microbenchmark.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 
 [[connector]]
 id = "postgresql-inbox"
 name = "PostgreSQL inbox"
 kind = "connector"
 maturity = "supported"
+direction = "sink"
 owner = "@grove"
 security_contact = "@grove"
 source_types = []
 sink_types = ["inbox", "pg_outbox"]
 default_build = true
+profiles = ["core"]
 tested_versions = ["PostgreSQL 18"]
+service_versions = { minimum = "PostgreSQL 18", recommended = "PostgreSQL 18", client = "tokio-postgres 0.7", tls = "PostgreSQL TLS 1.3" }
+capabilities = { max_batch_size = 1000, max_batch_bytes = 16777216, max_message_bytes = 1048576, ordering = "per_pipeline", ack_after = "destination_commit", deduplication = "event_id_constraint", retryable_errors = ["unavailable", "timeout", "unknown"], permanent_errors = ["authentication", "authorization", "protocol_rejection", "message_too_large", "invalid_config", "shutdown"], tls = "required_verify", authentication = ["password", "certificate"], backpressure = "bounded_batch", shutdown = "drain" }
+config_fields = ["inbox", "postgres_url"]
 docs = ["docs/src/sinks/pg-inbox.md", "docs/src/sinks/pg-outbox.md"]
-contract_tests = ["pg-tide-relay/tests/pg_inbox_sink_test.rs"]
-integration_tests = ["pg-tide-relay/tests/inbox_sink_test.rs"]
-e2e_tests = ["pg-tide-relay/tests/pg_inbox_sink_test.rs"]
-failure_before_publish_tests = ["pg-tide-relay/tests/pg_inbox_sink_test.rs"]
-failure_after_publish_tests = ["pg-tide-relay/tests/pg_inbox_sink_test.rs"]
-restart_tests = ["pg-tide-relay/tests/pg_inbox_sink_test.rs"]
-duplicate_tests = ["pg-tide-relay/tests/pg_inbox_sink_test.rs"]
-auth_tests = ["pg-tide-relay/tests/publisher_acl_test.rs"]
-tls_tests = ["pg-tide-relay/tests/tls_test.rs"]
-redaction_tests = ["pg-tide-relay/src/config/mod.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-runbooks = ["docs/src/operations/runbook-relay-upgrade.md"]
-upgrade_tests = ["pg-tide-relay/tests/v042_validation_test.rs"]
+evidence = [
+	{ scenario = "postgresql-inbox-round-trip", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/pg_inbox_sink_test.rs", test_name = "test_pg_inbox_sink_round_trip", ci_job = "test-integration-relay" },
+	{ scenario = "postgresql-inbox-deduplication", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/inbox_sink_test.rs", test_name = "test_inbox_deduplication", ci_job = "test-integration-relay" },
+]
 
 [[connector]]
-id = "nats"
-name = "NATS JetStream"
+id = "nats-jetstream-sink"
+name = "NATS JetStream outbound"
 kind = "connector"
 maturity = "supported"
+direction = "sink"
+owner = "@grove"
+security_contact = "@grove"
+cargo_feature = "nats"
+source_types = []
+sink_types = ["nats"]
+default_build = true
+profiles = ["core"]
+tested_versions = ["NATS Server 2.11.0 with JetStream"]
+service_versions = { minimum = "NATS Server 2.10.0", recommended = "NATS Server 2.11.0", client = "async-nats 0.47", tls = "rustls 0.23" }
+capabilities = { max_batch_size = 100, max_batch_bytes = 16777216, max_message_bytes = 1048576, ordering = "per_subject", ack_after = "jetstream_ack", deduplication = "stream_duplicate_window", retryable_errors = ["unavailable", "timeout", "throttled", "unknown"], permanent_errors = ["authentication", "authorization", "tls_verification", "invalid_destination", "message_too_large", "protocol_rejection", "invalid_config", "shutdown"], tls = "optional_verify", authentication = ["token", "user_password", "nkey"], backpressure = "publish_timeout", shutdown = "drain" }
+config_fields = ["url", "subject", "subject_template"]
+docs = ["docs/src/sinks/nats.md"]
+evidence = [
+	{ scenario = "nats-jetstream-publish-ack", level = "e2e", direction = "sink", test_path = "pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs", test_name = "public_api_outbox_to_nats_e2e", ci_job = "public-api-nats-e2e" },
+]
+
+[[connector]]
+id = "nats-source"
+name = "NATS inbound"
+kind = "connector"
+maturity = "preview"
+direction = "source"
 owner = "@grove"
 security_contact = "@grove"
 cargo_feature = "nats"
 source_types = ["nats"]
-sink_types = ["nats"]
-default_build = true
-tested_versions = ["nats:latest with JetStream"]
-docs = ["docs/src/sinks/nats.md", "docs/src/sources/nats.md"]
+sink_types = []
+default_build = false
+tested_versions = ["NATS Server 2.11.0 with JetStream"]
+docs = ["docs/src/sources/nats.md"]
 contract_tests = ["pg-tide-relay/tests/nats_test.rs"]
-integration_tests = ["pg-tide-relay/tests/nats_test.rs"]
-e2e_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-failure_before_publish_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-failure_after_publish_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-restart_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-duplicate_tests = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
-auth_tests = ["pg-tide-relay/tests/tls_test.rs"]
-tls_tests = ["pg-tide-relay/tests/tls_test.rs"]
-redaction_tests = ["pg-tide-relay/src/config/mod.rs"]
 metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-runbooks = ["docs/src/operations/runbook-crash-recovery.md"]
-upgrade_tests = ["pg-tide-relay/tests/v042_validation_test.rs"]
 
 [[connector]]
-id = "webhook"
-name = "HTTP webhook"
+id = "webhook-sink"
+name = "HTTPS webhook outbound"
+kind = "connector"
+maturity = "supported"
+direction = "sink"
+owner = "@grove"
+security_contact = "@grove"
+cargo_feature = "webhook"
+source_types = []
+sink_types = ["webhook"]
+default_build = true
+profiles = ["core"]
+tested_versions = ["HTTP/1.1 with TLS 1.3"]
+service_versions = { minimum = "HTTP/1.1", recommended = "HTTP/1.1", client = "reqwest 0.12", tls = "rustls 0.23" }
+capabilities = { max_batch_size = 100, max_batch_bytes = 16777216, max_message_bytes = 1048576, ordering = "per_pipeline", ack_after = "http_2xx", deduplication = "receiver_contract", retryable_errors = ["unavailable", "timeout", "throttled", "unknown"], permanent_errors = ["authentication", "authorization", "protocol_rejection", "invalid_destination", "tls_verification", "message_too_large", "invalid_config", "shutdown"], tls = "required_verify", authentication = ["hmac_sha256"], backpressure = "http_retry_after", shutdown = "drain" }
+config_fields = ["url", "timeout_secs", "allow_http", "ssrf_protection", "signing_secret", "signing_algorithm"]
+docs = ["docs/src/sinks/webhook.md"]
+evidence = [
+	{ scenario = "webhook-http-post", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/webhook_test.rs", test_name = "test_webhook_sink_posts_messages", ci_job = "test-integration" },
+]
+
+[[connector]]
+id = "webhook-source"
+name = "Webhook inbound"
 kind = "connector"
 maturity = "preview"
+direction = "source"
 owner = "@grove"
+security_contact = "@grove"
 cargo_feature = "webhook"
 source_types = ["webhook"]
-sink_types = ["webhook"]
+sink_types = []
 default_build = false
-tested_versions = ["HTTP/1.1 in-process mock"]
-docs = ["docs/src/sinks/webhook.md", "docs/src/sources/webhook-receiver.md"]
-contract_tests = ["pg-tide-relay/tests/webhook_test.rs", "pg-tide-relay/tests/webhook_sig_test.rs"]
+tested_versions = ["HTTP/1.1 in-process fixture"]
+docs = ["docs/src/sources/webhook-receiver.md"]
+contract_tests = ["pg-tide-relay/tests/webhook_sig_test.rs"]
 metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 
 [[connector]]
-id = "kafka"
-name = "Apache Kafka"
+id = "kafka-sink"
+name = "Apache Kafka outbound"
 kind = "connector"
-maturity = "preview"
+maturity = "supported"
+direction = "sink"
 owner = "@grove"
+security_contact = "@grove"
 cargo_feature = "kafka"
-source_types = ["kafka"]
+source_types = []
 sink_types = ["kafka"]
 default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/kafka.md", "docs/src/sources/kafka.md"]
+profiles = ["core-kafka"]
+tested_versions = ["Apache Kafka 3.8.0 KRaft"]
+service_versions = { minimum = "Apache Kafka 3.8.0", recommended = "Apache Kafka 3.8.0", client = "rdkafka 0.39", tls = "librdkafka TLS" }
+capabilities = { max_batch_size = 100, max_batch_bytes = 16777216, max_message_bytes = 1048576, ordering = "per_partition", ack_after = "broker_ack", deduplication = "producer_session", retryable_errors = ["unavailable", "timeout", "throttled", "unknown"], permanent_errors = ["authentication", "authorization", "invalid_destination", "message_too_large", "protocol_rejection", "invalid_config", "shutdown"], tls = "required_verify", authentication = ["sasl_plain", "sasl_scram", "mtls"], backpressure = "publish_timeout", shutdown = "flush" }
+config_fields = ["brokers", "topic", "topic_template"]
+docs = ["docs/src/sinks/kafka.md"]
+evidence = [
+	{ scenario = "kafka-public-api-delivery", level = "e2e", direction = "sink", test_path = "pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs", test_name = "public_api_outbox_to_kafka_e2e", ci_job = "public-api-kafka-e2e" },
+]
+
+[[connector]]
+id = "kafka-source"
+name = "Apache Kafka inbound"
+kind = "connector"
+maturity = "preview"
+direction = "source"
+owner = "@grove"
+security_contact = "@grove"
+cargo_feature = "kafka"
+source_types = ["kafka"]
+sink_types = []
+default_build = false
+tested_versions = ["Apache Kafka 3.8.0 KRaft"]
+docs = ["docs/src/sources/kafka.md"]
 contract_tests = ["pg-tide-relay/tests/kafka_test.rs"]
 metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 
@@ -532,7 +582,7 @@ kind = "compatibility"
 maturity = "experimental"
 owner = "@grove"
 cargo_feature = "wal-source"
-source_types = []
+source_types = ["pg_logical"]
 sink_types = []
 default_build = false
 tested_versions = ["not registered"]

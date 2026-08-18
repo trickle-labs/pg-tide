@@ -862,7 +862,7 @@ async fn record_runtime_error(
     db: &Client,
     relay_group_id: &str,
     pipeline: &PipelineConfig,
-    error_class: &str,
+    error: &RelayError,
 ) {
     let direction = match pipeline.direction {
         PipelineDirection::Forward => "forward",
@@ -871,11 +871,11 @@ async fn record_runtime_error(
     if let Err(error) = db
         .execute(
             "UPDATE tide.relay_runtime_status
-                SET last_error_code = 'worker.failure',
+                SET last_error_code = $5,
                     last_error_component = 'relay.worker',
-                    last_error_class = $5,
+                    last_error_class = $6,
                     last_error_at = now(),
-                    retry_state = CASE WHEN $5 = 'transient' THEN 'retrying' ELSE NULL END,
+                    retry_state = CASE WHEN $6 = 'transient' THEN 'retrying' ELSE NULL END,
                     last_state_update_at = now()
               WHERE relay_group_id = $1
                 AND pipeline_id = $2
@@ -886,7 +886,8 @@ async fn record_runtime_error(
                 &pipeline.name,
                 &direction,
                 &pipeline.tenant_name,
-                &error_class,
+                &error.public_code().to_string(),
+                &error.retry_class().to_string(),
             ],
         )
         .await
@@ -999,7 +1000,7 @@ async fn run_pipeline_worker(
                 "permanent"
             };
             if status_enabled {
-                record_runtime_error(&db, &relay_group_id, &status_pipeline, error_class).await;
+                record_runtime_error(&db, &relay_group_id, &status_pipeline, &e).await;
             }
             metrics
                 .pipeline_errors_total
@@ -1241,7 +1242,8 @@ async fn worker_inner(
                 PollOutcome::PermanentError(e) => {
                     tracing::error!(
                         pipeline = %pipeline.name,
-                        error = %e,
+                        error_code = %e.public_code(),
+                        error_summary = e.public_summary(),
                         "permanent poll error — stopping pipeline"
                     );
                     return Err(e);
@@ -1375,9 +1377,14 @@ async fn worker_inner(
             batch_size = batch.len(),
         );
         let publish_start = std::time::Instant::now();
-        let publish_outcome = publish_with_circuit_breaker(&mut sink, &batch, &mut circuit_breaker)
-            .instrument(publish_span)
-            .await;
+        let publish_outcome = match validate_publish_limits(&pipeline, &batch) {
+            Ok(()) => {
+                publish_with_circuit_breaker(&mut sink, &batch, &mut circuit_breaker)
+                    .instrument(publish_span)
+                    .await
+            }
+            Err(error) => PublishOutcome::Failure(error),
+        };
         if matches!(&publish_outcome, PublishOutcome::Success) {
             crate::failpoints::hit("after_network_publish", &pipeline.name).await?;
         }
@@ -1395,6 +1402,20 @@ async fn worker_inner(
             &dlq_config,
             poll_interval_ms,
         );
+
+        if let PublishOutcome::Failure(error) = &publish_outcome {
+            metrics
+                .connector_failures_total
+                .with_label_values(&[
+                    pipeline.name.as_str(),
+                    direction_label.as_str(),
+                    tenant_label.as_str(),
+                    pipeline.require_str(&["sink_type"]).unwrap_or("unknown"),
+                    &error.public_code().to_string(),
+                    &error.retry_class().to_string(),
+                ])
+                .inc();
+        }
 
         match directive {
             WorkerDirective::Continue => {
@@ -1466,7 +1487,8 @@ async fn worker_inner(
                 if let PublishOutcome::Failure(ref e) = publish_outcome {
                     tracing::warn!(
                         pipeline = %pipeline.name,
-                        error = %e,
+                        error_code = %e.public_code(),
+                        error_summary = e.public_summary(),
                         consecutive_failures,
                         "publish error"
                     );
@@ -1505,7 +1527,8 @@ async fn worker_inner(
                 if let PublishOutcome::Failure(ref e) = publish_outcome {
                     tracing::warn!(
                         pipeline = %pipeline.name,
-                        error = %e,
+                        error_code = %e.public_code(),
+                        error_summary = e.public_summary(),
                         consecutive_failures,
                         "publish error"
                     );
@@ -1920,6 +1943,53 @@ async fn publish_with_circuit_breaker(
     }
 }
 
+fn validate_publish_limits(
+    pipeline: &PipelineConfig,
+    messages: &[crate::envelope::RelayMessage],
+) -> Result<(), RelayError> {
+    let sink_type = pipeline.require_str(&["sink_type"])?;
+    let Some(descriptor) = crate::descriptors::sink_type_to_descriptor(sink_type) else {
+        return Err(RelayError::InvalidConfig {
+            name: pipeline.name.clone(),
+            reason: format!("unknown sink_type '{sink_type}'"),
+        });
+    };
+    let Some(capabilities) = descriptor.capabilities else {
+        return Ok(());
+    };
+    if messages.len() > capabilities.max_batch_size as usize {
+        return Err(RelayError::connector_failure(
+            sink_type,
+            crate::error::ConnectorFailureCode::MessageTooLarge,
+            crate::error::RetryClass::Permanent,
+            "publish batch exceeds the connector message-count limit",
+        ));
+    }
+    let mut total_bytes = 0_u64;
+    for message in messages {
+        let encoded = serde_json::to_vec(message)?;
+        let message_bytes = encoded.len() as u64;
+        if message_bytes > capabilities.max_message_bytes {
+            return Err(RelayError::connector_failure(
+                sink_type,
+                crate::error::ConnectorFailureCode::MessageTooLarge,
+                crate::error::RetryClass::Permanent,
+                "encoded message exceeds the connector message-size limit",
+            ));
+        }
+        total_bytes = total_bytes.saturating_add(message_bytes);
+    }
+    if total_bytes > capabilities.max_batch_bytes {
+        return Err(RelayError::connector_failure(
+            sink_type,
+            crate::error::ConnectorFailureCode::MessageTooLarge,
+            crate::error::RetryClass::Permanent,
+            "encoded batch exceeds the connector byte limit",
+        ));
+    }
+    Ok(())
+}
+
 // ── v0.27.0 worker decomposition helpers ─────────────────────────────────
 
 /// Directive returned by `handle_publish_outcome()` to tell `worker_inner()`
@@ -1976,9 +2046,22 @@ pub(crate) fn handle_publish_outcome(
         }
         PublishOutcome::Failure(e) => {
             *consecutive_failures += 1;
+            if e.retry_class() == crate::error::RetryClass::Permanent {
+                return if dlq_config.enabled {
+                    WorkerDirective::RouteToDlq {
+                        reason: safe_dlq_reason(e),
+                        error_kind: ErrorKind::SinkPermanent,
+                    }
+                } else {
+                    WorkerDirective::Shutdown(
+                        e.owned_connector_failure()
+                            .unwrap_or_else(|| RelayError::other("permanent connector failure")),
+                    )
+                };
+            }
             if dlq_config.enabled && *consecutive_failures > dlq_config.max_retries {
                 WorkerDirective::RouteToDlq {
-                    reason: e.to_string(),
+                    reason: safe_dlq_reason(e),
                     error_kind: ErrorKind::MaxRetriesExceeded,
                 }
             } else {
@@ -1986,6 +2069,10 @@ pub(crate) fn handle_publish_outcome(
             }
         }
     }
+}
+
+fn safe_dlq_reason(error: &RelayError) -> String {
+    format!("{}: {}", error.public_code(), error.public_summary())
 }
 
 /// Apply the configured schema evolution policy to a batch.
@@ -2442,6 +2529,18 @@ async fn build_sink(
     db: Arc<Client>,
 ) -> Result<Box<dyn crate::sink::Sink>, RelayError> {
     let sink_type = pipeline.require_str(&["sink_type"])?;
+    let descriptor = crate::descriptors::sink_type_to_descriptor(sink_type).ok_or_else(|| {
+        RelayError::InvalidConfig {
+            name: pipeline.name.clone(),
+            reason: format!("unknown sink_type '{sink_type}'"),
+        }
+    })?;
+    if !crate::descriptors::is_available(descriptor) {
+        return Err(RelayError::InvalidConfig {
+            name: pipeline.name.clone(),
+            reason: format!("sink_type '{sink_type}' is not compiled in"),
+        });
+    }
     match sink_type {
         #[cfg(feature = "stdout")]
         "stdout" => {
@@ -2466,7 +2565,13 @@ async fn build_sink(
 
         "inbox" => {
             let inbox = pipeline.require_str(&["sink", "inbox"])?;
-            Ok(Box::new(crate::sink::inbox::InboxSink::new(db, inbox)?))
+            if let Some(postgres_url) = pipeline.opt_str(&["sink", "postgres_url"]) {
+                Ok(Box::new(
+                    crate::sink::pg_outbox::PgInboxSink::new(postgres_url, inbox).await?,
+                ))
+            } else {
+                Ok(Box::new(crate::sink::inbox::InboxSink::new(db, inbox)?))
+            }
         }
 
         #[cfg(feature = "nats")]
@@ -2487,6 +2592,7 @@ async fn build_sink(
             let brokers = pipeline.require_str(&["sink", "brokers"])?;
             let topic_template = pipeline
                 .opt_str(&["sink", "topic_template"])
+                .or_else(|| pipeline.opt_str(&["sink", "topic"]))
                 .unwrap_or("{stream_table}");
             Ok(Box::new(crate::sink::kafka::KafkaSink::new(
                 brokers,
@@ -2498,9 +2604,24 @@ async fn build_sink(
         "webhook" => {
             let url = pipeline.require_str(&["sink", "url"])?;
             let timeout = pipeline.opt_i64(&["sink", "timeout_secs"]).unwrap_or(30) as u64;
-            Ok(Box::new(crate::sink::webhook::WebhookSink::new(
-                url, timeout,
-            )?))
+            let allow_http = pipeline.opt_bool(&["sink", "allow_http"]).unwrap_or(false);
+            let ssrf_protection = pipeline
+                .opt_bool(&["sink", "ssrf_protection"])
+                .unwrap_or(true);
+            let signing_secret = pipeline.opt_str(&["sink", "signing_secret"]);
+            let signing_algorithm = pipeline
+                .opt_str(&["sink", "signing_algorithm"])
+                .unwrap_or("hmac-sha256");
+            Ok(Box::new(
+                crate::sink::webhook::WebhookSink::new_with_options(
+                    url,
+                    timeout,
+                    allow_http,
+                    ssrf_protection,
+                    signing_secret,
+                    signing_algorithm,
+                )?,
+            ))
         }
 
         #[cfg(feature = "redis")]
@@ -3348,6 +3469,168 @@ mod tests {
         assert!(
             matches!(directive, WorkerDirective::BackoffMs(500)),
             "failure without DLQ enabled must always backoff"
+        );
+    }
+
+    #[test]
+    fn handle_publish_outcome_permanent_connector_failure_routes_immediately() {
+        let mut failures: u32 = 0;
+        let dlq = make_dlq_config(true, 3);
+        let error = RelayError::connector_failure(
+            "webhook",
+            crate::error::ConnectorFailureCode::Authorization,
+            crate::error::RetryClass::Permanent,
+            "webhook authorization was rejected",
+        );
+        let directive =
+            handle_publish_outcome(&PublishOutcome::Failure(error), &mut failures, &dlq, 1000);
+        assert_eq!(failures, 1);
+        assert!(matches!(
+            directive,
+            WorkerDirective::RouteToDlq {
+                error_kind: ErrorKind::SinkPermanent,
+                ..
+            }
+        ));
+    }
+
+    fn limit_test_pipeline() -> PipelineConfig {
+        PipelineConfig {
+            name: "limit-test".to_string(),
+            direction: PipelineDirection::Forward,
+            enabled: true,
+            config: serde_json::json!({
+                "sink_type": "nats",
+                "sink": {"url": "nats://localhost", "subject": "orders.created"}
+            }),
+            tenant_name: "default".to_string(),
+        }
+    }
+
+    fn message_with_payload_size(size: usize) -> crate::envelope::RelayMessage {
+        crate::envelope::RelayMessage::new_reverse(
+            "limit-event",
+            "orders.created",
+            serde_json::json!({"data": "x".repeat(size)}),
+        )
+    }
+
+    #[test]
+    fn publish_limits_accept_exact_batch_count_and_reject_one_over() {
+        let pipeline = limit_test_pipeline();
+        let exact = (0..100)
+            .map(|index| {
+                crate::envelope::RelayMessage::new_reverse(
+                    format!("event-{index}"),
+                    "orders.created",
+                    serde_json::json!({}),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_publish_limits(&pipeline, &exact).is_ok());
+
+        let mut over = exact;
+        over.push(crate::envelope::RelayMessage::new_reverse(
+            "event-over",
+            "orders.created",
+            serde_json::json!({}),
+        ));
+        let error = validate_publish_limits(&pipeline, &over).unwrap_err();
+        assert_eq!(
+            error.connector_code(),
+            Some(crate::error::ConnectorFailureCode::MessageTooLarge)
+        );
+    }
+
+    #[test]
+    fn publish_limits_accept_exact_message_bytes_and_reject_one_over() {
+        let pipeline = limit_test_pipeline();
+        let maximum = crate::descriptors::sink_type_to_descriptor("nats")
+            .and_then(|descriptor| descriptor.capabilities)
+            .expect("nats capabilities")
+            .max_message_bytes as usize;
+        let mut low = 0;
+        let mut high = maximum;
+        while low < high {
+            let candidate = (low + high).div_ceil(2);
+            if serde_json::to_vec(&message_with_payload_size(candidate))
+                .expect("serialize message")
+                .len()
+                <= maximum
+            {
+                low = candidate;
+            } else {
+                high = candidate - 1;
+            }
+        }
+        let exact = message_with_payload_size(low);
+        assert_eq!(
+            serde_json::to_vec(&exact)
+                .expect("serialize exact message")
+                .len(),
+            maximum
+        );
+        assert!(validate_publish_limits(&pipeline, &[exact]).is_ok());
+
+        let error =
+            validate_publish_limits(&pipeline, &[message_with_payload_size(low + 1)]).unwrap_err();
+        assert_eq!(
+            error.connector_code(),
+            Some(crate::error::ConnectorFailureCode::MessageTooLarge)
+        );
+    }
+
+    #[test]
+    fn publish_limits_accept_exact_batch_bytes_and_reject_one_over() {
+        let pipeline = limit_test_pipeline();
+        let capabilities = crate::descriptors::sink_type_to_descriptor("nats")
+            .and_then(|descriptor| descriptor.capabilities)
+            .expect("nats capabilities");
+        let fixed_messages = (0..16)
+            .map(|_| message_with_payload_size(1_000_000))
+            .collect::<Vec<_>>();
+        let fixed_bytes: usize = fixed_messages
+            .iter()
+            .map(|message| {
+                serde_json::to_vec(message)
+                    .expect("serialize message")
+                    .len()
+            })
+            .sum();
+        let target = capabilities.max_batch_bytes as usize;
+        let mut low = 0;
+        let mut high = capabilities.max_message_bytes as usize;
+        while low < high {
+            let candidate = (low + high).div_ceil(2);
+            let total = fixed_bytes
+                + serde_json::to_vec(&message_with_payload_size(candidate))
+                    .expect("serialize message")
+                    .len();
+            if total <= target {
+                low = candidate;
+            } else {
+                high = candidate - 1;
+            }
+        }
+        let mut exact = fixed_messages;
+        exact.push(message_with_payload_size(low));
+        let encoded_bytes: usize = exact
+            .iter()
+            .map(|message| {
+                serde_json::to_vec(message)
+                    .expect("serialize message")
+                    .len()
+            })
+            .sum();
+        assert_eq!(encoded_bytes, target);
+        assert!(validate_publish_limits(&pipeline, &exact).is_ok());
+
+        exact.pop();
+        exact.push(message_with_payload_size(low + 1));
+        let error = validate_publish_limits(&pipeline, &exact).unwrap_err();
+        assert_eq!(
+            error.connector_code(),
+            Some(crate::error::ConnectorFailureCode::MessageTooLarge)
         );
     }
 }

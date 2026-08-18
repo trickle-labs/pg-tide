@@ -9,7 +9,7 @@ multiple relay instances.
 ## Overview
 
 The pg-tide relay keeps durable source offsets in PostgreSQL. Pipeline ownership
-is coordinated via worker-held PostgreSQL advisory-lock sessions. For v0.45.0,
+is coordinated via worker-held PostgreSQL advisory-lock sessions. For v0.46.0,
 mixed relay ownership with v0.44.0 is unsupported because the canonical lock
 identity and delivery contract changed.
 
@@ -25,21 +25,21 @@ identity and delivery contract changed.
    pg-tide status --postgres-url "$PG_TIDE_POSTGRES_URL"
    pg-tide doctor --postgres-url "$PG_TIDE_POSTGRES_URL"
    ```
-4. **Stop all old relays before upgrading the v0.45.0 extension and binary.**
+4. **Stop all old relays before upgrading the v0.46.0 extension and binary.**
    Back up the database, then run:
    ```sql
    ALTER EXTENSION pg_tide UPDATE;
    ```
-   Do not start a v0.44.0 relay after the migration. Start only v0.45.0
+   Do not start a v0.45.0 relay after the migration. Start only v0.46.0
    relays after verifying offsets and pipeline ownership.
 
 ---
 
-## v0.45.0 Stop-Upgrade-Start Procedure
+## v0.46.0 Stop-Upgrade-Start Procedure
 
 1. Disable or stop every v0.44.0 relay and verify its ownership sessions are gone.
 2. Back up PostgreSQL and apply the extension migration.
-3. Deploy v0.45.0 relays.
+3. Deploy v0.46.0 relays.
 4. Verify scoped offsets, ownership, health, and duplicate handling.
 
 An in-flight batch whose sink succeeded before shutdown may be redelivered with
@@ -51,14 +51,14 @@ the same stable identity. This is expected at-least-once transport behavior.
 
 ```bash
 kubectl set image deployment/pg-tide \
-  pg-tide=ghcr.io/trickle-labs/pg-tide:0.45.0
+   pg-tide=ghcr.io/trickle-labs/pg-tide:0.46.0
 ```
 
 Or update `image.tag` in `values.yaml` and run `helm upgrade`:
 
 ```bash
 helm upgrade pg-tide oci://ghcr.io/trickle-labs/helm/pg-tide \
-  --set image.tag=0.45.0 \
+   --set image.tag=0.46.0 \
   --reuse-values
 ```
 
@@ -94,13 +94,13 @@ pg-tide status --postgres-url "$PG_TIDE_POSTGRES_URL"
 
 For single-instance or manual deployments:
 
-1. For versions before v0.45.0, do not start the new relay alongside the old
+1. For versions before v0.46.0, do not start the new relay alongside the old
    one. Stop all old instances first, then deploy the new image.
 
    ```bash
    docker run -d --name pg-tide-new \
      -e PG_TIDE_POSTGRES_URL="$PG_TIDE_POSTGRES_URL" \
-     ghcr.io/trickle-labs/pg-tide:0.45.0
+   ghcr.io/trickle-labs/pg-tide:0.46.0
    ```
 
 2. **Verify the new relay is healthy** and has acquired pipelines:

@@ -6,19 +6,7 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 
 - Maturity: **supported**
 - Owner: @grove
-- [x] contract tests: [outbox_source_test.rs](../../../pg-tide-relay/tests/outbox_source_test.rs)
-- [x] integration tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] e2e tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] failure before publish tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] failure after publish tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] restart tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] duplicate tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] auth tests: [publisher_acl_test.rs](../../../pg-tide-relay/tests/publisher_acl_test.rs)
-- [x] tls tests: [tls_test.rs](../../../pg-tide-relay/tests/tls_test.rs)
-- [x] redaction tests: [mod.rs](../../../pg-tide-relay/src/config/mod.rs)
-- [x] metrics evidence: [metrics.rs](../../../pg-tide-relay/src/metrics.rs)
-- [x] runbooks: [runbook-crash-recovery.md](../operations/runbook-crash-recovery.md)
-- [x] upgrade tests: [v042_validation_test.rs](../../../pg-tide-relay/tests/v042_validation_test.rs)
+- [x] postgresql-outbox-poll (integration, source): pg-tide-relay/tests/outbox_source_test.rs::test_outbox_poll_returns_pending_messages in `test-integration-core`
 
 ## pg_trickle outbox compatibility (`pg-trickle-compatibility`)
 
@@ -52,7 +40,7 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 - [ ] auth tests: —
 - [ ] tls tests: —
 - [ ] redaction tests: —
-- [x] metrics evidence: [metrics.rs](../../../pg-tide-relay/src/metrics.rs)
+- [ ] metrics evidence: —
 - [ ] runbooks: —
 - [ ] upgrade tests: —
 
@@ -60,43 +48,20 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 
 - Maturity: **supported**
 - Owner: @grove
-- [x] contract tests: [pg_inbox_sink_test.rs](../../../pg-tide-relay/tests/pg_inbox_sink_test.rs)
-- [x] integration tests: [inbox_sink_test.rs](../../../pg-tide-relay/tests/inbox_sink_test.rs)
-- [x] e2e tests: [pg_inbox_sink_test.rs](../../../pg-tide-relay/tests/pg_inbox_sink_test.rs)
-- [x] failure before publish tests: [pg_inbox_sink_test.rs](../../../pg-tide-relay/tests/pg_inbox_sink_test.rs)
-- [x] failure after publish tests: [pg_inbox_sink_test.rs](../../../pg-tide-relay/tests/pg_inbox_sink_test.rs)
-- [x] restart tests: [pg_inbox_sink_test.rs](../../../pg-tide-relay/tests/pg_inbox_sink_test.rs)
-- [x] duplicate tests: [pg_inbox_sink_test.rs](../../../pg-tide-relay/tests/pg_inbox_sink_test.rs)
-- [x] auth tests: [publisher_acl_test.rs](../../../pg-tide-relay/tests/publisher_acl_test.rs)
-- [x] tls tests: [tls_test.rs](../../../pg-tide-relay/tests/tls_test.rs)
-- [x] redaction tests: [mod.rs](../../../pg-tide-relay/src/config/mod.rs)
-- [x] metrics evidence: [metrics.rs](../../../pg-tide-relay/src/metrics.rs)
-- [x] runbooks: [runbook-relay-upgrade.md](../operations/runbook-relay-upgrade.md)
-- [x] upgrade tests: [v042_validation_test.rs](../../../pg-tide-relay/tests/v042_validation_test.rs)
+- [x] postgresql-inbox-round-trip (integration, sink): pg-tide-relay/tests/pg_inbox_sink_test.rs::test_pg_inbox_sink_round_trip in `test-integration-relay`
+- [x] postgresql-inbox-deduplication (integration, sink): pg-tide-relay/tests/inbox_sink_test.rs::test_inbox_deduplication in `test-integration-relay`
 
-## NATS JetStream (`nats`)
+## NATS JetStream outbound (`nats-jetstream-sink`)
 
 - Maturity: **supported**
 - Owner: @grove
-- [x] contract tests: [nats_test.rs](../../../pg-tide-relay/tests/nats_test.rs)
-- [x] integration tests: [nats_test.rs](../../../pg-tide-relay/tests/nats_test.rs)
-- [x] e2e tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] failure before publish tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] failure after publish tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] restart tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] duplicate tests: [public_api_outbox_to_nats_e2e.rs](../../../pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs)
-- [x] auth tests: [tls_test.rs](../../../pg-tide-relay/tests/tls_test.rs)
-- [x] tls tests: [tls_test.rs](../../../pg-tide-relay/tests/tls_test.rs)
-- [x] redaction tests: [mod.rs](../../../pg-tide-relay/src/config/mod.rs)
-- [x] metrics evidence: [metrics.rs](../../../pg-tide-relay/src/metrics.rs)
-- [x] runbooks: [runbook-crash-recovery.md](../operations/runbook-crash-recovery.md)
-- [x] upgrade tests: [v042_validation_test.rs](../../../pg-tide-relay/tests/v042_validation_test.rs)
+- [x] nats-jetstream-publish-ack (e2e, sink): pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs::public_api_outbox_to_nats_e2e in `public-api-nats-e2e`
 
-## HTTP webhook (`webhook`)
+## NATS inbound (`nats-source`)
 
 - Maturity: **preview**
 - Owner: @grove
-- [x] contract tests: [webhook_test.rs](../../../pg-tide-relay/tests/webhook_test.rs), [webhook_sig_test.rs](../../../pg-tide-relay/tests/webhook_sig_test.rs)
+- [x] contract tests: [nats_test.rs](../../../pg-tide-relay/tests/nats_test.rs)
 - [ ] integration tests: —
 - [ ] e2e tests: —
 - [ ] failure before publish tests: —
@@ -110,7 +75,37 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 - [ ] runbooks: —
 - [ ] upgrade tests: —
 
-## Apache Kafka (`kafka`)
+## HTTPS webhook outbound (`webhook-sink`)
+
+- Maturity: **supported**
+- Owner: @grove
+- [x] webhook-http-post (integration, sink): pg-tide-relay/tests/webhook_test.rs::test_webhook_sink_posts_messages in `test-integration`
+
+## Webhook inbound (`webhook-source`)
+
+- Maturity: **preview**
+- Owner: @grove
+- [x] contract tests: [webhook_sig_test.rs](../../../pg-tide-relay/tests/webhook_sig_test.rs)
+- [ ] integration tests: —
+- [ ] e2e tests: —
+- [ ] failure before publish tests: —
+- [ ] failure after publish tests: —
+- [ ] restart tests: —
+- [ ] duplicate tests: —
+- [ ] auth tests: —
+- [ ] tls tests: —
+- [ ] redaction tests: —
+- [x] metrics evidence: [metrics.rs](../../../pg-tide-relay/src/metrics.rs)
+- [ ] runbooks: —
+- [ ] upgrade tests: —
+
+## Apache Kafka outbound (`kafka-sink`)
+
+- Maturity: **supported**
+- Owner: @grove
+- [x] kafka-public-api-delivery (e2e, sink): pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs::public_api_outbox_to_kafka_e2e in `public-api-kafka-e2e`
+
+## Apache Kafka inbound (`kafka-source`)
 
 - Maturity: **preview**
 - Owner: @grove

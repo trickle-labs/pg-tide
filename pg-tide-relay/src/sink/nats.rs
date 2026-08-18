@@ -47,6 +47,43 @@ impl SubjectSpec {
             SubjectSpec::Template(t) => render_subject(t, msg),
         }
     }
+
+    pub fn validate(&self) -> Result<(), RelayError> {
+        let subject = match self {
+            Self::Fixed(value) | Self::Template(value) => value,
+        };
+        validate_subject(subject)
+    }
+}
+
+pub fn validate_subject(subject: &str) -> Result<(), RelayError> {
+    let tokens: Vec<&str> = subject.split('.').collect();
+    if subject.is_empty() || tokens.iter().any(|token| token.is_empty()) {
+        return Err(RelayError::config(
+            "nats subject must not contain empty tokens",
+        ));
+    }
+    for (index, token) in tokens.iter().enumerate() {
+        if token
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+        {
+            return Err(RelayError::config(
+                "nats subject contains whitespace or control characters",
+            ));
+        }
+        if token.contains('*') && *token != "*" {
+            return Err(RelayError::config(
+                "nats wildcard must occupy a complete token",
+            ));
+        }
+        if token.contains('>') && (*token != ">" || index + 1 != tokens.len()) {
+            return Err(RelayError::config(
+                "nats terminal wildcard must be the final token",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Render a NATS subject template from a message's metadata (ADR-011 §13).
@@ -78,6 +115,80 @@ pub fn render_subject(template: &str, msg: &RelayMessage) -> String {
 use async_nats::jetstream;
 
 #[cfg(feature = "nats")]
+fn connect_error(error: async_nats::ConnectError) -> RelayError {
+    use crate::error::{ConnectorFailureCode, RetryClass};
+
+    let (code, class, summary) = match error.kind() {
+        async_nats::ConnectErrorKind::Authentication => (
+            ConnectorFailureCode::Authentication,
+            RetryClass::Permanent,
+            "NATS authentication rejected",
+        ),
+        async_nats::ConnectErrorKind::AuthorizationViolation => (
+            ConnectorFailureCode::Authorization,
+            RetryClass::Permanent,
+            "NATS authorization rejected",
+        ),
+        async_nats::ConnectErrorKind::Tls => (
+            ConnectorFailureCode::TlsVerification,
+            RetryClass::Permanent,
+            "NATS TLS setup failed",
+        ),
+        async_nats::ConnectErrorKind::TimedOut => (
+            ConnectorFailureCode::Timeout,
+            RetryClass::Transient,
+            "NATS connection timed out",
+        ),
+        async_nats::ConnectErrorKind::ServerParse => (
+            ConnectorFailureCode::InvalidDestination,
+            RetryClass::Permanent,
+            "NATS server address is invalid",
+        ),
+        _ => (
+            ConnectorFailureCode::Unavailable,
+            RetryClass::Transient,
+            "NATS is unavailable",
+        ),
+    };
+    RelayError::connector_failure("nats", code, class, summary)
+}
+
+#[cfg(feature = "nats")]
+fn publish_error(error: jetstream::context::PublishError) -> RelayError {
+    use crate::error::{ConnectorFailureCode, RetryClass};
+
+    let (code, class, summary) = match error.kind() {
+        jetstream::context::PublishErrorKind::StreamNotFound => (
+            ConnectorFailureCode::InvalidDestination,
+            RetryClass::Permanent,
+            "NATS JetStream stream was not found",
+        ),
+        jetstream::context::PublishErrorKind::TimedOut => (
+            ConnectorFailureCode::Timeout,
+            RetryClass::Transient,
+            "NATS JetStream publish timed out",
+        ),
+        jetstream::context::PublishErrorKind::MaxAckPending => (
+            ConnectorFailureCode::Throttled,
+            RetryClass::Transient,
+            "NATS JetStream acknowledgment capacity is full",
+        ),
+        jetstream::context::PublishErrorKind::WrongLastMessageId
+        | jetstream::context::PublishErrorKind::WrongLastSequence => (
+            ConnectorFailureCode::ProtocolRejection,
+            RetryClass::Permanent,
+            "NATS JetStream publish was rejected",
+        ),
+        _ => (
+            ConnectorFailureCode::Unavailable,
+            RetryClass::Transient,
+            "NATS JetStream publish failed",
+        ),
+    };
+    RelayError::connector_failure("nats", code, class, summary)
+}
+
+#[cfg(feature = "nats")]
 pub struct NatsSink {
     js: jetstream::Context,
     subject: SubjectSpec,
@@ -95,17 +206,13 @@ impl NatsSink {
         subject: Option<&str>,
         subject_template: Option<&str>,
     ) -> Result<Self, RelayError> {
-        let client = async_nats::connect(url)
-            .await
-            .map_err(|e| RelayError::sink("nats", e))?;
+        let client = async_nats::connect(url).await.map_err(connect_error)?;
         let js = jetstream::new(client);
-        Ok(Self {
-            js,
-            subject: SubjectSpec::from_config(subject, subject_template),
-        })
+        let subject = SubjectSpec::from_config(subject, subject_template);
+        subject.validate()?;
+        Ok(Self { js, subject })
     }
 }
-
 #[cfg(feature = "nats")]
 #[async_trait::async_trait]
 impl super::Sink for NatsSink {
@@ -137,16 +244,15 @@ impl super::Sink for NatsSink {
             self.js
                 .publish_with_headers(subject, headers, payload.into())
                 .await
-                .map_err(|e| RelayError::sink("nats", e))?
+                .map_err(publish_error)?
                 .await
-                .map_err(|e| RelayError::sink("nats", e))?;
+                .map_err(publish_error)?;
         }
         Ok(())
     }
 
     async fn is_healthy(&mut self) -> bool {
-        // Check NATS connection by getting server info.
-        true // JetStream context doesn't expose a direct health check.
+        self.js.query_account().await.is_ok()
     }
 
     async fn close(&mut self) -> Result<(), RelayError> {
@@ -234,5 +340,14 @@ mod tests {
         let spec = SubjectSpec::from_config(None, Some("o.{outbox_id}"));
         let m = msg_with("orders", "insert", 42, None);
         assert_eq!(spec.render(&m), "o.42");
+    }
+
+    #[test]
+    fn rejects_invalid_subject_wildcards() {
+        assert!(validate_subject("orders.*created").is_err());
+        assert!(validate_subject("orders.*.created").is_ok());
+        assert!(validate_subject("orders.>").is_ok());
+        assert!(validate_subject("orders.>.created").is_err());
+        assert!(validate_subject("orders.created").is_ok());
     }
 }

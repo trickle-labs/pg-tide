@@ -108,45 +108,48 @@ Release artifacts and Docker images are signed with [sigstore/cosign](https://gi
 <!-- BEGIN GENERATED CONNECTORS -->
 ## Connector surface
 
-The registry contains 34 selectable or documented surfaces: 3 supported, 3 preview, and 27 experimental.
+The registry contains 37 selectable or documented surfaces: 5 supported, 4 preview, and 27 experimental.
 Diagnostics are labeled separately and are not production integrations.
 
 | Connector | Direction | Maturity | Core | Tested versions | Owner | Evidence |
 |---|---|---|---:|---|---|---|
-| [PostgreSQL native outbox](docs/src/support/connector-compatibility.md#postgresql-outbox) | source | supported | yes | PostgreSQL 18 | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
-| [pg_trickle outbox compatibility](docs/src/support/connector-compatibility.md#pg-trickle-compatibility) | source | preview | no | unknown | @grove | [outbox_source_test.rs](pg-tide-relay/tests/outbox_source_test.rs) |
+| [PostgreSQL native outbox](docs/src/support/connector-compatibility.md#postgresql-outbox) | source | supported | yes | PostgreSQL 18 | @grove | [outbox_source_test.rs](pg-tide-relay/tests/outbox_source_test.rs) |
+| [pg_trickle outbox compatibility](docs/src/support/connector-compatibility.md#pg-trickle-compatibility) | source | preview | no | unknown | @grove | [outbox_source_test.rs](pg-tide-relay/tests/outbox_source_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
 | [stdin, stdout, and file diagnostics](docs/src/support/connector-compatibility.md#diagnostics) | bidirectional | supported | yes | local process | @grove | [postgres_insert_microbenchmark.rs](pg-tide-relay/tests/postgres_insert_microbenchmark.rs) |
-| [PostgreSQL inbox](docs/src/support/connector-compatibility.md#postgresql-inbox) | sink | supported | yes | PostgreSQL 18 | @grove | [pg_inbox_sink_test.rs](pg-tide-relay/tests/pg_inbox_sink_test.rs) |
-| [NATS JetStream](docs/src/support/connector-compatibility.md#nats) | bidirectional | supported | yes | nats:latest with JetStream | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
-| [HTTP webhook](docs/src/support/connector-compatibility.md#webhook) | bidirectional | preview | no | HTTP/1.1 in-process mock | @grove | [webhook_test.rs](pg-tide-relay/tests/webhook_test.rs), [webhook_sig_test.rs](pg-tide-relay/tests/webhook_sig_test.rs) |
-| [Apache Kafka](docs/src/support/connector-compatibility.md#kafka) | bidirectional | preview | no | unknown | @grove | [kafka_test.rs](pg-tide-relay/tests/kafka_test.rs) |
-| [Redis Streams](docs/src/support/connector-compatibility.md#redis) | bidirectional | experimental | no | unknown | @grove | [redis_test.rs](pg-tide-relay/tests/redis_test.rs) |
-| [Amazon SQS](docs/src/support/connector-compatibility.md#sqs) | bidirectional | experimental | no | unknown | @grove | [sqs_test.rs](pg-tide-relay/tests/sqs_test.rs) |
-| [RabbitMQ](docs/src/support/connector-compatibility.md#rabbitmq) | bidirectional | experimental | no | unknown | @grove | [rabbitmq_test.rs](pg-tide-relay/tests/rabbitmq_test.rs) |
-| [Google Pub/Sub](docs/src/support/connector-compatibility.md#pubsub) | bidirectional | experimental | no | unknown | @grove | [pubsub_test.rs](pg-tide-relay/tests/pubsub_test.rs) |
-| [Amazon Kinesis](docs/src/support/connector-compatibility.md#kinesis) | bidirectional | experimental | no | unknown | @grove | [kinesis_test.rs](pg-tide-relay/tests/kinesis_test.rs) |
-| [Azure Service Bus](docs/src/support/connector-compatibility.md#servicebus) | bidirectional | experimental | no | unknown | @grove | [servicebus_test.rs](pg-tide-relay/tests/servicebus_test.rs) |
-| [MQTT v5](docs/src/support/connector-compatibility.md#mqtt) | bidirectional | experimental | no | unknown | @grove | [mqtt_test.rs](pg-tide-relay/tests/mqtt_test.rs) |
-| [Azure Event Hubs](docs/src/support/connector-compatibility.md#eventhubs) | bidirectional | experimental | no | unknown | @grove | [eventhubs_test.rs](pg-tide-relay/tests/eventhubs_test.rs) |
-| [Elasticsearch](docs/src/support/connector-compatibility.md#elasticsearch) | sink | experimental | no | unknown | @grove | [elasticsearch_test.rs](pg-tide-relay/tests/elasticsearch_test.rs) |
-| [Object storage](docs/src/support/connector-compatibility.md#object-storage) | sink | experimental | no | unknown | @grove | [object_storage_test.rs](pg-tide-relay/tests/object_storage_test.rs) |
-| [Slack](docs/src/support/connector-compatibility.md#slack) | sink | experimental | no | unknown | @grove | [slack_test.rs](pg-tide-relay/tests/slack_test.rs) |
-| [Discord](docs/src/support/connector-compatibility.md#discord) | sink | experimental | no | unknown | @grove | [discord_test.rs](pg-tide-relay/tests/discord_test.rs) |
-| [PagerDuty](docs/src/support/connector-compatibility.md#pagerduty) | sink | experimental | no | unknown | @grove | [pagerduty_test.rs](pg-tide-relay/tests/pagerduty_test.rs) |
-| [Apache Arrow Flight](docs/src/support/connector-compatibility.md#arrow-flight) | sink | experimental | no | unknown | @grove | [arrow_flight_test.rs](pg-tide-relay/tests/arrow_flight_test.rs) |
-| [Singer](docs/src/support/connector-compatibility.md#singer) | bidirectional | experimental | no | unknown | @grove | [singer_test.rs](pg-tide-relay/tests/singer_test.rs) |
-| [Airbyte](docs/src/support/connector-compatibility.md#airbyte) | bidirectional | experimental | no | unknown | @grove | [airbyte_test.rs](pg-tide-relay/tests/airbyte_test.rs) |
-| [ClickHouse](docs/src/support/connector-compatibility.md#clickhouse) | sink | experimental | no | unknown | @grove | [clickhouse_test.rs](pg-tide-relay/tests/clickhouse_test.rs) |
-| [MongoDB](docs/src/support/connector-compatibility.md#mongodb) | sink | experimental | no | unknown | @grove | [mongodb_test.rs](pg-tide-relay/tests/mongodb_test.rs) |
-| [Google BigQuery](docs/src/support/connector-compatibility.md#bigquery) | sink | experimental | no | unknown | @grove | [bigquery_test.rs](pg-tide-relay/tests/bigquery_test.rs) |
-| [Snowflake](docs/src/support/connector-compatibility.md#snowflake) | sink | experimental | no | unknown | @grove | [snowflake_test.rs](pg-tide-relay/tests/snowflake_test.rs) |
-| [Delta Lake](docs/src/support/connector-compatibility.md#delta) | sink | experimental | no | unknown | @grove | [delta_test.rs](pg-tide-relay/tests/delta_test.rs) |
-| [Apache Iceberg](docs/src/support/connector-compatibility.md#iceberg) | sink | experimental | no | unknown | @grove | [iceberg_test.rs](pg-tide-relay/tests/iceberg_test.rs) |
-| [DuckLake](docs/src/support/connector-compatibility.md#ducklake) | sink | experimental | no | unknown | @grove | [ducklake_test.rs](pg-tide-relay/tests/ducklake_test.rs) |
-| [RockLake](docs/src/support/connector-compatibility.md#rocklake) | bidirectional | experimental | no | RockLake v0.27.14 | @grove | [rocklake_test.rs](pg-tide-relay/tests/rocklake_test.rs) |
-| [Fan-in compatibility surface](docs/src/support/connector-compatibility.md#fan-in) | source | experimental | no | disabled | @grove | — |
-| [DuckLake reverse source (unavailable)](docs/src/support/connector-compatibility.md#ducklake-reverse) | unavailable | experimental | no | not registered | @grove | — |
-| [PostgreSQL WAL logical source (groundwork)](docs/src/support/connector-compatibility.md#wal-logical-source) | unavailable | experimental | no | not registered | @grove | — |
+| [PostgreSQL inbox](docs/src/support/connector-compatibility.md#postgresql-inbox) | sink | supported | yes | PostgreSQL 18 | @grove | [pg_inbox_sink_test.rs](pg-tide-relay/tests/pg_inbox_sink_test.rs), [inbox_sink_test.rs](pg-tide-relay/tests/inbox_sink_test.rs) |
+| [NATS JetStream outbound](docs/src/support/connector-compatibility.md#nats-jetstream-sink) | sink | supported | yes | NATS Server 2.11.0 with JetStream | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
+| [NATS inbound](docs/src/support/connector-compatibility.md#nats-source) | source | preview | no | NATS Server 2.11.0 with JetStream | @grove | [nats_test.rs](pg-tide-relay/tests/nats_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [HTTPS webhook outbound](docs/src/support/connector-compatibility.md#webhook-sink) | sink | supported | yes | HTTP/1.1 with TLS 1.3 | @grove | [webhook_test.rs](pg-tide-relay/tests/webhook_test.rs) |
+| [Webhook inbound](docs/src/support/connector-compatibility.md#webhook-source) | source | preview | no | HTTP/1.1 in-process fixture | @grove | [webhook_sig_test.rs](pg-tide-relay/tests/webhook_sig_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Apache Kafka outbound](docs/src/support/connector-compatibility.md#kafka-sink) | sink | supported | no | Apache Kafka 3.8.0 KRaft | @grove | [public_api_outbox_to_kafka_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs) |
+| [Apache Kafka inbound](docs/src/support/connector-compatibility.md#kafka-source) | source | preview | no | Apache Kafka 3.8.0 KRaft | @grove | [kafka_test.rs](pg-tide-relay/tests/kafka_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Redis Streams](docs/src/support/connector-compatibility.md#redis) | bidirectional | experimental | no | unknown | @grove | [redis_test.rs](pg-tide-relay/tests/redis_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Amazon SQS](docs/src/support/connector-compatibility.md#sqs) | bidirectional | experimental | no | unknown | @grove | [sqs_test.rs](pg-tide-relay/tests/sqs_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [RabbitMQ](docs/src/support/connector-compatibility.md#rabbitmq) | bidirectional | experimental | no | unknown | @grove | [rabbitmq_test.rs](pg-tide-relay/tests/rabbitmq_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Google Pub/Sub](docs/src/support/connector-compatibility.md#pubsub) | bidirectional | experimental | no | unknown | @grove | [pubsub_test.rs](pg-tide-relay/tests/pubsub_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Amazon Kinesis](docs/src/support/connector-compatibility.md#kinesis) | bidirectional | experimental | no | unknown | @grove | [kinesis_test.rs](pg-tide-relay/tests/kinesis_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Azure Service Bus](docs/src/support/connector-compatibility.md#servicebus) | bidirectional | experimental | no | unknown | @grove | [servicebus_test.rs](pg-tide-relay/tests/servicebus_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [MQTT v5](docs/src/support/connector-compatibility.md#mqtt) | bidirectional | experimental | no | unknown | @grove | [mqtt_test.rs](pg-tide-relay/tests/mqtt_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Azure Event Hubs](docs/src/support/connector-compatibility.md#eventhubs) | bidirectional | experimental | no | unknown | @grove | [eventhubs_test.rs](pg-tide-relay/tests/eventhubs_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Elasticsearch](docs/src/support/connector-compatibility.md#elasticsearch) | sink | experimental | no | unknown | @grove | [elasticsearch_test.rs](pg-tide-relay/tests/elasticsearch_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Object storage](docs/src/support/connector-compatibility.md#object-storage) | sink | experimental | no | unknown | @grove | [object_storage_test.rs](pg-tide-relay/tests/object_storage_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Slack](docs/src/support/connector-compatibility.md#slack) | sink | experimental | no | unknown | @grove | [slack_test.rs](pg-tide-relay/tests/slack_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Discord](docs/src/support/connector-compatibility.md#discord) | sink | experimental | no | unknown | @grove | [discord_test.rs](pg-tide-relay/tests/discord_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [PagerDuty](docs/src/support/connector-compatibility.md#pagerduty) | sink | experimental | no | unknown | @grove | [pagerduty_test.rs](pg-tide-relay/tests/pagerduty_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Apache Arrow Flight](docs/src/support/connector-compatibility.md#arrow-flight) | sink | experimental | no | unknown | @grove | [arrow_flight_test.rs](pg-tide-relay/tests/arrow_flight_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Singer](docs/src/support/connector-compatibility.md#singer) | bidirectional | experimental | no | unknown | @grove | [singer_test.rs](pg-tide-relay/tests/singer_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Airbyte](docs/src/support/connector-compatibility.md#airbyte) | bidirectional | experimental | no | unknown | @grove | [airbyte_test.rs](pg-tide-relay/tests/airbyte_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [ClickHouse](docs/src/support/connector-compatibility.md#clickhouse) | sink | experimental | no | unknown | @grove | [clickhouse_test.rs](pg-tide-relay/tests/clickhouse_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [MongoDB](docs/src/support/connector-compatibility.md#mongodb) | sink | experimental | no | unknown | @grove | [mongodb_test.rs](pg-tide-relay/tests/mongodb_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Google BigQuery](docs/src/support/connector-compatibility.md#bigquery) | sink | experimental | no | unknown | @grove | [bigquery_test.rs](pg-tide-relay/tests/bigquery_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Snowflake](docs/src/support/connector-compatibility.md#snowflake) | sink | experimental | no | unknown | @grove | [snowflake_test.rs](pg-tide-relay/tests/snowflake_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Delta Lake](docs/src/support/connector-compatibility.md#delta) | sink | experimental | no | unknown | @grove | [delta_test.rs](pg-tide-relay/tests/delta_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Apache Iceberg](docs/src/support/connector-compatibility.md#iceberg) | sink | experimental | no | unknown | @grove | [iceberg_test.rs](pg-tide-relay/tests/iceberg_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [DuckLake](docs/src/support/connector-compatibility.md#ducklake) | sink | experimental | no | unknown | @grove | [ducklake_test.rs](pg-tide-relay/tests/ducklake_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [RockLake](docs/src/support/connector-compatibility.md#rocklake) | bidirectional | experimental | no | RockLake v0.27.14 | @grove | [rocklake_test.rs](pg-tide-relay/tests/rocklake_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [Fan-in compatibility surface](docs/src/support/connector-compatibility.md#fan-in) | source | experimental | no | disabled | @grove | [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [DuckLake reverse source (unavailable)](docs/src/support/connector-compatibility.md#ducklake-reverse) | unavailable | experimental | no | not registered | @grove | [metrics.rs](pg-tide-relay/src/metrics.rs) |
+| [PostgreSQL WAL logical source (groundwork)](docs/src/support/connector-compatibility.md#wal-logical-source) | source | experimental | no | not registered | @grove | [metrics.rs](pg-tide-relay/src/metrics.rs) |
 <!-- END GENERATED CONNECTORS -->
 
 ## Wire Formats

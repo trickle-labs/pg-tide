@@ -27,7 +27,9 @@ impl PgInboxSink {
         // v0.18.0: Defence-in-depth identifier validation (overall_assessment_3 §2.2).
         crate::config::validate_relay_identifier(&table)?;
         // v0.15.0: Use pg_tls::connect to honour sslmode from the URL.
-        let (client, conn) = crate::pg_tls::connect(postgres_url).await?;
+        let (client, conn) = crate::pg_tls::connect(postgres_url)
+            .await
+            .map_err(|error| error.into_connector_failure("postgresql-inbox"))?;
 
         tokio::spawn(async move {
             if let Err(e) = conn.await {
@@ -95,7 +97,7 @@ impl super::Sink for PgInboxSink {
                 &[&event_ids, &sources, &payload_params, &header_params],
             )
             .await
-            .map_err(RelayError::from)?;
+            .map_err(|error| RelayError::postgres_connector_failure("postgresql-inbox", &error))?;
 
         self.dedup_count += (messages.len() as u64).saturating_sub(inserted);
         Ok(())

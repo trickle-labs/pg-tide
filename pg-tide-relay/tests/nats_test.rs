@@ -21,7 +21,7 @@ async fn test_nats_transport_delivers_published_messages() {
     use testcontainers::runners::AsyncRunner;
 
     // Start NATS container.
-    let nats_image = testcontainers::GenericImage::new("nats", "latest")
+    let nats_image = testcontainers::GenericImage::new("nats", "2.11.0")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(4222));
     let nats = nats_image
         .start()
@@ -87,7 +87,7 @@ async fn test_nats_transport_delivers_published_messages() {
 async fn test_inbox_deduplicates_nats_shaped_payload() {
     use testcontainers::runners::AsyncRunner;
 
-    let nats_image = testcontainers::GenericImage::new("nats", "latest")
+    let nats_image = testcontainers::GenericImage::new("nats", "2.11.0")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(4222));
     let nats = nats_image.start().await.expect("failed to start NATS");
 

@@ -27,6 +27,14 @@ groups:
           summary: "pg-tide publish errors for {{ $labels.pipeline }}"
           description: "Inspect the redacted connector error and credentials without disabling TLS; see docs/src/operations/runbooks.md#sink-authentication-failure."
           runbook_url: "https://github.com/trickle-labs/pg_tide/blob/main/docs/src/operations/runbooks.md#sink-authentication-failure"
+      - alert: PgTideConnectorFailures
+        expr: rate(pg_tide_relay_connector_failures_total[5m]) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "pg-tide bounded connector failures for {{ $labels.pipeline }}"
+          description: "Use status and the connector runbook for code {{ $labels.code }}; upstream exception text is intentionally not exposed."
+          runbook_url: "https://github.com/trickle-labs/pg_tide/blob/main/docs/src/operations/runbooks.md#sink-authentication-failure"
       - alert: PgTideDLQDepthHigh
         expr: pg_tide_relay_dlq_depth > 100
         for: 10m

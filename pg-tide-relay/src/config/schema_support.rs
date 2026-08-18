@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::descriptors;
 use crate::error::RelayError;
 
 pub const PIPELINE_SCHEMA_VERSION: u8 = 1;
@@ -80,8 +81,24 @@ impl PipelineDocument {
         }
         validate_connector(name, "source_type", &self.source_type)?;
         validate_connector(name, "sink_type", &self.sink_type)?;
-        validate_connector_fields(name, "source", &self.source)?;
-        validate_connector_fields(name, "sink", &self.sink)?;
+        validate_connector_fields(name, "source", &self.source_type, &self.source)?;
+        validate_connector_fields(name, "sink", &self.sink_type, &self.sink)?;
+        validate_supported_sink(name, &self.sink_type, &self.sink)?;
+        if let Some(size) = self.batch_size {
+            if let Some(descriptor) = descriptors::sink_type_to_descriptor(&self.sink_type) {
+                if let Some(capabilities) = descriptor.capabilities {
+                    if size > i64::from(capabilities.max_batch_size) {
+                        return Err(invalid(
+                            name,
+                            format!(
+                                "batch_size {size} exceeds {} maximum for sink_type '{}'",
+                                capabilities.max_batch_size, self.sink_type
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
         if let Some(retry) = &self.retry {
             reject_keys(name, "retry", retry, &["max_retries", "backoff_ms"])?;
             if let Some(value) = retry.get("max_retries") {
@@ -133,46 +150,13 @@ fn invalid(name: &str, reason: impl Into<String>) -> RelayError {
     }
 }
 
-const BUILTIN_CONNECTORS: &[&str] = &[
-    "airbyte",
-    "bigquery",
-    "clickhouse",
-    "delta",
-    "discord",
-    "ducklake",
-    "elasticsearch",
-    "eventhubs",
-    "fanin",
-    "file",
-    "iceberg",
-    "inbox",
-    "kafka",
-    "kinesis",
-    "mongodb",
-    "mqtt",
-    "nats",
-    "object_storage",
-    "outbox",
-    "pagerduty",
-    "pg_logical",
-    "pg_outbox",
-    "pg_trickle_outbox",
-    "pubsub",
-    "rabbitmq",
-    "redis",
-    "rocklake",
-    "servicebus",
-    "singer",
-    "slack",
-    "snowflake",
-    "sqs",
-    "stdin",
-    "stdout",
-    "webhook",
-];
-
 fn validate_connector(name: &str, field: &str, connector: &str) -> Result<(), RelayError> {
-    if BUILTIN_CONNECTORS.contains(&connector) {
+    let known = match field {
+        "source_type" => descriptors::source_type_to_descriptor(connector),
+        "sink_type" => descriptors::sink_type_to_descriptor(connector),
+        _ => None,
+    };
+    if known.is_some() {
         return Ok(());
     }
     Err(invalid(
@@ -182,28 +166,9 @@ fn validate_connector(name: &str, field: &str, connector: &str) -> Result<(), Re
 }
 
 pub fn connector_available(connector: &str) -> bool {
-    match connector {
-        "outbox" | "pg_trickle_outbox" | "inbox" | "pg_outbox" | "stdin" | "fanin" => true,
-        "stdout" | "file" => cfg!(feature = "stdout"),
-        "nats" => cfg!(feature = "nats"),
-        "webhook" => cfg!(feature = "webhook"),
-        "kafka" => cfg!(feature = "kafka"),
-        "redis" => cfg!(feature = "redis"),
-        "sqs" => cfg!(feature = "sqs"),
-        "rabbitmq" => cfg!(feature = "rabbitmq"),
-        "pubsub" => cfg!(feature = "pubsub"),
-        "kinesis" => cfg!(feature = "kinesis"),
-        "servicebus" => cfg!(feature = "servicebus"),
-        "mqtt" => cfg!(feature = "mqtt"),
-        "eventhubs" => cfg!(feature = "eventhubs"),
-        "singer" => cfg!(feature = "singer"),
-        "airbyte" => cfg!(feature = "airbyte"),
-        "rocklake" => cfg!(feature = "rocklake"),
-        "pg_logical" => cfg!(feature = "wal-source"),
-        "bigquery" | "clickhouse" | "discord" | "ducklake" | "elasticsearch" | "iceberg"
-        | "mongodb" | "object_storage" | "pagerduty" | "slack" | "snowflake" | "delta" => false,
-        _ => false,
-    }
+    descriptors::source_type_to_descriptor(connector)
+        .or_else(|| descriptors::sink_type_to_descriptor(connector))
+        .is_some_and(descriptors::is_available)
 }
 
 const CONNECTOR_FIELDS: &[&str] = &[
@@ -290,6 +255,7 @@ const CONNECTOR_FIELDS: &[&str] = &[
     "source_image",
     "source_name",
     "snapshot_poll_interval_ms",
+    "ssrf_protection",
     "storage_provider",
     "stream",
     "stream_key",
@@ -324,9 +290,176 @@ const CONNECTOR_FIELDS: &[&str] = &[
 fn validate_connector_fields(
     name: &str,
     field: &str,
+    connector: &str,
     values: &Map<String, Value>,
 ) -> Result<(), RelayError> {
+    if let Some(descriptor) = descriptors::source_type_to_descriptor(connector)
+        .or_else(|| descriptors::sink_type_to_descriptor(connector))
+    {
+        if descriptor.capabilities.is_some() {
+            return reject_keys(name, field, values, descriptor.config_fields);
+        }
+    }
     reject_keys(name, field, values, CONNECTOR_FIELDS)
+}
+
+fn validate_supported_sink(
+    name: &str,
+    sink_type: &str,
+    values: &Map<String, Value>,
+) -> Result<(), RelayError> {
+    if !descriptors::is_supported_sink_type(sink_type) {
+        return Ok(());
+    }
+    match sink_type {
+        "inbox" => {
+            require_string_field(name, "sink.inbox", values, true)?;
+            optional_string_field(name, "sink.postgres_url", values)?;
+        }
+        "pg_outbox" => {
+            require_string_field(name, "sink.inbox", values, true)?;
+            require_string_field(name, "sink.postgres_url", values, true)?;
+        }
+        "nats" => {
+            require_string_field(name, "sink.url", values, true)?;
+            optional_string_field(name, "sink.subject", values)?;
+            optional_string_field(name, "sink.subject_template", values)?;
+            if values.contains_key("subject") && values.contains_key("subject_template") {
+                return Err(invalid(
+                    name,
+                    "sink.subject and sink.subject_template are mutually exclusive",
+                ));
+            }
+            for field in ["subject", "subject_template"] {
+                if let Some(value) = values.get(field) {
+                    validate_destination_text(name, &format!("sink.{field}"), value)?;
+                    #[cfg(feature = "nats")]
+                    if let Some(subject) = value.as_str() {
+                        crate::sink::nats::validate_subject(subject)
+                            .map_err(|error| invalid(name, error.to_string()))?;
+                    }
+                }
+            }
+        }
+        "kafka" => {
+            require_string_field(name, "sink.brokers", values, true)?;
+            if !values.contains_key("topic") && !values.contains_key("topic_template") {
+                return Err(invalid(
+                    name,
+                    "sink.topic or sink.topic_template is required",
+                ));
+            }
+            for field in ["topic", "topic_template"] {
+                if let Some(value) = values.get(field) {
+                    validate_destination_text(name, &format!("sink.{field}"), value)?;
+                }
+            }
+        }
+        "webhook" => {
+            let url = require_string_field(name, "sink.url", values, true)?;
+            let parsed = reqwest::Url::parse(url)
+                .map_err(|_| invalid(name, "sink.url must be a valid URL"))?;
+            let allow_http = values
+                .get("allow_http")
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .ok_or_else(|| invalid(name, "sink.allow_http must be a boolean"))
+                })
+                .transpose()?
+                .unwrap_or(false);
+            if parsed.scheme() != "https" && !(allow_http && parsed.scheme() == "http") {
+                return Err(invalid(
+                    name,
+                    "sink.url must use HTTPS unless sink.allow_http is true",
+                ));
+            }
+            if let Some(value) = values.get("timeout_secs") {
+                let timeout = value
+                    .as_i64()
+                    .ok_or_else(|| invalid(name, "sink.timeout_secs must be an integer"))?;
+                if !(1..=300).contains(&timeout) {
+                    return Err(invalid(name, "sink.timeout_secs must be between 1 and 300"));
+                }
+            }
+            optional_bool_field(name, "sink.ssrf_protection", values)?;
+            optional_bool_field(name, "sink.allow_http", values)?;
+            optional_string_field(name, "sink.signing_secret", values)?;
+            if let Some(algorithm) = values.get("signing_algorithm") {
+                let algorithm = algorithm
+                    .as_str()
+                    .ok_or_else(|| invalid(name, "sink.signing_algorithm must be a string"))?;
+                if algorithm != "hmac-sha256" {
+                    return Err(invalid(
+                        name,
+                        "sink.signing_algorithm must be 'hmac-sha256'",
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn require_string_field<'a>(
+    name: &str,
+    field: &str,
+    values: &'a Map<String, Value>,
+    non_empty: bool,
+) -> Result<&'a str, RelayError> {
+    let key = field.rsplit('.').next().unwrap_or(field);
+    let value = values
+        .get(key)
+        .ok_or_else(|| invalid(name, format!("{field} is required")))?;
+    let text = value
+        .as_str()
+        .ok_or_else(|| invalid(name, format!("{field} must be a string")))?;
+    if non_empty && text.trim().is_empty() {
+        return Err(invalid(name, format!("{field} must not be empty")));
+    }
+    Ok(text)
+}
+
+fn optional_string_field(
+    name: &str,
+    field: &str,
+    values: &Map<String, Value>,
+) -> Result<(), RelayError> {
+    let key = field.rsplit('.').next().unwrap_or(field);
+    if let Some(value) = values.get(key) {
+        value
+            .as_str()
+            .ok_or_else(|| invalid(name, format!("{field} must be a string")))?;
+    }
+    Ok(())
+}
+
+fn optional_bool_field(
+    name: &str,
+    field: &str,
+    values: &Map<String, Value>,
+) -> Result<(), RelayError> {
+    let key = field.rsplit('.').next().unwrap_or(field);
+    if let Some(value) = values.get(key) {
+        if !value.is_boolean() {
+            return Err(invalid(name, format!("{field} must be a boolean")));
+        }
+    }
+    Ok(())
+}
+
+fn validate_destination_text(name: &str, field: &str, value: &Value) -> Result<(), RelayError> {
+    let text = value
+        .as_str()
+        .ok_or_else(|| invalid(name, format!("{field} must be a string")))?;
+    if text.trim().is_empty() || text.chars().any(char::is_control) {
+        return Err(invalid(
+            name,
+            format!("{field} contains invalid destination text"),
+        ));
+    }
+    Ok(())
 }
 
 fn reject_keys(
@@ -406,9 +539,9 @@ pub fn pipeline_schema() -> Value {
         "required": ["source_type", "source", "sink_type", "sink"],
         "properties": {
             "schema_version": {"const": 1, "type": "integer"},
-            "source_type": {"type": "string", "enum": BUILTIN_CONNECTORS},
+            "source_type": {"type": "string", "enum": descriptors::RUNTIME_TYPES},
             "source": {"$ref": "#/$defs/connector"},
-            "sink_type": {"type": "string", "enum": BUILTIN_CONNECTORS},
+            "sink_type": {"type": "string", "enum": descriptors::RUNTIME_TYPES},
             "sink": {"$ref": "#/$defs/connector"},
             "batch_size": {"type": "integer", "minimum": 1, "maximum": 1000000},
             "retry": {"$ref": "#/$defs/retry"},
@@ -535,6 +668,48 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("batch_size"));
+    }
+
+    #[test]
+    fn rejects_sink_batch_above_generated_capability() {
+        let err = PipelineDocument::parse(
+            "orders",
+            &json!({
+                "source_type": "outbox",
+                "source": {"outbox": "orders"},
+                "sink_type": "nats",
+                "sink": {"url": "nats://localhost"},
+                "batch_size": 101
+            }),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("maximum"));
+    }
+
+    #[test]
+    fn validates_canonical_postgres_alias_contracts() {
+        let err = PipelineDocument::parse(
+            "orders",
+            &json!({
+                "source_type": "outbox",
+                "source": {"outbox": "orders"},
+                "sink_type": "pg_outbox",
+                "sink": {"inbox": "notifications"}
+            }),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("postgres_url"));
+
+        PipelineDocument::parse(
+            "orders",
+            &json!({
+                "source_type": "outbox",
+                "source": {"outbox": "orders"},
+                "sink_type": "inbox",
+                "sink": {"inbox": "notifications"}
+            }),
+        )
+        .expect("canonical local inbox should not require a remote URL");
     }
 
     #[test]

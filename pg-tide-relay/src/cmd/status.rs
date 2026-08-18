@@ -3,6 +3,30 @@ use crate::cli::OutputFormat;
 use pg_tide_relay::pg_tls;
 use std::fmt;
 
+fn bounded_error_code(value: Option<String>) -> Option<String> {
+    value.filter(|code| {
+        matches!(
+            code.as_str(),
+            "unavailable"
+                | "timeout"
+                | "throttled"
+                | "authentication"
+                | "authorization"
+                | "tls_verification"
+                | "invalid_destination"
+                | "message_too_large"
+                | "protocol_rejection"
+                | "invalid_config"
+                | "shutdown"
+                | "unknown"
+        )
+    })
+}
+
+fn bounded_error_class(value: Option<String>) -> Option<String> {
+    value.filter(|class| matches!(class.as_str(), "transient" | "permanent"))
+}
+
 #[derive(Debug)]
 enum Value<T> {
     Known(T),
@@ -125,7 +149,9 @@ fn status_row_json(row: &tokio_postgres::Row) -> Result<serde_json::Value, tokio
     let health = row.try_get::<_, Option<String>>("health")?;
     let consumer_lag = row.try_get::<_, Option<i64>>("consumer_lag")?;
     let last_offset = row.try_get::<_, Option<i64>>("last_offset")?;
-    let last_error_code = row.try_get::<_, Option<String>>("last_error_code")?;
+    let last_error_code = bounded_error_code(row.try_get("last_error_code")?);
+    let last_error_component = row.try_get::<_, Option<String>>("last_error_component")?;
+    let last_error_class = bounded_error_class(row.try_get("last_error_class")?);
     let last_error_at = row.try_get::<_, Option<chrono::DateTime<chrono::Utc>>>("last_error_at")?;
     let retry_state = row.try_get::<_, Option<String>>("retry_state")?;
     let unresolved_dlq_depth = row.try_get::<_, Option<i64>>("unresolved_dlq_depth")?;
@@ -139,6 +165,8 @@ fn status_row_json(row: &tokio_postgres::Row) -> Result<serde_json::Value, tokio
         "last_offset": value_or_unknown(last_offset.map(serde_json::Value::from)),
         "last_checkpoint_success_at": checkpoint_value,
         "last_error_code": value_or_unknown(last_error_code.map(serde_json::Value::String)),
+        "last_error_component": value_or_unknown(last_error_component.map(serde_json::Value::String)),
+        "last_error_class": value_or_unknown(last_error_class.map(serde_json::Value::String)),
         "last_error_at": value_or_unknown(last_error_at.map(|at| serde_json::Value::String(at.to_rfc3339()))),
         "retry_attempt": retry,
         "retry_state": value_or_unknown(retry_state.map(serde_json::Value::String)),
@@ -194,7 +222,7 @@ async fn compatibility_rows(
                 CASE WHEN NOT enabled THEN 'disabled' ELSE 'unknown' END AS health,
                 NULL::bigint AS consumer_lag, o.last_change_id AS last_offset,
                 NULL::timestamptz AS last_checkpoint_success_at,
-                CASE WHEN s.last_error IS NULL THEN NULL ELSE 'error_present' END AS last_error_code,
+                CASE WHEN s.last_error IS NULL THEN NULL ELSE 'unknown' END AS last_error_code,
                 NULL::text AS last_error_component, s.error_class AS last_error_class,
                 CASE WHEN s.last_error IS NULL THEN NULL ELSE s.updated_at END AS last_error_at,
                 s.failure_count AS retry_attempt,
@@ -214,7 +242,7 @@ async fn compatibility_rows(
                 CASE WHEN NOT enabled THEN 'unowned' ELSE 'unknown' END,
                 CASE WHEN NOT enabled THEN 'disabled' ELSE 'unknown' END,
                 NULL::bigint, o.last_change_id, NULL::timestamptz,
-                CASE WHEN s.last_error IS NULL THEN NULL ELSE 'error_present' END,
+                CASE WHEN s.last_error IS NULL THEN NULL ELSE 'unknown' END,
                 NULL::text, s.error_class,
                 CASE WHEN s.last_error IS NULL THEN NULL ELSE s.updated_at END,
                 s.failure_count,
@@ -283,7 +311,12 @@ fn render_rows(all_rows: &[tokio_postgres::Row]) -> Result<(), Box<dyn std::erro
                 .try_get::<_, Option<String>>("last_error_code")
                 .ok()
                 .flatten()
-                .map_or("none".to_string(), |_| "present".to_string());
+                .unwrap_or_else(|| "none".to_string());
+            let error_class = row
+                .try_get::<_, Option<String>>("last_error_class")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "unknown".to_string());
             let ownership = row
                 .try_get::<_, Option<String>>("ownership")
                 .ok()
@@ -325,8 +358,8 @@ fn render_rows(all_rows: &[tokio_postgres::Row]) -> Result<(), Box<dyn std::erro
                 lag,
             );
             println!(
-                "  ownership={} health={} success={} error={} error_at={} retry={} dlq={}",
-                ownership, health, success, error, error_at, retry, dlq
+                "  ownership={} health={} success={} error={} class={} error_at={} retry={} dlq={}",
+                ownership, health, success, error, error_class, error_at, retry, dlq
             );
         }
 
