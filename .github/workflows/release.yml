@@ -28,6 +28,26 @@ jobs:
           fi
       - name: Check v1 machine-readable artifacts
         run: python3 scripts/check_v1_artifacts.py
+      - name: Check required-test inventory
+        run: python3 scripts/check_required_tests.py --check-manifest
+      - name: Check flake registry
+        run: python3 scripts/check_flake_registry.py --check
+      - name: Check pre-v1 baseline
+        run: python3 scripts/check_pre_v1_baseline.py --check
+      - name: Run authoritative extension clean room
+        run: GITHUB_JOB=extension-cleanroom python3 scripts/run_required_test.py extension-cleanroom
+      - name: Validate extension clean-room result
+        if: always()
+        run: python3 scripts/check_required_tests.py --check-results target/required-tests --ids extension-cleanroom
+      - name: Upload extension clean-room evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: extension-cleanroom-release-${{ github.run_id }}
+          path: |
+            target/extension-cleanroom/
+            target/required-tests/extension-cleanroom.*
+          if-no-files-found: warn
       - name: Verify release evidence and zero P0/P1 issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

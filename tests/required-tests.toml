@@ -1,0 +1,386 @@
+schema_version = 1
+inventory_version = "0.48.0"
+
+[[test]]
+id = "connector-registry-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "connector-registry"
+command = "python3 scripts/generate_connector_surface.py --check"
+targets = ["connectors.toml", "scripts/generate_connector_surface.py"]
+dependencies = ["python3"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "v1-contracts-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "v1-contracts"
+command = "just check-v1-contracts"
+targets = ["schemas/v1-contract-manifest.toml", "scripts/check_v1_artifacts.py"]
+dependencies = ["python3", "just"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "operational-contract-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "operational-contract"
+command = "python3 scripts/check_operational_budgets.py --check-config"
+targets = ["benchmarks/operational/budgets.toml", "benchmarks/operational/baseline.json"]
+dependencies = ["python3"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "clean-checkout-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "clean-checkout"
+command = "cargo test --workspace --exclude pg-tide-ext --locked --no-default-features --features experimental-full"
+targets = ["Cargo.lock", "pg-tide-relay"]
+dependencies = ["rust-1.97.1"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "lint-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "lint"
+command = "just lint"
+targets = ["pg-tide-relay", "rust-toolchain.toml"]
+dependencies = ["rust-1.97.1", "clippy", "rustfmt"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "lint-extension-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "lint-ext"
+command = "cargo clippy --package pg-tide-ext --all-targets --features pg18 -- -D warnings"
+targets = ["pg-tide-ext", "pg-tide-ext/Cargo.toml"]
+dependencies = ["rust-1.97.1", "postgresql-18", "cargo-pgrx-0.18.0"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "relay-unit-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "test-unit"
+command = "just test-unit"
+targets = ["pg-tide-relay/src", "pg-tide-relay/tests"]
+dependencies = ["rust-1.97.1"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "relay-integration-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "test-integration"
+command = "cargo test --package pg-tide-relay --test '*' --no-default-features --features experimental-full -- --test-threads=1"
+targets = ["pg-tide-relay/tests"]
+dependencies = ["rust-1.97.1", "docker"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "kafka-integration-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "test-integration-kafka"
+command = "cargo test --package pg-tide-relay --test kafka_test --no-default-features --features core-kafka -- --test-threads=1"
+targets = ["pg-tide-relay/tests/kafka_test.rs"]
+dependencies = ["rust-1.97.1", "docker"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "core-integration-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "test-integration-core"
+command = "cargo test --package pg-tide-relay --test migration_test -- --test-threads=1"
+targets = ["pg-tide-relay/tests/migration_test.rs", "pg-tide-relay/tests/sql_api_test.rs"]
+dependencies = ["rust-1.97.1", "docker"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "relay-behavior-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "test-integration-relay"
+command = "cargo test --package pg-tide-relay --test multi_pipeline_test -- --test-threads=1"
+targets = ["pg-tide-relay/tests/multi_pipeline_test.rs", "pg-tide-relay/tests/dlq_test.rs"]
+dependencies = ["rust-1.97.1", "docker"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "extension-cleanroom"
+level = "pr"
+triggers = ["pull_request", "push", "schedule", "release"]
+workflow = ".github/workflows/extension-cleanroom.yml"
+ci_job = "extension-cleanroom"
+command = "just test-extension-clean"
+targets = ["pg-tide-ext", "tests/extension-cleanroom/environment.toml"]
+dependencies = ["docker", "postgresql-18.0", "rust-1.97.1", "cargo-pgrx-0.18.0"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/extension-cleanroom/result.json", "target/required-tests/{id}.json"]
+
+[[test]]
+id = "public-api-nats-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "public-api-nats-e2e"
+command = "cargo test --package pg-tide-relay --test public_api_outbox_to_nats_e2e -- --ignored --test-threads=1 --nocapture"
+targets = ["pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
+dependencies = ["docker", "postgresql-18", "cargo-pgrx-0.18.0"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "public-api-kafka-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "public-api-kafka-e2e"
+command = "cargo test --package pg-tide-relay --test public_api_outbox_to_kafka_e2e --no-default-features --features core-kafka -- --ignored --test-threads=1 --nocapture"
+targets = ["pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs"]
+dependencies = ["docker", "postgresql-18", "cargo-pgrx-0.18.0"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "quickstart-sql-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "quickstart-sql"
+command = "python3 scripts/run_quickstart_sql.py README.md docs/src/getting-started/first-pipeline.md"
+targets = ["scripts/run_quickstart_sql.py", "README.md"]
+dependencies = ["python3", "postgresql-18", "cargo-pgrx-0.18.0"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "migration-guards-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "docs-migration-guards"
+command = "bash scripts/check_upgrade_completeness.sh"
+targets = ["scripts/check_upgrade_completeness.sh", "sql"]
+dependencies = ["bash"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "supply-chain-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "supply-chain"
+command = "cargo deny check"
+targets = ["deny.toml", "supply-chain/advisory-exceptions.toml"]
+dependencies = ["rust-1.97.1", "cargo-deny"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "operator-surfaces-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "operator-surfaces"
+command = "python3 scripts/check_observability.py"
+targets = ["scripts/check_observability.py", "docs/runbook-evidence.toml"]
+dependencies = ["python3", "bash"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "operational-reference-scheduled"
+level = "scheduled"
+triggers = ["schedule", "workflow_dispatch"]
+workflow = ".github/workflows/performance.yml"
+ci_job = "reference"
+command = "python3 scripts/check_operational_budgets.py --result target/operational-benchmarks/result.json"
+targets = ["scripts/check_operational_budgets.py", "benchmarks/operational/README.md"]
+dependencies = ["postgresql-18", "docker", "nats"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json", "target/operational-benchmarks/result.json"]
+
+[[test]]
+id = "operational-soak-scheduled"
+level = "scheduled"
+triggers = ["schedule", "workflow_dispatch"]
+workflow = ".github/workflows/performance.yml"
+ci_job = "soak"
+command = "python3 scripts/check_operational_budgets.py --result target/operational-benchmarks/soak-result.json"
+targets = ["scripts/check_operational_budgets.py", "pg-tide-relay/tests/operational_soak.rs"]
+dependencies = ["postgresql-18", "docker", "nats"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "release-evidence-release"
+level = "release"
+triggers = ["release"]
+workflow = ".github/workflows/release.yml"
+ci_job = "release-gates"
+command = "just check-v1-contracts"
+targets = ["release-evidence/v0.47.0-index.json", "release-evidence/v0.47.0-pilots.json", "release-evidence/v0.47.0-reviews.json"]
+dependencies = ["python3", "just", "gh"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "release-build-release"
+level = "release"
+triggers = ["release"]
+workflow = ".github/workflows/release.yml"
+ci_job = "build"
+command = "cargo build --package pg-tide-relay --release --no-default-features --features core"
+targets = ["Cargo.lock", "pg-tide-relay/src/main.rs"]
+dependencies = ["rust-1.97.1"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "release-container-scan"
+level = "release"
+triggers = ["release"]
+workflow = ".github/workflows/release.yml"
+ci_job = "trivy-scan"
+command = "docker build --file Dockerfile ."
+targets = ["Dockerfile", "pg-tide.example.toml"]
+dependencies = ["docker", "trivy"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "release-artifacts-release"
+level = "release"
+triggers = ["release"]
+workflow = ".github/workflows/release.yml"
+ci_job = "release"
+command = "python3 scripts/check_v1_artifacts.py"
+targets = ["scripts/check_v1_artifacts.py", "schemas"]
+dependencies = ["python3", "gh"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]

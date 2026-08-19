@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.48.0 — Baseline Closure and Deterministic CI](#0480--baseline-closure-and-deterministic-ci)
 - [0.47.0 — Public Beta & API Freeze](#0470--public-beta--api-freeze)
 - [0.46.0 — Connector Contract & Supported Destinations](#0460--connector-contract--supported-destinations)
 - [0.45.0 — Operators First](#0450--operators-first)
@@ -54,6 +55,16 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.48.0] — In progress — Baseline Closure and Deterministic CI
+
+- Recorded the exact v0.47.0 tag commit as provenance while preserving its
+  pending pilot, review, artifact, approval, and blocker-query state.
+- Added the release baseline, authoritative extension clean-room testing,
+  required-test inventory, and time-bounded flake policy needed to make CI
+  evidence reproducible. This release adds no product behavior.
 
 ---
 

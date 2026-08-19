@@ -1,0 +1,37 @@
+name: Extension clean room
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extension-cleanroom:
+    name: Extension clean room (PostgreSQL 18)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Validate required-test manifest
+        run: python3 scripts/check_required_tests.py --check-manifest
+      - name: Run required extension test
+        run: python3 scripts/run_required_test.py extension-cleanroom
+      - name: Validate execution record
+        if: always()
+        run: python3 scripts/check_required_tests.py --check-results target/required-tests --ids extension-cleanroom
+      - name: Upload clean-room diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: extension-cleanroom-${{ github.run_id }}
+          path: |
+            target/extension-cleanroom/
+            target/required-tests/extension-cleanroom.*
+          if-no-files-found: warn

@@ -7,6 +7,7 @@
       "id": "pilot-nats",
       "profile": "postgresql-outbox-to-nats-jetstream",
       "status": "pending",
+      "pending_reason": "No operator run is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "scenarios": {
@@ -31,6 +32,7 @@
       "id": "pilot-kafka",
       "profile": "postgresql-outbox-to-kafka",
       "status": "pending",
+      "pending_reason": "No operator run is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "scenarios": {
@@ -55,6 +57,7 @@
       "id": "pilot-postgresql-inbox",
       "profile": "postgresql-outbox-to-postgresql-inbox",
       "status": "pending",
+      "pending_reason": "No operator run is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "scenarios": {
@@ -79,6 +82,7 @@
       "id": "pilot-webhook",
       "profile": "postgresql-outbox-to-https-webhook",
       "status": "pending",
+      "pending_reason": "No operator run is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "scenarios": {
