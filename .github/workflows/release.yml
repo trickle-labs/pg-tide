@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release-gates:
-    name: v0.47.0 release evidence and blocker gate
+    name: release evidence and blocker gate
     runs-on: ubuntu-latest
     permissions:
       contents: read

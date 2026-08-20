@@ -58,7 +58,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 
 ---
 
-## [0.48.0] — In progress — Baseline Closure and Deterministic CI
+## [0.48.0] — 2026-08-20 — Baseline Closure and Deterministic CI
 
 - Recorded the exact v0.47.0 tag commit as provenance while preserving its
   pending pilot, review, artifact, approval, and blocker-query state.
