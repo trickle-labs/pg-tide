@@ -20,7 +20,7 @@ jobs:
     name: v1 surface boundary
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30af803 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Check v1 surface boundary
         run: python3 scripts/check_v1_surface.py
 
@@ -700,14 +700,22 @@ jobs:
           sudo pg_createcluster 18 main --start --port=5432
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           export PGPASSWORD=postgres
+          # Create the v0.48 database while its shared library is installed.
+          # The v0.49 library intentionally removes retired v0.48 symbols.
+          (
+            cd "$GITHUB_WORKSPACE/v048-source"
+            cargo pgrx install --package pg-tide-ext \
+              --pg-config /usr/lib/postgresql/18/bin/pg_config
+          )
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade49;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade49;"
+          psql -h 127.0.0.1 -U postgres -d upgrade49 -c "CREATE EXTENSION pg_tide VERSION '0.48.0';"
+          cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
           # Fresh install directly at the current version.
           psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS fresh49;"
           psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh49;"
           psql -h 127.0.0.1 -U postgres -d fresh49 -c "CREATE EXTENSION pg_tide VERSION '0.49.0';"
           # Upgrade from the last pre-v0.49.0 surface.
-          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade49;"
-          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade49;"
-          psql -h 127.0.0.1 -U postgres -d upgrade49 -c "CREATE EXTENSION pg_tide VERSION '0.48.0';"
           psql -h 127.0.0.1 -U postgres -d upgrade49 -c "ALTER EXTENSION pg_tide UPDATE TO '0.49.0';"
           # Normalized schema comparison.
           for db in fresh49 upgrade49; do
