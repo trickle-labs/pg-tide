@@ -130,33 +130,3 @@ async fn test_positional_relay_forms_absent_after_v038() {
         );
     }
 }
-
-// ── RockLake config fields (compile-time) ─────────────────────────────────────
-
-/// Verifies the Phase 7 config fields are wired into `RockLakeConfig`.
-/// This is a compile-time / unit test — no database required.
-/// Requires the `rocklake` feature.
-#[test]
-#[cfg(feature = "rocklake")]
-fn test_rocklake_config_phase7_fields() {
-    use pg_tide_relay::sink::rocklake::RockLakeConfig;
-
-    let config = RockLakeConfig::new("s3://bucket/events", "analytics");
-    assert_eq!(
-        config.max_write_retries, 5,
-        "default max_write_retries must be 5"
-    );
-    assert!(
-        config.read_replica_url.is_none(),
-        "default read_replica_url must be None"
-    );
-
-    let mut config2 = RockLakeConfig::new("s3://bucket/events", "analytics");
-    config2.max_write_retries = 10;
-    config2.read_replica_url = Some("postgres://replica:5432/catalog".to_string());
-    assert_eq!(config2.max_write_retries, 10);
-    assert_eq!(
-        config2.read_replica_url.as_deref(),
-        Some("postgres://replica:5432/catalog")
-    );
-}

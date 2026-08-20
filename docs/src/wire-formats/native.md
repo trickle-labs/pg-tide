@@ -59,9 +59,8 @@ wire_format = "native"
 
 ## When to Use Something Else
 
-- Your consumer expects Debezium format → use [debezium](debezium.md)
-- You're ingesting from Maxwell or Canal → use [maxwell](maxwell.md) or [canal](canal.md)
-- You have a custom format with non-standard field names → use [cdc_json](cdc-json.md)
+- Your consumer needs standard event metadata → use CloudEvents
+- Your consumer needs a custom envelope → adapt it at the destination boundary
 
 ## Further Reading
 

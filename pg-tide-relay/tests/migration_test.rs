@@ -59,6 +59,7 @@ const V0_44_0_TO_0_45_0: &str = include_str!("../../sql/pg_tide--0.44.0--0.45.0.
 const V0_45_0_TO_0_46_0: &str = include_str!("../../sql/pg_tide--0.45.0--0.46.0.sql");
 const V0_46_0_TO_0_47_0: &str = include_str!("../../sql/pg_tide--0.46.0--0.47.0.sql");
 const V0_47_0_TO_0_48_0: &str = include_str!("../../sql/pg_tide--0.47.0--0.48.0.sql");
+const V0_48_0_TO_0_49_0: &str = include_str!("../../sql/pg_tide--0.48.0--0.49.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -109,6 +110,7 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.45.0 → 0.46.0", V0_45_0_TO_0_46_0),
     ("0.46.0 → 0.47.0", V0_46_0_TO_0_47_0),
     ("0.47.0 → 0.48.0", V0_47_0_TO_0_48_0),
+    ("0.48.0 → 0.49.0", V0_48_0_TO_0_49_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
@@ -203,10 +205,13 @@ async fn test_sequential_migration_upgrade() {
         } else {
             processed
         };
-        client
-            .batch_execute(&processed)
-            .await
-            .unwrap_or_else(|e| panic!("upgrade {label} failed: {e}"));
+        client.batch_execute(&processed).await.unwrap_or_else(|e| {
+            let detail = e
+                .as_db_error()
+                .map(|db| format!("{}: {}", db.severity(), db.message()))
+                .unwrap_or_else(|| e.to_string());
+            panic!("upgrade {label} failed: {detail}");
+        });
     }
 
     // After v0.12.0 upgrade: relay_consumer_offsets should have last_change_id.
@@ -607,19 +612,45 @@ async fn test_sequential_migration_upgrade() {
         .await
         .expect("same pipeline id for different outboxes must be allowed");
 
-    // fanin configs must be disabled after the migration.
-    let enabled_fanin: i64 = client
+    // v0.49.0 removes the empty fan-in catalog after its preflight.
+    let has_fanin_catalog: bool = client
         .query_one(
-            "SELECT COUNT(*)::bigint FROM tide.relay_fanin_config WHERE enabled",
+            "SELECT to_regclass('tide.relay_fanin_config') IS NOT NULL",
             &[],
         )
         .await
-        .expect("fanin enabled count")
+        .expect("fanin catalog lookup")
         .get(0);
-    assert_eq!(
-        enabled_fanin, 0,
-        "all fan-in configs must be disabled after v0.40.0 migration"
+    assert!(
+        !has_fanin_catalog,
+        "v0.49.0 must remove the empty fan-in catalog"
     );
+
+    for function in [
+        "relay_set_inbox_v2",
+        "relay_set_fanin",
+        "relay_fanin_enable",
+        "relay_fanin_disable",
+        "relay_fanin_delete",
+        "relay_fanin_list",
+        "backfill_create",
+        "backfill_pause",
+        "backfill_resume",
+        "backfill_status",
+        "backfill_progress",
+        "backfill_cancel",
+    ] {
+        let exists: bool = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+                 WHERE n.nspname = 'tide' AND p.proname = $1)",
+                &[&function],
+            )
+            .await
+            .expect("retired function lookup")
+            .get(0);
+        assert!(!exists, "v0.49.0 must remove tide.{function}()");
+    }
 
     // ── v0.45.0 observational runtime status ─────────────────────────────
     let has_runtime_status: bool = client
@@ -691,4 +722,124 @@ async fn test_sequential_migration_upgrade() {
         !has_owner_token_column,
         "sanitized status view must not expose owner tokens"
     );
+}
+
+#[tokio::test]
+async fn test_v049_migration_fails_closed_for_enabled_removed_config() {
+    let db = common::PgTideTestDb::start_base_v0_1().await;
+    for (label, sql) in common::MIGRATIONS {
+        if *label == "0.48.0 -> 0.49.0" {
+            break;
+        }
+        let processed = common::strip_extension_comments(sql);
+        let processed = if *label == "0.42.0 -> 0.43.0" {
+            common::strip_unavailable_v043_bindings(&processed)
+        } else {
+            processed
+        };
+        db.client
+            .batch_execute(&processed)
+            .await
+            .unwrap_or_else(|e| panic!("upgrade {label} failed: {e}"));
+    }
+
+    db.client
+        .execute(
+            "INSERT INTO tide.tide_outbox_config (outbox_name) VALUES ('surf5-outbox')",
+            &[],
+        )
+        .await
+        .expect("create outbox");
+    db.client
+        .execute(
+            "INSERT INTO tide.relay_outbox_config (name, enabled, config) \
+             VALUES ('surf5-redis', true, '{\"source_type\":\"outbox\",\"sink_type\":\"redis\"}')",
+            &[],
+        )
+        .await
+        .expect("create removed pipeline");
+
+    let error = db
+        .client
+        .batch_execute(V0_48_0_TO_0_49_0)
+        .await
+        .expect_err("enabled removed config must block migration");
+    let detail = error
+        .as_db_error()
+        .map(|db| db.message().to_string())
+        .unwrap_or_else(|| error.to_string());
+    assert!(detail.contains("PGTIDE_CONFIG_UNSUPPORTED_SURFACE"));
+    assert!(detail.contains("surf5-redis"));
+    assert!(detail.contains("last_version=0.48.0"));
+
+    db.client
+        .execute(
+            "UPDATE tide.relay_outbox_config SET enabled = false WHERE name = 'surf5-redis'",
+            &[],
+        )
+        .await
+        .expect("disable removed pipeline");
+    db.client
+        .batch_execute(&common::strip_extension_comments(V0_48_0_TO_0_49_0))
+        .await
+        .expect("disabled removed config may be preserved during migration");
+
+    let preserved: bool = db
+        .client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = 'surf5-redis' AND NOT enabled)",
+            &[],
+        )
+        .await
+        .expect("preserved disabled config lookup")
+        .get(0);
+    assert!(preserved, "disabled unsupported config must be preserved");
+}
+
+#[tokio::test]
+async fn test_fresh_and_sequential_upgrade_surface_parity() {
+    let fresh = common::PgTideTestDb::start().await;
+    let upgraded = common::PgTideTestDb::start_base_v0_1().await;
+    for (label, sql) in common::MIGRATIONS {
+        let processed = common::strip_extension_comments(sql);
+        let processed = if *label == "0.42.0 -> 0.43.0" {
+            common::strip_unavailable_v043_bindings(&processed)
+        } else {
+            processed
+        };
+        upgraded
+            .client
+            .batch_execute(&processed)
+            .await
+            .unwrap_or_else(|e| panic!("upgrade {label} failed: {e}"));
+    }
+
+    assert_eq!(
+        relation_objects(&fresh.client)
+            .await
+            .expect("fresh objects"),
+        relation_objects(&upgraded.client)
+            .await
+            .expect("upgraded objects"),
+        "fresh and sequential upgrade catalogs must have the same relation surface"
+    );
+}
+
+async fn relation_objects(
+    client: &tokio_postgres::Client,
+) -> Result<Vec<(String, String)>, tokio_postgres::Error> {
+    client
+        .query(
+            "SELECT c.relname, c.relkind::text FROM pg_class c \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'tide' AND c.relkind IN ('r', 'v', 'm', 'i') \
+             ORDER BY c.relkind, c.relname",
+            &[],
+        )
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+                .collect()
+        })
 }

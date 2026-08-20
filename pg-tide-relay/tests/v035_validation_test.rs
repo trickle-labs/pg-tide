@@ -2,10 +2,9 @@
 ///
 /// Tests:
 ///   1. `relay_provision_tenant()` rejects invalid role names (digit-leading, reserved, special chars).
-///   2. `backfill_progress()` returns NULL estimated_completion when rows_processed = 0 (no div/0).
-///   3. `relay_pipeline_dep_add()` rejects invalid trigger_policy values via SIMILAR TO.
-///   4. `relay_pipeline_dep_add()` accepts all valid trigger_policy values.
-///   5. `relay_truncate_delivery_receipts()` deletes only receipts older than the retention interval.
+///   2. `relay_pipeline_dep_add()` rejects invalid trigger_policy values via SIMILAR TO.
+///   3. `relay_pipeline_dep_add()` accepts all valid trigger_policy values.
+///   4. `relay_truncate_delivery_receipts()` deletes only receipts older than the retention interval.
 mod common;
 
 use std::time::Duration;
@@ -133,96 +132,6 @@ async fn test_provision_tenant_tide_admin_role_rejected() {
     assert!(
         result.is_err(),
         "reserved role 'tide_admin' should raise an error"
-    );
-}
-
-// ── backfill_progress() division-by-zero fix ─────────────────────────────────
-
-#[tokio::test]
-async fn test_backfill_progress_zero_rows_no_crash() {
-    let (client, _container) = setup_db().await;
-
-    // backfill_jobs.outbox_name references tide_outbox_config(outbox_name).
-    client
-        .execute(
-            "INSERT INTO tide.tide_outbox_config (outbox_name, enabled)
-             VALUES ('progress_outbox', true)
-             ON CONFLICT (outbox_name) DO NOTHING",
-            &[],
-        )
-        .await
-        .expect("insert outbox config");
-
-    // Create a backfill job with zero rows processed.
-    client
-        .execute(
-            "INSERT INTO tide.backfill_jobs \
-             (job_name, outbox_name, status, rows_processed, rows_total, started_at)
-             VALUES ('test-zero', 'progress_outbox', 'running', 0, 1000, now())",
-            &[],
-        )
-        .await
-        .expect("insert backfill job");
-
-    // Call backfill_progress() — must not raise division-by-zero.
-    let rows = client
-        .query(
-            "SELECT rows_processed, estimated_completion \
-             FROM tide.backfill_progress('test-zero')",
-            &[],
-        )
-        .await
-        .expect("backfill_progress() must not raise an error");
-
-    assert_eq!(rows.len(), 1, "should return one row");
-    let rows_processed: i64 = rows[0].get(0);
-    assert_eq!(rows_processed, 0);
-
-    let estimated_completion: Option<chrono::DateTime<chrono::Utc>> = rows[0].get(1);
-    assert!(
-        estimated_completion.is_none(),
-        "estimated_completion should be NULL when rows_processed = 0"
-    );
-}
-
-#[tokio::test]
-async fn test_backfill_progress_zero_total_rows_no_crash() {
-    let (client, _container) = setup_db().await;
-
-    client
-        .execute(
-            "INSERT INTO tide.tide_outbox_config (outbox_name, enabled)
-             VALUES ('progress_outbox_b', true)
-             ON CONFLICT (outbox_name) DO NOTHING",
-            &[],
-        )
-        .await
-        .expect("insert outbox config");
-
-    // rows_total = 0 (unknown total at job creation).
-    client
-        .execute(
-            "INSERT INTO tide.backfill_jobs \
-             (job_name, outbox_name, status, rows_processed, rows_total, started_at)
-             VALUES ('test-zero-total', 'progress_outbox_b', 'running', 0, 0, now())",
-            &[],
-        )
-        .await
-        .expect("insert backfill job");
-
-    let rows = client
-        .query(
-            "SELECT estimated_completion FROM tide.backfill_progress('test-zero-total')",
-            &[],
-        )
-        .await
-        .expect("backfill_progress() must not raise an error");
-
-    assert_eq!(rows.len(), 1);
-    let estimated_completion: Option<chrono::DateTime<chrono::Utc>> = rows[0].get(0);
-    assert!(
-        estimated_completion.is_none(),
-        "estimated_completion should be NULL when rows_total = 0"
     );
 }
 

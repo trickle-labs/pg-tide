@@ -18,16 +18,13 @@ SELECT tide.relay_set_outbox_v2(config JSONB);
 |------------|------|---------|-------------|
 | `name` | TEXT | (required) | Unique pipeline name |
 | `outbox` | TEXT | (required) | Source outbox name (must already exist) |
-| `sink_type` | TEXT | (required) | Sink type: `nats`, `kafka`, `redis`, `rabbitmq`, `sqs`, `webhook`, `stdout` |
+| `sink_type` | TEXT | (required) | Sink type: `inbox`, `nats`, `kafka`, `webhook`, `stdout`, or `file` |
 | `config` | JSONB | `{}` | Sink-specific configuration |
-| `source_mode` | TEXT | `native` | `native` (shared-table, ADR-011) or `pg_trickle` (compatibility) |
+| `wire_format` | TEXT | `native` | `native` or `cloudevents` |
 | `batch_size` | INT | 100 | Messages per relay batch |
 | `enabled` | BOOLEAN | true | Whether the pipeline is active |
 
-**Native default (ADR-011):** `source_mode` defaults to `native`, which polls the
-canonical `tide.tide_outbox_messages` table and decodes native payloads. Use
-`'source_mode', 'pg_trickle'` only for pg_trickle producers that write the `v:1`
-envelope.
+The relay always polls the canonical `tide.tide_outbox_messages` table.
 
 **Upsert behavior:** If a pipeline with the same name exists, its configuration is updated.
 
@@ -47,48 +44,6 @@ SELECT tide.relay_set_outbox_v2(
   )
 );
 ```
-
----
-
-## tide.relay_set_inbox_v2
-
-Configure a reverse relay pipeline (external source → inbox). Takes a single
-JSONB config object. The positional `relay_set_inbox(...)` form was removed in
-v0.36.0.
-
-```sql
-SELECT tide.relay_set_inbox_v2(config JSONB);
-```
-
-| Config key | Type | Default | Description |
-|------------|------|---------|-------------|
-| `name` | TEXT | (required) | Unique pipeline name |
-| `inbox` | TEXT | (required) | Target inbox name |
-| `source` | TEXT | `'stdout'` | Source type: `nats`, `kafka`, `redis`, `rabbitmq`, `sqs`, `webhook`, `stdin` |
-| `config` | JSONB | `{}` | Source-specific configuration |
-| `batch_size` | INT | 100 | Messages per batch |
-| `enabled` | BOOLEAN | true | Whether the pipeline is active |
-| `max_retries` | INT | 3 | Max delivery retries |
-
-**Example:**
-
-```sql
-SELECT tide.relay_set_inbox_v2(
-  jsonb_build_object(
-    'name', 'events-from-nats',
-    'inbox', 'events',
-    'source', 'nats',
-    'config', jsonb_build_object(
-      'url', 'nats://localhost:4222',
-      'stream', 'EVENTS',
-      'consumer', 'pg-tide',
-      'subject', 'events.>'
-    )
-  )
-);
-```
-
----
 
 ## tide.relay_enable
 

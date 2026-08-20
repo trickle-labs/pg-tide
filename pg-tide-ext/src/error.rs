@@ -4,6 +4,16 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum PgTideError {
+    #[error(
+        "PGTIDE_CONFIG_UNSUPPORTED_SURFACE: {surface}; context={context}; \
+         last_version=0.48.0; alternative={alternative}"
+    )]
+    UnsupportedSurface {
+        surface: String,
+        context: String,
+        alternative: String,
+    },
+
     #[error("outbox already exists: {0}")]
     OutboxAlreadyExists(String),
 

@@ -18,35 +18,22 @@ capabilities = { max_batch_size = 1000, max_batch_bytes = 16777216, max_message_
 config_fields = ["outbox", "subject_template", "consumer_group", "consumer_id", "visibility_seconds"]
 docs = ["docs/src/sources/outbox.md"]
 evidence = [
-	{ scenario = "postgresql-outbox-poll", level = "integration", direction = "source", test_path = "pg-tide-relay/tests/outbox_source_test.rs", test_name = "test_outbox_poll_returns_pending_messages", ci_job = "test-integration-core" },
+    { scenario = "postgresql-outbox-poll", level = "integration", direction = "source", test_path = "pg-tide-relay/tests/outbox_source_test.rs", test_name = "test_outbox_poll_returns_pending_messages", ci_job = "test-integration-core" },
 ]
 
 [[connector]]
-id = "pg-trickle-compatibility"
-name = "pg_trickle outbox compatibility"
-kind = "compatibility"
-maturity = "preview"
-owner = "@grove"
-source_types = ["pg_trickle_outbox"]
-sink_types = []
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/integration/pg-trickle.md"]
-contract_tests = ["pg-tide-relay/tests/outbox_source_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
 id = "diagnostics"
-name = "stdin, stdout, and file diagnostics"
+name = "stdout and file diagnostics"
 kind = "diagnostic"
 maturity = "supported"
 owner = "@grove"
-source_types = ["stdin"]
+source_types = []
 sink_types = ["stdout", "file"]
 cargo_feature = "stdout"
 default_build = true
+profiles = ["core"]
 tested_versions = ["local process"]
-docs = ["docs/src/sources/stdin.md", "docs/src/sinks/stdout.md"]
+docs = ["docs/src/sinks/stdout.md"]
 contract_tests = ["pg-tide-relay/tests/postgres_insert_microbenchmark.rs"]
 
 [[connector]]
@@ -67,8 +54,8 @@ capabilities = { max_batch_size = 1000, max_batch_bytes = 16777216, max_message_
 config_fields = ["inbox", "postgres_url"]
 docs = ["docs/src/sinks/pg-inbox.md", "docs/src/sinks/pg-outbox.md"]
 evidence = [
-	{ scenario = "postgresql-inbox-round-trip", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/pg_inbox_sink_test.rs", test_name = "test_pg_inbox_sink_round_trip", ci_job = "test-integration-relay" },
-	{ scenario = "postgresql-inbox-deduplication", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/inbox_sink_test.rs", test_name = "test_inbox_deduplication", ci_job = "test-integration-relay" },
+    { scenario = "postgresql-inbox-round-trip", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/pg_inbox_sink_test.rs", test_name = "test_pg_inbox_sink_round_trip", ci_job = "test-integration-relay" },
+    { scenario = "postgresql-inbox-deduplication", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/inbox_sink_test.rs", test_name = "test_inbox_deduplication", ci_job = "test-integration-relay" },
 ]
 
 [[connector]]
@@ -90,25 +77,8 @@ capabilities = { max_batch_size = 100, max_batch_bytes = 16777216, max_message_b
 config_fields = ["url", "subject", "subject_template"]
 docs = ["docs/src/sinks/nats.md"]
 evidence = [
-	{ scenario = "nats-jetstream-publish-ack", level = "e2e", direction = "sink", test_path = "pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs", test_name = "public_api_outbox_to_nats_e2e", ci_job = "public-api-nats-e2e" },
+    { scenario = "nats-jetstream-publish-ack", level = "e2e", direction = "sink", test_path = "pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs", test_name = "public_api_outbox_to_nats_e2e", ci_job = "public-api-nats-e2e" },
 ]
-
-[[connector]]
-id = "nats-source"
-name = "NATS inbound"
-kind = "connector"
-maturity = "preview"
-direction = "source"
-owner = "@grove"
-security_contact = "@grove"
-cargo_feature = "nats"
-source_types = ["nats"]
-sink_types = []
-default_build = false
-tested_versions = ["NATS Server 2.11.0 with JetStream"]
-docs = ["docs/src/sources/nats.md"]
-contract_tests = ["pg-tide-relay/tests/nats_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 
 [[connector]]
 id = "webhook-sink"
@@ -129,25 +99,8 @@ capabilities = { max_batch_size = 100, max_batch_bytes = 16777216, max_message_b
 config_fields = ["url", "timeout_secs", "allow_http", "ssrf_protection", "signing_secret", "signing_algorithm"]
 docs = ["docs/src/sinks/webhook.md"]
 evidence = [
-	{ scenario = "webhook-http-post", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/webhook_test.rs", test_name = "test_webhook_sink_posts_messages", ci_job = "test-integration" },
+    { scenario = "webhook-http-post", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/webhook_test.rs", test_name = "test_webhook_sink_posts_messages", ci_job = "test-integration" },
 ]
-
-[[connector]]
-id = "webhook-source"
-name = "Webhook inbound"
-kind = "connector"
-maturity = "preview"
-direction = "source"
-owner = "@grove"
-security_contact = "@grove"
-cargo_feature = "webhook"
-source_types = ["webhook"]
-sink_types = []
-default_build = false
-tested_versions = ["HTTP/1.1 in-process fixture"]
-docs = ["docs/src/sources/webhook-receiver.md"]
-contract_tests = ["pg-tide-relay/tests/webhook_sig_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
 
 [[connector]]
 id = "kafka-sink"
@@ -168,423 +121,5 @@ capabilities = { max_batch_size = 100, max_batch_bytes = 16777216, max_message_b
 config_fields = ["brokers", "topic", "topic_template"]
 docs = ["docs/src/sinks/kafka.md"]
 evidence = [
-	{ scenario = "kafka-public-api-delivery", level = "e2e", direction = "sink", test_path = "pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs", test_name = "public_api_outbox_to_kafka_e2e", ci_job = "public-api-kafka-e2e" },
+    { scenario = "kafka-public-api-delivery", level = "e2e", direction = "sink", test_path = "pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs", test_name = "public_api_outbox_to_kafka_e2e", ci_job = "public-api-kafka-e2e" },
 ]
-
-[[connector]]
-id = "kafka-source"
-name = "Apache Kafka inbound"
-kind = "connector"
-maturity = "preview"
-direction = "source"
-owner = "@grove"
-security_contact = "@grove"
-cargo_feature = "kafka"
-source_types = ["kafka"]
-sink_types = []
-default_build = false
-tested_versions = ["Apache Kafka 3.8.0 KRaft"]
-docs = ["docs/src/sources/kafka.md"]
-contract_tests = ["pg-tide-relay/tests/kafka_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "redis"
-name = "Redis Streams"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "redis"
-source_types = ["redis"]
-sink_types = ["redis"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/redis.md", "docs/src/sources/redis.md"]
-contract_tests = ["pg-tide-relay/tests/redis_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "sqs"
-name = "Amazon SQS"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "sqs"
-source_types = ["sqs"]
-sink_types = ["sqs"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/sqs.md", "docs/src/sources/sqs.md"]
-contract_tests = ["pg-tide-relay/tests/sqs_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "rabbitmq"
-name = "RabbitMQ"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "rabbitmq"
-source_types = ["rabbitmq"]
-sink_types = ["rabbitmq"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/rabbitmq.md", "docs/src/sources/rabbitmq.md"]
-contract_tests = ["pg-tide-relay/tests/rabbitmq_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "pubsub"
-name = "Google Pub/Sub"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "pubsub"
-source_types = ["pubsub"]
-sink_types = ["pubsub"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/pubsub.md", "docs/src/sources/pubsub.md"]
-contract_tests = ["pg-tide-relay/tests/pubsub_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "kinesis"
-name = "Amazon Kinesis"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "kinesis"
-source_types = ["kinesis"]
-sink_types = ["kinesis"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/kinesis.md", "docs/src/sources/kinesis.md"]
-contract_tests = ["pg-tide-relay/tests/kinesis_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "servicebus"
-name = "Azure Service Bus"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "servicebus"
-source_types = ["servicebus"]
-sink_types = ["servicebus"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/servicebus.md", "docs/src/sources/servicebus.md"]
-contract_tests = ["pg-tide-relay/tests/servicebus_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "mqtt"
-name = "MQTT v5"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "mqtt"
-source_types = ["mqtt"]
-sink_types = ["mqtt"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/mqtt.md", "docs/src/sources/mqtt.md"]
-contract_tests = ["pg-tide-relay/tests/mqtt_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "eventhubs"
-name = "Azure Event Hubs"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "eventhubs"
-source_types = ["eventhubs"]
-sink_types = ["eventhubs"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/eventhubs.md", "docs/src/sources/eventhubs.md"]
-contract_tests = ["pg-tide-relay/tests/eventhubs_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "elasticsearch"
-name = "Elasticsearch"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "elasticsearch"
-source_types = []
-sink_types = ["elasticsearch"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/elasticsearch.md"]
-contract_tests = ["pg-tide-relay/tests/elasticsearch_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "object-storage"
-name = "Object storage"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "object-storage"
-source_types = []
-sink_types = ["object-storage"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/object-storage.md"]
-contract_tests = ["pg-tide-relay/tests/object_storage_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "slack"
-name = "Slack"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "slack"
-source_types = []
-sink_types = ["slack"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/slack.md"]
-contract_tests = ["pg-tide-relay/tests/slack_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "discord"
-name = "Discord"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "discord"
-source_types = []
-sink_types = ["discord"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/discord.md"]
-contract_tests = ["pg-tide-relay/tests/discord_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "pagerduty"
-name = "PagerDuty"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "pagerduty"
-source_types = []
-sink_types = ["pagerduty"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/pagerduty.md"]
-contract_tests = ["pg-tide-relay/tests/pagerduty_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "arrow-flight"
-name = "Apache Arrow Flight"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "arrow-flight"
-source_types = []
-sink_types = ["arrow-flight"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/arrow-flight.md"]
-contract_tests = ["pg-tide-relay/tests/arrow_flight_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "singer"
-name = "Singer"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "singer"
-source_types = ["singer"]
-sink_types = ["singer"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sources/singer.md", "docs/src/sinks/singer.md"]
-contract_tests = ["pg-tide-relay/tests/singer_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "airbyte"
-name = "Airbyte"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "airbyte"
-source_types = ["airbyte"]
-sink_types = ["airbyte"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sources/airbyte.md", "docs/src/sinks/airbyte.md"]
-contract_tests = ["pg-tide-relay/tests/airbyte_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "clickhouse"
-name = "ClickHouse"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "clickhouse"
-source_types = []
-sink_types = ["clickhouse"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/clickhouse.md"]
-contract_tests = ["pg-tide-relay/tests/clickhouse_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "mongodb"
-name = "MongoDB"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "mongodb"
-source_types = []
-sink_types = ["mongodb"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/mongodb.md"]
-contract_tests = ["pg-tide-relay/tests/mongodb_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "bigquery"
-name = "Google BigQuery"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "bigquery"
-source_types = []
-sink_types = ["bigquery"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/bigquery.md"]
-contract_tests = ["pg-tide-relay/tests/bigquery_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "snowflake"
-name = "Snowflake"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "snowflake"
-source_types = []
-sink_types = ["snowflake"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/snowflake.md"]
-contract_tests = ["pg-tide-relay/tests/snowflake_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "delta"
-name = "Delta Lake"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "delta"
-source_types = []
-sink_types = ["delta"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/delta.md"]
-contract_tests = ["pg-tide-relay/tests/delta_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "iceberg"
-name = "Apache Iceberg"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "iceberg"
-source_types = []
-sink_types = ["iceberg"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/iceberg.md"]
-contract_tests = ["pg-tide-relay/tests/iceberg_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "ducklake"
-name = "DuckLake"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "ducklake"
-source_types = []
-sink_types = ["ducklake"]
-default_build = false
-tested_versions = ["unknown"]
-docs = ["docs/src/sinks/ducklake.md"]
-contract_tests = ["pg-tide-relay/tests/ducklake_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "rocklake"
-name = "RockLake"
-kind = "connector"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "rocklake"
-source_types = ["rocklake"]
-sink_types = ["rocklake"]
-default_build = false
-tested_versions = ["RockLake v0.27.14"]
-docs = ["docs/src/guides/ducklake/ecosystem-compatibility.md"]
-contract_tests = ["pg-tide-relay/tests/rocklake_test.rs"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "fan-in"
-name = "Fan-in compatibility surface"
-kind = "compatibility"
-maturity = "experimental"
-owner = "@grove"
-source_types = ["fanin"]
-sink_types = []
-default_build = false
-tested_versions = ["disabled"]
-docs = ["docs/src/tutorials/fan-out-pattern.md"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "ducklake-reverse"
-name = "DuckLake reverse source (unavailable)"
-kind = "compatibility"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "ducklake"
-source_types = []
-sink_types = []
-default_build = false
-tested_versions = ["not registered"]
-docs = ["docs/src/sinks/ducklake.md"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]
-
-[[connector]]
-id = "wal-logical-source"
-name = "PostgreSQL WAL logical source (groundwork)"
-kind = "compatibility"
-maturity = "experimental"
-owner = "@grove"
-cargo_feature = "wal-source"
-source_types = ["pg_logical"]
-sink_types = []
-default_build = false
-tested_versions = ["not registered"]
-docs = ["docs/adr/adr-009-wal-logical-replication-source.md"]
-metrics_evidence = ["pg-tide-relay/src/metrics.rs"]

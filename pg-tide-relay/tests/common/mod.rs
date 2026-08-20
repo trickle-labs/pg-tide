@@ -229,6 +229,26 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0.43.0 -> 0.44.0",
         include_str!("../../../sql/pg_tide--0.43.0--0.44.0.sql"),
     ),
+    (
+        "0.44.0 -> 0.45.0",
+        include_str!("../../../sql/pg_tide--0.44.0--0.45.0.sql"),
+    ),
+    (
+        "0.45.0 -> 0.46.0",
+        include_str!("../../../sql/pg_tide--0.45.0--0.46.0.sql"),
+    ),
+    (
+        "0.46.0 -> 0.47.0",
+        include_str!("../../../sql/pg_tide--0.46.0--0.47.0.sql"),
+    ),
+    (
+        "0.47.0 -> 0.48.0",
+        include_str!("../../../sql/pg_tide--0.47.0--0.48.0.sql"),
+    ),
+    (
+        "0.48.0 -> 0.49.0",
+        include_str!("../../../sql/pg_tide--0.48.0--0.49.0.sql"),
+    ),
 ];
 
 /// Install the v0.1.0 base schema then apply all migrations through the current
@@ -250,10 +270,13 @@ pub async fn install_full_schema(client: &tokio_postgres::Client) {
         } else {
             processed
         };
-        client
-            .batch_execute(&processed)
-            .await
-            .unwrap_or_else(|e| panic!("migration {label} failed: {e}"));
+        client.batch_execute(&processed).await.unwrap_or_else(|e| {
+            let detail = e
+                .as_db_error()
+                .map(|db| format!("{}: {}", db.severity(), db.message()))
+                .unwrap_or_else(|| e.to_string());
+            panic!("migration {label} failed: {detail}");
+        });
     }
 }
 

@@ -1,12 +1,12 @@
 //! Relay Catalog API for pg_tide.
 //!
-//! Provides `tide.relay_set_outbox_v2()`, `tide.relay_set_inbox_v2()`,
+//! Provides `tide.relay_set_outbox_v2()`,
 //! `tide.relay_enable()`, `tide.relay_disable()`, `tide.relay_delete()`,
 //! `tide.relay_list_configs()` in the `tide` schema.
 //!
 //! v0.36.0: The positional-parameter forms `relay_set_outbox()` (6 params)
 //! and `relay_set_inbox()` (8 params) were removed as a breaking change.
-//! Use `relay_set_outbox_v2(config JSONB)` and `relay_set_inbox_v2(config JSONB)`.
+//! Use `relay_set_outbox_v2(config JSONB)`.
 //!
 //! The relay catalog stores pipeline configurations that the `pg-tide` binary
 //! reads to set up source/sink connections.
@@ -30,6 +30,96 @@ fn relay_exists(name: &str) -> Result<bool, PgTideError> {
     Ok(in_outbox || in_inbox)
 }
 
+const SUPPORTED_SINKS: &[&str] = &[
+    "inbox",
+    "pg_outbox",
+    "nats",
+    "kafka",
+    "webhook",
+    "stdout",
+    "file",
+];
+const REMOVED_SINKS: &[&str] = &[
+    "redis",
+    "rabbitmq",
+    "sqs",
+    "kinesis",
+    "pubsub",
+    "servicebus",
+    "eventhubs",
+    "mqtt",
+    "elasticsearch",
+    "object-storage",
+    "slack",
+    "discord",
+    "pagerduty",
+    "arrow-flight",
+    "singer",
+    "airbyte",
+    "clickhouse",
+    "mongodb",
+    "bigquery",
+    "snowflake",
+    "delta",
+    "iceberg",
+    "ducklake",
+    "rocklake",
+];
+const REMOVED_WIRE_FORMATS: &[&str] = &["debezium", "maxwell", "canal", "cdc_json"];
+
+fn validate_outbox_surface(
+    pipeline: &str,
+    source_type: Option<&str>,
+    sink_type: Option<&str>,
+    wire_format: Option<&str>,
+) -> Result<(), PgTideError> {
+    if let Some(source_type) = source_type {
+        if source_type == "pg_trickle_outbox" {
+            return Err(PgTideError::UnsupportedSurface {
+                surface: source_type.to_string(),
+                context: format!("relay pipeline '{pipeline}' source"),
+                alternative: "source_type=outbox".to_string(),
+            });
+        }
+        if source_type != "outbox" {
+            return Err(PgTideError::InvalidArgument(format!(
+                "relay_set_outbox_v2: unknown source_type '{source_type}'"
+            )));
+        }
+    }
+
+    if let Some(sink_type) = sink_type {
+        if REMOVED_SINKS.contains(&sink_type) {
+            return Err(PgTideError::UnsupportedSurface {
+                surface: sink_type.to_string(),
+                context: format!("relay pipeline '{pipeline}' sink"),
+                alternative: "inbox, nats, kafka, webhook, stdout, or file".to_string(),
+            });
+        }
+        if !SUPPORTED_SINKS.contains(&sink_type) {
+            return Err(PgTideError::InvalidArgument(format!(
+                "relay_set_outbox_v2: unknown sink_type '{sink_type}'"
+            )));
+        }
+    }
+
+    if let Some(wire_format) = wire_format {
+        if REMOVED_WIRE_FORMATS.contains(&wire_format) {
+            return Err(PgTideError::UnsupportedSurface {
+                surface: wire_format.to_string(),
+                context: format!("relay pipeline '{pipeline}' wire format"),
+                alternative: "wire_format=native or wire_format=cloudevents".to_string(),
+            });
+        }
+        if !matches!(wire_format, "native" | "cloudevents") {
+            return Err(PgTideError::InvalidArgument(format!(
+                "relay_set_outbox_v2: unknown wire_format '{wire_format}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
 // ── TIDE-API: relay_set_outbox_v2 (v0.18.0) ──────────────────────────────
 
 /// Configure a forward relay pipeline using a single JSONB config parameter.
@@ -37,17 +127,15 @@ fn relay_exists(name: &str) -> Result<bool, PgTideError> {
 /// v0.36.0: This is the only remaining form of `relay_set_outbox()`; the
 /// 6-positional-parameter form was removed in v0.36.0.
 ///
-/// v0.40.0 (ADR-011): Defaults to the **native** shared-table source. The named
-/// outbox must already exist. pg_trickle compatibility is selected explicitly
-/// via `source_mode`, never inferred from storage.
+/// v0.49.0: Uses only the native shared-table source. The named outbox must
+/// already exist.
 ///
 /// The config object accepts the following keys:
 ///
 /// - `name`        TEXT  (required) Pipeline name.
 /// - `outbox`      TEXT  (required) Source outbox name (must exist).
-/// - `sink_type`   TEXT  (required) Sink backend type (e.g. `"nats"`, `"stdout"`).
+/// - `sink_type`   TEXT  (required) Retained sink backend type.
 /// - `config`      JSONB (default: `{}`) Sink-specific configuration.
-/// - `source_mode` TEXT  (default: `"native"`) `"native"` or `"pg_trickle"`.
 /// - `batch_size`  INT   (default: 100)
 /// - `enabled`     BOOL  (default: true)
 /// - `wire_format` TEXT  (default: `"native"`)
@@ -88,17 +176,21 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
             )
         })?;
 
-    // v0.40.0 (ADR-011 §10): Native by default; pg_trickle is an explicit mode.
-    let source_type = match obj.get("source_mode").and_then(|v| v.as_str()) {
-        None | Some("native") => "outbox",
-        Some("pg_trickle") => "pg_trickle_outbox",
-        Some(other) => {
-            return Err(PgTideError::InvalidArgument(format!(
-                "relay_set_outbox_v2: unsupported source_mode '{other}' \
-                 (expected 'native' or 'pg_trickle')"
-            )))
+    if let Some(source_mode) = obj.get("source_mode").and_then(|v| v.as_str()) {
+        if source_mode == "pg_trickle" {
+            return Err(PgTideError::UnsupportedSurface {
+                surface: "source_mode=pg_trickle".to_string(),
+                context: format!("relay pipeline '{name}' source mode"),
+                alternative: "omit source_mode and use the native outbox".to_string(),
+            });
         }
-    };
+        if source_mode != "native" {
+            return Err(PgTideError::InvalidArgument(format!(
+                "relay_set_outbox_v2: unknown source_mode '{source_mode}'"
+            )));
+        }
+    }
+    let source_type = "outbox";
 
     let sink_config = obj
         .get("config")
@@ -111,9 +203,14 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
         ));
     }
     let enabled = obj["enabled"].as_bool().unwrap_or(true);
+    let wire_format = obj
+        .get("wire_format")
+        .and_then(|value| value.as_str())
+        .unwrap_or("native");
 
     crate::validation::validate_identifier(name)?;
     crate::validation::validate_identifier(outbox)?;
+    validate_outbox_surface(name, Some(source_type), Some(sink_type), Some(wire_format))?;
 
     // v0.40.0: Validate the named outbox exists before mutating the catalog.
     if !crate::outbox::outbox_exists(outbox)? {
@@ -126,6 +223,7 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
         "sink_type": sink_type,
         "sink": sink_config,
         "batch_size": batch_size,
+        "wire_format": wire_format,
     });
     let full_str = serde_json::to_string(&full_config)
         .map_err(|e| PgTideError::SpiError(format!("serialize config: {e}")))?;
@@ -138,94 +236,6 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
         &[name.into(), enabled.into(), full_str.as_str().into()],
     )
     .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_outbox_config: {e}")))?;
-
-    Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()])
-        .map_err(|e| PgTideError::SpiError(format!("notify relay config '{name}': {e}")))?;
-
-    Ok(())
-}
-
-// ── TIDE-API: relay_set_inbox_v2 (v0.16.0) ───────────────────────────────
-
-/// Configure a reverse relay pipeline using a single JSONB config parameter.
-///
-/// v0.36.0: This is the only remaining form of `relay_set_inbox()`; the
-/// 8-positional-parameter form was removed in v0.36.0.
-/// The config object accepts the following keys:
-///
-/// - `name`        TEXT  (required) Pipeline name.
-/// - `inbox`       TEXT  (required) Target inbox name.
-/// - `source`      TEXT  (default: `"stdout"`) Source backend type.
-/// - `config`      JSONB (default: `{}`) Source-specific configuration.
-/// - `batch_size`  INT   (default: 100)
-/// - `enabled`     BOOL  (default: true)
-/// - `max_retries` INT   (default: 3)
-/// - `idempotent`  BOOL  (default: true)
-#[pg_extern(schema = "tide")]
-pub fn relay_set_inbox_v2(p_config: pgrx::JsonB) {
-    relay_set_inbox_v2_impl(p_config).unwrap_or_else(|e| pgrx::error!("{}", e))
-}
-
-fn relay_set_inbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
-    let obj = &config.0;
-
-    let name = obj["name"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            PgTideError::InvalidArgument(
-                r#"relay_set_inbox_v2: config must include a non-empty "name" key"#.to_string(),
-            )
-        })?;
-    let inbox = obj["inbox"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            PgTideError::InvalidArgument(
-                r#"relay_set_inbox_v2: config must include a non-empty "inbox" key"#.to_string(),
-            )
-        })?;
-
-    let source = obj["source"].as_str().unwrap_or("stdout");
-    let src_config = obj
-        .get("config")
-        .cloned()
-        .unwrap_or(serde_json::Value::Object(Default::default()));
-    let batch_size = obj["batch_size"].as_i64().unwrap_or(100) as i32;
-    if !(1..=10_000).contains(&batch_size) {
-        return Err(PgTideError::InvalidArgument(
-            "relay_set_inbox_v2: batch_size must be between 1 and 10000".to_string(),
-        ));
-    }
-    let enabled = obj["enabled"].as_bool().unwrap_or(true);
-    let max_retries = obj["max_retries"].as_i64().unwrap_or(3) as i32;
-    let idempotent = obj["idempotent"].as_bool().unwrap_or(true);
-
-    crate::validation::validate_identifier(name)?;
-    crate::validation::validate_identifier(inbox)?;
-
-    let full_config = serde_json::json!({
-        "source_type": source,
-        "source": src_config,
-        "sink_type": "inbox",
-        "sink": {
-            "inbox": inbox,
-            "max_retries": max_retries,
-            "idempotent": idempotent,
-        },
-        "batch_size": batch_size,
-    });
-    let full_str = serde_json::to_string(&full_config)
-        .map_err(|e| PgTideError::SpiError(format!("serialize config: {e}")))?;
-
-    Spi::run_with_args(
-        "INSERT INTO tide.relay_inbox_config (name, enabled, config) \
-         VALUES ($1, $2, $3::jsonb) \
-         ON CONFLICT (name) DO UPDATE \
-         SET enabled = EXCLUDED.enabled, config = EXCLUDED.config",
-        &[name.into(), enabled.into(), full_str.as_str().into()],
-    )
-    .map_err(|e| PgTideError::SpiError(format!("UPSERT relay_inbox_config: {e}")))?;
 
     Spi::run_with_args("SELECT pg_notify('tide_relay_config', $1)", &[name.into()])
         .map_err(|e| PgTideError::SpiError(format!("notify relay config '{name}': {e}")))?;
@@ -247,6 +257,25 @@ pub fn relay_enable(p_name: &str) -> bool {
 fn relay_enable_impl(name: &str) -> Result<bool, PgTideError> {
     if !relay_exists(name)? {
         return Err(PgTideError::RelayNotFound(name.to_string()));
+    }
+    let outbox_config = Spi::get_one_with_args::<pgrx::JsonB>(
+        "SELECT config FROM tide.relay_outbox_config WHERE name = $1",
+        &[name.into()],
+    )
+    .map_err(|e| PgTideError::SpiError(format!("check relay '{name}' before enable: {e}")))?;
+    if let Some(config) = outbox_config {
+        validate_outbox_surface(
+            name,
+            config.0.get("source_type").and_then(|value| value.as_str()),
+            config.0.get("sink_type").and_then(|value| value.as_str()),
+            config.0.get("wire_format").and_then(|value| value.as_str()),
+        )?;
+    } else {
+        return Err(PgTideError::UnsupportedSurface {
+            surface: "reverse pipeline".to_string(),
+            context: format!("relay pipeline '{name}' enable"),
+            alternative: "configure a native outbox pipeline with relay_set_outbox_v2".to_string(),
+        });
     }
     let changed = Spi::get_one_with_args::<i64>(
         "WITH outbox AS (
@@ -550,27 +579,6 @@ mod tests {
     }
 
     #[pg_test]
-    fn test_relay_set_outbox_v2_pg_trickle_mode() {
-        setup_outbox("v2-compat-outbox");
-        crate::relay::relay_set_outbox_v2(pgrx::JsonB(serde_json::json!({
-            "name": "v2-compat-pipeline",
-            "outbox": "v2-compat-outbox",
-            "sink_type": "stdout",
-            "source_mode": "pg_trickle",
-        })));
-        let source_type: String = Spi::get_one(
-            "SELECT config ->> 'source_type' FROM tide.relay_outbox_config \
-             WHERE name = 'v2-compat-pipeline'",
-        )
-        .unwrap()
-        .unwrap_or_default();
-        assert_eq!(
-            source_type, "pg_trickle_outbox",
-            "explicit pg_trickle mode must select the compatibility source"
-        );
-    }
-
-    #[pg_test]
     fn test_relay_set_outbox_v2_unknown_outbox_fails_before_mutation() {
         let result = crate::relay::relay_set_outbox_v2_impl(pgrx::JsonB(serde_json::json!({
             "name": "v2-orphan-pipeline",
@@ -606,24 +614,23 @@ mod tests {
     }
 
     #[pg_test]
-    fn test_relay_set_inbox_creates_config() {
-        crate::inbox::inbox_create("relay-dst-inbox", "tide", 3, 72, 0);
-        crate::relay::relay_set_inbox_v2(pgrx::JsonB(serde_json::json!({
-            "name": "my-reverse-pipeline",
-            "inbox": "relay-dst-inbox",
-            "source": "nats",
-            "config": {"url": "nats://localhost:4222"},
-            "batch_size": 100,
-            "enabled": true,
-            "max_retries": 3,
-            "idempotent": true,
+    fn test_relay_set_outbox_v2_rejects_removed_surface_before_mutation() {
+        setup_outbox("v2-removed-sink-outbox");
+        let result = crate::relay::relay_set_outbox_v2_impl(pgrx::JsonB(serde_json::json!({
+            "name": "v2-removed-sink-pipeline",
+            "outbox": "v2-removed-sink-outbox",
+            "sink_type": "redis",
         })));
+        assert!(matches!(
+            result,
+            Err(crate::error::PgTideError::UnsupportedSurface { .. })
+        ));
         let exists: bool = Spi::get_one(
-            "SELECT EXISTS(SELECT 1 FROM tide.relay_inbox_config WHERE name = 'my-reverse-pipeline')",
+            "SELECT EXISTS(SELECT 1 FROM tide.relay_outbox_config WHERE name = 'v2-removed-sink-pipeline')",
         )
         .unwrap()
-        .unwrap_or(false);
-        assert!(exists, "relay_set_inbox_v2 must create a config row");
+        .unwrap_or(true);
+        assert!(!exists, "removed sink must not mutate the catalog");
     }
 
     // ── relay_enable / relay_disable ───────────────────────────────────────

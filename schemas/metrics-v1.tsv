@@ -16,8 +16,6 @@ pg_tide_relay_sink_publish_duration_seconds	histogram	seconds	pipeline,sink_type
 pg_tide_relay_pool_connections	gauge	connections	state	Connection pool state counts (idle/busy/waiting)
 pg_tide_relay_pool_acquire_duration_seconds	histogram	seconds	relay_group	Time to acquire a connection from the pool, in seconds	0.0001,0.001,0.005,0.01,0.05,0.1,0.5,1,5
 pg_tide_relay_receipts_written_total	counter	receipts	pipeline,sink_type,tenant	Total delivery receipt rows written after confirmed sink publish
-pg_tide_relay_fanin_source_lag	gauge	messages	pipeline,outbox,tenant	Consumer lag per source outbox in fan-in pipelines
-pg_tide_relay_fanin_messages_merged_total	counter	messages	pipeline,outbox,tenant	Total messages merged from each source outbox in fan-in pipelines
 pg_tide_relay_delivery_stage_total	counter	transitions	pipeline,stage,outcome	Delivery state-machine transitions
 pg_tide_relay_checkpoint_commit_errors_total	counter	errors	pipeline,source	Source checkpoint commit failures
 pg_tide_relay_ownership_events_total	counter	events	relay_group,event	Pipeline ownership transitions

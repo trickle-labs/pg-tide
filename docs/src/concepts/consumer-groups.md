@@ -90,10 +90,10 @@ Each consumer group:
 - Tracks its own position (last delivered outbox ID)
 - Advances at its own pace
 - Has its own circuit breaker state
-- Can have different transforms, routing, and rate limits
+- Can have different rate limits and delivery settings
 - Can target different sinks
 
-If the analytics pipeline falls behind (BigQuery is slow), notifications and search indexing continue unaffected.
+If one pipeline falls behind, independent consumer groups continue unaffected.
 
 ## Checking Group Status
 

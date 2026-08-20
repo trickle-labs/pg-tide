@@ -500,33 +500,6 @@ pub async fn run_doctor_with_threshold(
         all_ok = false;
     }
 
-    // v0.25.0: DuckLake catalog health check.
-    let ducklake_tables = ["ducklake_snapshot", "ducklake_data_file", "ducklake_column"];
-    let mut ducklake_ok = true;
-    for table in &ducklake_tables {
-        let exists: bool = client
-            .query_one(
-                "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
-                 WHERE table_name = $1)",
-                &[table],
-            )
-            .await
-            .map(|r| r.get(0))
-            .unwrap_or(false);
-        if !exists {
-            ducklake_ok = false;
-            break;
-        }
-    }
-    if ducklake_ok {
-        println!("  [OK] DuckLake catalog tables accessible");
-    } else {
-        println!(
-            "  [INFO] DuckLake catalog tables not found — DuckLake sink/source requires \
-             v0.20.0+ schema and DuckLake extension"
-        );
-    }
-
     // v0.25.0: DLQ depth warning — check hourly DLQ write rate.
     let dlq_hourly: i64 = client
         .query_one(

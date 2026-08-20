@@ -26,10 +26,8 @@ pub struct PipelineDocument {
     pub retry: Option<Map<String, Value>>,
     #[serde(default)]
     pub dlq: Option<Map<String, Value>>,
-    #[serde(default)]
-    pub transforms: Option<Vec<Value>>,
-    #[serde(default)]
-    pub encoding: Option<Map<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_format: Option<String>,
 }
 
 fn default_schema_version() -> u8 {
@@ -41,11 +39,9 @@ impl PipelineDocument {
         Self::parse_with_mode(name, raw, true)
     }
 
-    /// Parse a catalog row for runtime compatibility. Known preview,
-    /// experimental, and diagnostic connectors remain runnable but are not
-    /// accepted as part of the frozen v1 schema.
+    /// Parse a catalog row before a worker can poll messages.
     pub fn parse_runtime(name: &str, raw: &Value) -> Result<Self, RelayError> {
-        Self::parse_with_mode(name, raw, false)
+        Self::parse_with_mode(name, raw, true)
     }
 
     fn parse_with_mode(name: &str, raw: &Value, v1_only: bool) -> Result<Self, RelayError> {
@@ -87,6 +83,14 @@ impl PipelineDocument {
         }
         if self.source_type.trim().is_empty() || self.sink_type.trim().is_empty() {
             return Err(invalid(name, "source_type and sink_type must not be empty"));
+        }
+        if let Some(format) = self.wire_format.as_deref() {
+            if !matches!(format, "native" | "cloudevents") {
+                return Err(RelayError::UnsupportedSurface {
+                    surface: format!("wire_format={format}"),
+                    alternative: "wire_format=native or wire_format=cloudevents".to_string(),
+                });
+            }
         }
         if self
             .batch_size
@@ -135,20 +139,6 @@ impl PipelineDocument {
                 require_integer(name, "dlq.max_retries", value, 0, 100_000)?;
             }
         }
-        if let Some(encoding) = &self.encoding {
-            reject_keys(name, "encoding", encoding, &["format"])?;
-            if let Some(value) = encoding.get("format") {
-                let format = value
-                    .as_str()
-                    .ok_or_else(|| invalid(name, "encoding.format must be a string"))?;
-                if !["json", "jsonl", "native", "avro", "protobuf"].contains(&format) {
-                    return Err(invalid(
-                        name,
-                        format!("unsupported encoding.format '{format}'"),
-                    ));
-                }
-            }
-        }
         validate_secret_references(name, &Value::Object(self.source.clone()))?;
         validate_secret_references(name, &Value::Object(self.sink.clone()))?;
         Ok(())
@@ -187,6 +177,16 @@ fn validate_connector(
     };
     if accepted {
         return Ok(());
+    }
+    if v1_only {
+        return Err(RelayError::UnsupportedSurface {
+            surface: format!("{field}={connector}"),
+            alternative: if field == "source_type" {
+                "outbox".to_string()
+            } else {
+                "inbox, nats, kafka, webhook, stdout, or file".to_string()
+            },
+        });
     }
     Err(invalid(
         name,
@@ -228,122 +228,6 @@ fn validate_supported_source(
     Ok(())
 }
 
-const CONNECTOR_FIELDS: &[&str] = &[
-    "access_token",
-    "account",
-    "addr",
-    "allow_http",
-    "atomic_lake_writes",
-    "auth_token",
-    "avatar_url",
-    "batch_limit",
-    "batch_size",
-    "brokers",
-    "bucket",
-    "buffer_max_bytes",
-    "buffer_max_rows",
-    "buffer_max_seconds",
-    "catalog_connection",
-    "catalog_schema",
-    "change_data_feed",
-    "client_id",
-    "collection_template",
-    "component",
-    "configured_catalog",
-    "connection_string",
-    "container",
-    "data_path",
-    "database",
-    "dataset_id",
-    "descriptor_path",
-    "destination_args",
-    "destination_command",
-    "destination_config",
-    "destination_image",
-    "destination_name",
-    "doc_id_field",
-    "endpoint",
-    "entity",
-    "event_hub",
-    "event_type",
-    "exchange",
-    "format",
-    "group",
-    "group_id",
-    "icon_emoji",
-    "inbox",
-    "index_template",
-    "inline_row_limit",
-    "is_fifo",
-    "iterator_type",
-    "last_snapshot_id",
-    "max_len",
-    "max_messages",
-    "namespace",
-    "on_schema_change",
-    "outbox",
-    "partition",
-    "partition_by_date",
-    "partition_count",
-    "partition_key_template",
-    "password",
-    "path",
-    "prefix",
-    "postgres_url",
-    "project_id",
-    "provider",
-    "qos",
-    "queue",
-    "queue_url",
-    "region",
-    "root",
-    "routing_key",
-    "routing_key_template",
-    "rows_per_file",
-    "schema",
-    "secret",
-    "severity",
-    "signing_algorithm",
-    "signing_secret",
-    "source",
-    "source_args",
-    "source_command",
-    "source_config",
-    "source_image",
-    "source_name",
-    "snapshot_poll_interval_ms",
-    "ssrf_protection",
-    "storage_provider",
-    "stream",
-    "stream_key",
-    "stream_key_template",
-    "stream_name",
-    "stream_name_template",
-    "subject",
-    "subject_template",
-    "subscription",
-    "table",
-    "table_path",
-    "table_template",
-    "tap_args",
-    "tap_command",
-    "tap_name",
-    "target_args",
-    "target_command",
-    "target_name",
-    "timeout_secs",
-    "topic",
-    "topic_template",
-    "url",
-    "user",
-    "username",
-    "visibility_seconds",
-    "warehouse_path",
-    "webhook_url",
-    "write_concern",
-    "write_mode",
-];
-
 fn validate_connector_fields(
     name: &str,
     field: &str,
@@ -353,11 +237,12 @@ fn validate_connector_fields(
     if let Some(descriptor) = descriptors::source_type_to_descriptor(connector)
         .or_else(|| descriptors::sink_type_to_descriptor(connector))
     {
-        if descriptor.capabilities.is_some() {
-            return reject_keys(name, field, values, descriptor.config_fields);
-        }
+        return reject_keys(name, field, values, descriptor.config_fields);
     }
-    reject_keys(name, field, values, CONNECTOR_FIELDS)
+    Err(invalid(
+        name,
+        format!("unsupported {field} for connector '{connector}'"),
+    ))
 }
 
 fn validate_supported_sink(
@@ -454,7 +339,28 @@ fn validate_supported_sink(
                 }
             }
         }
+        "stdout" => {
+            reject_keys(name, "sink", values, &["format"])?;
+            validate_output_format(name, values)?;
+        }
+        "file" => {
+            require_string_field(name, "sink.path", values, true)?;
+            reject_keys(name, "sink", values, &["path", "format"])?;
+            validate_output_format(name, values)?;
+        }
         _ => {}
+    }
+    Ok(())
+}
+
+fn validate_output_format(name: &str, values: &Map<String, Value>) -> Result<(), RelayError> {
+    if let Some(format) = values.get("format") {
+        let format = format
+            .as_str()
+            .ok_or_else(|| invalid(name, "sink.format must be a string"))?;
+        if !matches!(format, "jsonl" | "pretty") {
+            return Err(invalid(name, "sink.format must be 'jsonl' or 'pretty'"));
+        }
     }
     Ok(())
 }
@@ -653,8 +559,7 @@ pub fn pipeline_schema() -> Value {
             "batch_size": {"type": "integer", "minimum": 1, "maximum": 1000000},
             "retry": {"$ref": "#/$defs/retry"},
             "dlq": {"$ref": "#/$defs/dlq"},
-            "transforms": {"type": "array"},
-            "encoding": {"$ref": "#/$defs/encoding"}
+            "wire_format": {"type": "string", "enum": ["native", "cloudevents"], "default": "native"}
         },
         "allOf": [
             {
@@ -701,6 +606,14 @@ pub fn pipeline_schema() -> Value {
                         "batch_size": {"maximum": 100}
                     }
                 }
+            },
+            {
+                "if": {"properties": {"sink_type": {"const": "stdout"}}},
+                "then": {"properties": {"sink": {"$ref": "#/$defs/sink_stdout"}}}
+            },
+            {
+                "if": {"properties": {"sink_type": {"const": "file"}}},
+                "then": {"properties": {"sink": {"$ref": "#/$defs/sink_file"}}}
             }
         ],
         "$defs": {
@@ -824,6 +737,24 @@ pub fn pipeline_schema() -> Value {
                 ],
                 "description": "HTTPS webhook outbound sink."
             },
+            "sink_stdout": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "format": {"type": "string", "enum": ["jsonl", "pretty"], "default": "jsonl"}
+                },
+                "description": "Diagnostic JSONL output to stdout."
+            },
+            "sink_file": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string", "minLength": 1},
+                    "format": {"type": "string", "enum": ["jsonl", "pretty"], "default": "jsonl"}
+                },
+                "description": "Diagnostic JSONL output to a file."
+            },
             "retry": {
                 "type": "object",
                 "additionalProperties": false,
@@ -840,13 +771,6 @@ pub fn pipeline_schema() -> Value {
                     "max_retries": {"type": "integer", "minimum": 0, "maximum": 100000}
                 }
             },
-            "encoding": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "format": {"type": "string", "enum": ["json", "jsonl", "native", "avro", "protobuf"]}
-                }
-            }
         }
     })
 }
@@ -971,7 +895,15 @@ mod tests {
         );
         assert_eq!(
             schema["properties"]["sink_type"]["enum"],
-            serde_json::json!(["inbox", "kafka", "nats", "pg_outbox", "webhook"])
+            serde_json::json!([
+                "file",
+                "inbox",
+                "kafka",
+                "nats",
+                "pg_outbox",
+                "stdout",
+                "webhook"
+            ])
         );
     }
 
@@ -990,6 +922,25 @@ mod tests {
                 "{field}={value} must remain outside v1"
             );
         }
+    }
+
+    #[test]
+    fn rejects_unknown_wire_format_without_defaulting() {
+        let error = PipelineDocument::parse(
+            "orders",
+            &json!({
+                "source_type": "outbox",
+                "source": {"outbox": "orders"},
+                "sink_type": "stdout",
+                "sink": {},
+                "wire_format": "debezium"
+            }),
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("PGTIDE_CONFIG_UNSUPPORTED_SURFACE"));
+        assert!(error.to_string().contains("wire_format=debezium"));
     }
 
     #[test]

@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "../README.md"
-description = "Bidirectional relay binary for pg_tide — bridges outboxes/inboxes with NATS, Kafka, HTTP webhooks, Redis, SQS, RabbitMQ, and more"
+description = "Production PostgreSQL outbox relay for inbox, NATS, Kafka, HTTPS webhooks, and diagnostics"
 keywords = ["postgresql", "streaming", "relay", "kafka", "nats"]
 categories = ["database", "command-line-utilities"]
 
@@ -18,82 +18,26 @@ path = "src/main.rs"
 default = ["core"]
 core = ["nats", "stdout", "webhook"]
 core-kafka = ["core", "kafka"]
-experimental-full = ["airbyte", "arrow-flight", "bigquery", "canal", "cdc-json", "clickhouse", "debezium", "delta", "discord", "ducklake", "elasticsearch", "eventhubs", "iceberg", "kafka", "kinesis", "kms-local", "maxwell", "mongodb", "mqtt", "native-tls", "nats", "object-storage", "otel", "pagerduty", "pubsub", "rabbitmq", "redis", "rocklake", "schema-registry", "servicebus", "singer", "slack", "snowflake", "sqs", "stdout", "wal-source", "webhook"]
 # END GENERATED CONNECTOR PROFILES
 
 # Internal crash-test instrumentation. Never included in a production profile.
 test-failpoints = []
 
-# Optional backends (each adds a Cargo dependency)
+# Retained connector features
 nats            = ["dep:async-nats"]
 webhook         = ["dep:hmac"]
 kafka           = ["dep:rdkafka"]
 stdout          = []
-redis           = ["dep:redis"]
-sqs             = ["dep:aws-sdk-sqs", "dep:aws-config"]
-rabbitmq        = ["dep:lapin"]
-# v0.23.0: native-tls — real TLS for sslmode=require/verify-ca/verify-full
-# via the platform OpenSSL stack (postgres-openssl crate).
-native-tls      = ["dep:postgres-openssl", "dep:openssl"]
-# v0.5.0: Cloud provider parity + analytics backends
-elasticsearch   = ["dep:base64"]
-pubsub          = ["dep:base64"]
-kinesis         = ["dep:aws-sdk-kinesis", "dep:aws-config"]
-servicebus      = ["dep:hmac", "dep:base64"]
-# v0.6.0: IoT and data lake backends
-mqtt            = ["dep:rumqttc"]
-eventhubs       = ["dep:hmac", "dep:base64"]
-object-storage  = ["dep:object_store", "dep:parquet"]
-# v0.7.0: Operational excellence features
-schema-registry = ["dep:apache-avro"]
-otel            = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
-# v0.8.0: Notification sinks + Arrow Flight
-slack           = []
-discord         = []
-pagerduty       = []
-arrow-flight    = ["dep:arrow-array", "dep:arrow-schema", "dep:arrow-flight", "dep:tonic"]
-# v0.9.0: Connector ecosystem
-singer          = []
-airbyte         = []
-# v0.10.0: Analytics sinks
-clickhouse      = []
-mongodb         = ["dep:mongodb"]
-snowflake       = []
-bigquery        = []
-iceberg         = ["dep:object_store", "dep:parquet"]
-delta           = ["dep:object_store", "dep:parquet"]
-ducklake        = ["dep:object_store", "dep:parquet"]
-# v0.37.0: RockLake PG-wire sidecar — bounded SQL subset; no nextval/DDL/ON CONFLICT.
-# Phases 0-5: catalog verification, Parquet write, inlined data, schema evolution,
-# auto-partition via ducklake_metadata.
-# See docs/archive/plans/rocklake.md for historical design details.
-rocklake        = ["dep:object_store", "dep:parquet"]
-# v0.11.0: Pluggable wire formats
-debezium        = []
-maxwell         = []
-canal           = []
-cdc-json        = []
-# v0.32.0: WAL logical-replication source — feasibility spike (pgoutput protocol).
-# Enables the PgLogicalSource which establishes a replication connection and
-# decodes pgoutput messages for INSERT events without polling.
-# Not enabled by default; skipped in CI unless explicitly requested.
-# See docs/adr/adr-009-wal-logical-replication-source.md for design details.
-wal-source      = []
-# v0.44.0: LocalKeyFile is the only supported encryption provider. Cloud
-# provider feature names remain compatibility-only and are not in a production
-# profile; unsupported providers fail before a worker polls messages.
 kms             = []
-kms-aws         = ["kms"]
-kms-gcp         = ["kms"]
-kms-vault       = ["kms"]
 kms-local       = ["kms", "dep:aes-gcm", "dep:base64"]
+# PostgreSQL TLS via the platform OpenSSL stack
+native-tls      = ["dep:postgres-openssl", "dep:openssl"]
 
 [dependencies]
 # Core async runtime + CLI
 clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync", "io-util", "fs", "io-std", "process"] }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-uuid-1", "with-chrono-0_4"] }
-# v0.15.0: Connection pooling for coordinator metadata operations
 deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
 
 # Serialisation
@@ -113,86 +57,42 @@ uuid = { version = "1", features = ["v4", "serde"] }
 futures-util = "0.3"
 libc = "0.2"
 
-# Metrics + health (always required — axum powers the /metrics and /health endpoints)
+# Metrics + health
 axum = "0.8"
 prometheus = "0.14"
 
-# Optional sink/source backends
+# Retained connector backends
 async-nats = { version = "0.47", optional = true }
 reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
 rdkafka = { version = "0.39", optional = true }
-redis = { version = "1.2", features = ["tokio-comp", "streams"], optional = true }
-aws-sdk-sqs = { version = "1.98", optional = true }
-aws-config = { version = "1.8", optional = true }
-lapin = { version = "4", optional = true }
-# v0.5.0 optional backends
-aws-sdk-kinesis = { version = "1", optional = true }
-base64 = { version = "0.22", optional = true }
 hmac = { version = "0.12", optional = true }
 sha2 = "0.10"
-# v0.6.0 optional backends
-rumqttc = { version = "0.24", optional = true }
-object_store = { version = "0.11", features = ["aws", "gcp", "azure"], optional = true }
-parquet = { version = "54", optional = true }
-# v0.7.0 optional backends
-apache-avro = { version = "0.18", optional = true }
-opentelemetry = { version = "0.27", optional = true }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
-opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "trace"], optional = true }
-tracing-opentelemetry = { version = "0.28", optional = true }
-# v0.7.0 always-on: JMESPath transforms + rate limiting
-jmespath = "0.3"
+aes-gcm = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+
+# Rate limiting and schema/URL validation
 governor = { version = "0.7", features = ["std"] }
-# v0.8.0 optional backends: notification sinks + Arrow Flight
-arrow-array = { version = "54", optional = true }
-arrow-schema = { version = "54", optional = true }
-arrow-flight = { version = "54", optional = true }
-tonic = { version = "0.12", optional = true }
-# v0.10.0 optional backends: analytics sinks
-mongodb = { version = "3", optional = true }
-# v0.13.0 always-on: schema evolution fingerprinting + SSRF guard
 hex = "0.4"
 regex-lite = "0.1"
-# v0.18.0: proper random jitter for backoff
 rand = "0.9"
-# v0.35.0: AES-256-GCM for LocalKeyFile KMS provider
-aes-gcm = { version = "0.10", optional = true }
-# v0.23.0: optional native-tls backend via platform OpenSSL stack
+
+# PostgreSQL TLS
 postgres-openssl = { version = "0.5", optional = true }
 openssl = { version = "0.10", optional = true }
 
 [dev-dependencies]
 testcontainers = "0.27"
-testcontainers-modules = { version = "0.15", features = ["kafka", "postgres", "redis", "rabbitmq"] }
+testcontainers-modules = { version = "0.15", features = ["kafka", "postgres"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-uuid-1", "with-chrono-0_4"] }
 tempfile = "3"
-# v0.8.0: Arrow types used in arrow_flight_test.rs (always-on for tests).
-arrow-array = "54"
-arrow-schema = "54"
-arrow-ipc = "54"
 criterion = { version = "0.5", features = ["async_tokio"] }
 async-nats = "0.47"
-lapin = "4"
-redis = { version = "1.2", features = ["tokio-comp"] }
 reqwest = { version = "0.12", features = ["json"], default-features = false }
-aws-sdk-sqs = "1.98"
-aws-sdk-kinesis = "1"
-aws-sdk-s3 = "1"
-aws-config = "1.8"
 axum = "0.8"
 bytes = "1"
-base64 = "0.22"
-hmac = "0.12"
-# v0.16.0: Property-based testing.
 proptest = "1"
 sha2 = "0.10"
-rumqttc = "0.24"
-object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
-parquet = "54"
-# v0.38.0: RockLake testkit for Phase 6 integration tests.
-# Provides PgWireHarness: spins up an in-memory RockLake PG-wire server.
-rocklake-testkit = { git = "https://github.com/trickle-labs/rocklake.git", rev = "f43052917a34e37948fa44f8518db89e1c1f7d18", package = "rocklake-testkit" }
 
 [[bench]]
 name = "throughput"

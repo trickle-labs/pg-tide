@@ -9,12 +9,7 @@
 //!
 //! Supported formats exercised:
 //!   - native (pg_tide native JSON)
-//!   - debezium-json
-//!   - maxwell
-//!   - canal
 //!   - cloudevents
-//!   - cdc-json
-//!   - claim-check
 
 use libfuzzer_sys::fuzz_target;
 use pg_tide_relay::wire_format::{from_config, RawMessage};
@@ -25,21 +20,18 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Use the first byte to select the wire format under test.
-    let format_selector = data[0] % 7;
+    let format_selector = data[0] % 2;
     let payload = &data[1..];
 
     let format_name = match format_selector {
         0 => "native",
-        1 => "debezium-json",
-        2 => "maxwell",
-        3 => "canal",
-        4 => "cloudevents",
-        5 => "cdc-json",
-        _ => "claim-check",
+        _ => "cloudevents",
     };
 
     let config = serde_json::json!({ "wire_format": format_name });
-    let decoder = from_config(&config);
+    let Ok(decoder) = from_config(&config) else {
+        return;
+    };
 
     let raw = RawMessage::new("fuzz-topic", None, Some(payload.to_vec()));
 

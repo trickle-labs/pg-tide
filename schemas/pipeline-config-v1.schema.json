@@ -14,22 +14,6 @@
       },
       "type": "object"
     },
-    "encoding": {
-      "additionalProperties": false,
-      "properties": {
-        "format": {
-          "enum": [
-            "json",
-            "jsonl",
-            "native",
-            "avro",
-            "protobuf"
-          ],
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "retry": {
       "additionalProperties": false,
       "properties": {
@@ -43,6 +27,28 @@
           "type": "integer"
         }
       },
+      "type": "object"
+    },
+    "sink_file": {
+      "additionalProperties": false,
+      "description": "Diagnostic JSONL output to a file.",
+      "properties": {
+        "format": {
+          "default": "jsonl",
+          "enum": [
+            "jsonl",
+            "pretty"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
       "type": "object"
     },
     "sink_inbox": {
@@ -138,6 +144,21 @@
         "inbox",
         "postgres_url"
       ],
+      "type": "object"
+    },
+    "sink_stdout": {
+      "additionalProperties": false,
+      "description": "Diagnostic JSONL output to stdout.",
+      "properties": {
+        "format": {
+          "default": "jsonl",
+          "enum": [
+            "jsonl",
+            "pretty"
+          ],
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "sink_webhook": {
@@ -352,6 +373,38 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "sink_type": {
+            "const": "stdout"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "sink": {
+            "$ref": "#/$defs/sink_stdout"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "sink_type": {
+            "const": "file"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "sink": {
+            "$ref": "#/$defs/sink_file"
+          }
+        }
+      }
     }
   ],
   "properties": {
@@ -362,9 +415,6 @@
     },
     "dlq": {
       "$ref": "#/$defs/dlq"
-    },
-    "encoding": {
-      "$ref": "#/$defs/encoding"
     },
     "retry": {
       "$ref": "#/$defs/retry"
@@ -379,10 +429,12 @@
     },
     "sink_type": {
       "enum": [
+        "file",
         "inbox",
         "kafka",
         "nats",
         "pg_outbox",
+        "stdout",
         "webhook"
       ],
       "type": "string"
@@ -396,8 +448,13 @@
       ],
       "type": "string"
     },
-    "transforms": {
-      "type": "array"
+    "wire_format": {
+      "default": "native",
+      "enum": [
+        "native",
+        "cloudevents"
+      ],
+      "type": "string"
     }
   },
   "required": [

@@ -7,8 +7,8 @@
 
 pg_tide gives your PostgreSQL database a built-in messaging backbone. Publish events atomically within your existing transactions — no dual-writes, no distributed transactions, no message broker required at the database layer.
 
-When you're ready to fan out to Kafka, NATS, Redis Streams, or any analytics
-platform, the `pg-tide` relay binary bridges the gap: at-least-once transport,
+When you're ready to deliver to PostgreSQL, NATS JetStream, Apache Kafka, or an
+HTTPS endpoint, the `pg-tide` relay binary bridges the gap: at-least-once transport,
 stable event identities, hot-reload pipeline config, and HA failover — all
 configured with plain SQL.
 
@@ -20,13 +20,13 @@ configured with plain SQL.
 - **Consumer Groups** — Kafka-style offset tracking with heartbeats and visibility leases
 - **Relay Binary** — standalone `pg-tide` process; config lives in PostgreSQL and hot-reloads without restart
 - **Auditable connector surface** — maturity, ownership, build profiles, and evidence are generated from `connectors.toml`
-- **Pluggable Wire Formats** — native, Debezium, CloudEvents, Maxwell, Canal, and custom CDC JSON
+- **Stable Wire Formats** — native pg_tide JSON and CloudEvents
 - **Multi-Tenant** — row-level security, per-tenant Prometheus labels, per-outbox publisher ACLs, and per-tenant advisory-lock namespacing
 - **Operational storage controls** — bounded participant-aware cleanup, optional ID-range partitions, and explicit maintenance-window conversion
 - **Replay Workbench** — rewind consumer offsets, preview replays, and manage the DLQ from SQL or CLI
 - **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart; `--self-test` and `--expect-extension-version` flags for Kubernetes readiness probes
-- **Observable** — OpenTelemetry spans, Prometheus metrics, Grafana dashboard, and pre-built alerting rules included
-- **Envelope Encryption Foundation** — KMS-backed AES-256-GCM envelope encryption (AWS KMS, GCP Cloud KMS, HashiCorp Vault, local key file); `LocalKeyFile` provider fully implemented in v0.35.0; cloud providers ship in v1.0.0
+- **Observable** — Prometheus metrics, health checks, structured logs, Grafana dashboard, and pre-built alerting rules included
+- **Local key-file encryption** — supported local envelope encryption; unsupported provider or payload variants fail closed
 
 ## Quick Start
 
@@ -99,8 +99,6 @@ tar xzf pg-tide-*.tar.gz && sudo mv pg-tide /usr/local/bin/
 # Or via Docker (standard build)
 docker pull ghcr.io/trickle-labs/pg-tide:latest
 
-# Optional evaluation build with every compiling connector
-docker pull ghcr.io/trickle-labs/pg-tide:latest-experimental
 ```
 
 Release artifacts and Docker images are signed with [sigstore/cosign](https://github.com/sigstore/cosign-installer) using keyless OIDC signing.
@@ -116,64 +114,27 @@ Release artifacts and Docker images are signed with [sigstore/cosign](https://gi
 <!-- BEGIN GENERATED CONNECTORS -->
 ## Connector surface
 
-The registry contains 37 selectable or documented surfaces: 5 supported, 4 preview, and 27 experimental.
+The registry contains 6 selectable or documented surfaces: 5 supported, 0 preview, and 0 experimental.
 Diagnostics are labeled separately and are not production integrations.
 
 | Connector | Direction | Maturity | Core | Tested versions | Owner | Evidence |
 |---|---|---|---:|---|---|---|
 | [PostgreSQL native outbox](docs/src/support/connector-compatibility.md#postgresql-outbox) | source | supported | yes | PostgreSQL 18 | @grove | [outbox_source_test.rs](pg-tide-relay/tests/outbox_source_test.rs) |
-| [pg_trickle outbox compatibility](docs/src/support/connector-compatibility.md#pg-trickle-compatibility) | source | preview | no | unknown | @grove | [outbox_source_test.rs](pg-tide-relay/tests/outbox_source_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [stdin, stdout, and file diagnostics](docs/src/support/connector-compatibility.md#diagnostics) | bidirectional | supported | yes | local process | @grove | [postgres_insert_microbenchmark.rs](pg-tide-relay/tests/postgres_insert_microbenchmark.rs) |
+| [stdout and file diagnostics](docs/src/support/connector-compatibility.md#diagnostics) | sink | supported | yes | local process | @grove | [postgres_insert_microbenchmark.rs](pg-tide-relay/tests/postgres_insert_microbenchmark.rs) |
 | [PostgreSQL inbox](docs/src/support/connector-compatibility.md#postgresql-inbox) | sink | supported | yes | PostgreSQL 18 | @grove | [pg_inbox_sink_test.rs](pg-tide-relay/tests/pg_inbox_sink_test.rs), [inbox_sink_test.rs](pg-tide-relay/tests/inbox_sink_test.rs) |
 | [NATS JetStream outbound](docs/src/support/connector-compatibility.md#nats-jetstream-sink) | sink | supported | yes | NATS Server 2.11.0 with JetStream | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
-| [NATS inbound](docs/src/support/connector-compatibility.md#nats-source) | source | preview | no | NATS Server 2.11.0 with JetStream | @grove | [nats_test.rs](pg-tide-relay/tests/nats_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
 | [HTTPS webhook outbound](docs/src/support/connector-compatibility.md#webhook-sink) | sink | supported | yes | HTTP/1.1 with TLS 1.3 | @grove | [webhook_test.rs](pg-tide-relay/tests/webhook_test.rs) |
-| [Webhook inbound](docs/src/support/connector-compatibility.md#webhook-source) | source | preview | no | HTTP/1.1 in-process fixture | @grove | [webhook_sig_test.rs](pg-tide-relay/tests/webhook_sig_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
 | [Apache Kafka outbound](docs/src/support/connector-compatibility.md#kafka-sink) | sink | supported | no | Apache Kafka 3.8.0 KRaft | @grove | [public_api_outbox_to_kafka_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs) |
-| [Apache Kafka inbound](docs/src/support/connector-compatibility.md#kafka-source) | source | preview | no | Apache Kafka 3.8.0 KRaft | @grove | [kafka_test.rs](pg-tide-relay/tests/kafka_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Redis Streams](docs/src/support/connector-compatibility.md#redis) | bidirectional | experimental | no | unknown | @grove | [redis_test.rs](pg-tide-relay/tests/redis_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Amazon SQS](docs/src/support/connector-compatibility.md#sqs) | bidirectional | experimental | no | unknown | @grove | [sqs_test.rs](pg-tide-relay/tests/sqs_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [RabbitMQ](docs/src/support/connector-compatibility.md#rabbitmq) | bidirectional | experimental | no | unknown | @grove | [rabbitmq_test.rs](pg-tide-relay/tests/rabbitmq_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Google Pub/Sub](docs/src/support/connector-compatibility.md#pubsub) | bidirectional | experimental | no | unknown | @grove | [pubsub_test.rs](pg-tide-relay/tests/pubsub_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Amazon Kinesis](docs/src/support/connector-compatibility.md#kinesis) | bidirectional | experimental | no | unknown | @grove | [kinesis_test.rs](pg-tide-relay/tests/kinesis_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Azure Service Bus](docs/src/support/connector-compatibility.md#servicebus) | bidirectional | experimental | no | unknown | @grove | [servicebus_test.rs](pg-tide-relay/tests/servicebus_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [MQTT v5](docs/src/support/connector-compatibility.md#mqtt) | bidirectional | experimental | no | unknown | @grove | [mqtt_test.rs](pg-tide-relay/tests/mqtt_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Azure Event Hubs](docs/src/support/connector-compatibility.md#eventhubs) | bidirectional | experimental | no | unknown | @grove | [eventhubs_test.rs](pg-tide-relay/tests/eventhubs_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Elasticsearch](docs/src/support/connector-compatibility.md#elasticsearch) | sink | experimental | no | unknown | @grove | [elasticsearch_test.rs](pg-tide-relay/tests/elasticsearch_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Object storage](docs/src/support/connector-compatibility.md#object-storage) | sink | experimental | no | unknown | @grove | [object_storage_test.rs](pg-tide-relay/tests/object_storage_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Slack](docs/src/support/connector-compatibility.md#slack) | sink | experimental | no | unknown | @grove | [slack_test.rs](pg-tide-relay/tests/slack_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Discord](docs/src/support/connector-compatibility.md#discord) | sink | experimental | no | unknown | @grove | [discord_test.rs](pg-tide-relay/tests/discord_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [PagerDuty](docs/src/support/connector-compatibility.md#pagerduty) | sink | experimental | no | unknown | @grove | [pagerduty_test.rs](pg-tide-relay/tests/pagerduty_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Apache Arrow Flight](docs/src/support/connector-compatibility.md#arrow-flight) | sink | experimental | no | unknown | @grove | [arrow_flight_test.rs](pg-tide-relay/tests/arrow_flight_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Singer](docs/src/support/connector-compatibility.md#singer) | bidirectional | experimental | no | unknown | @grove | [singer_test.rs](pg-tide-relay/tests/singer_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Airbyte](docs/src/support/connector-compatibility.md#airbyte) | bidirectional | experimental | no | unknown | @grove | [airbyte_test.rs](pg-tide-relay/tests/airbyte_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [ClickHouse](docs/src/support/connector-compatibility.md#clickhouse) | sink | experimental | no | unknown | @grove | [clickhouse_test.rs](pg-tide-relay/tests/clickhouse_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [MongoDB](docs/src/support/connector-compatibility.md#mongodb) | sink | experimental | no | unknown | @grove | [mongodb_test.rs](pg-tide-relay/tests/mongodb_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Google BigQuery](docs/src/support/connector-compatibility.md#bigquery) | sink | experimental | no | unknown | @grove | [bigquery_test.rs](pg-tide-relay/tests/bigquery_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Snowflake](docs/src/support/connector-compatibility.md#snowflake) | sink | experimental | no | unknown | @grove | [snowflake_test.rs](pg-tide-relay/tests/snowflake_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Delta Lake](docs/src/support/connector-compatibility.md#delta) | sink | experimental | no | unknown | @grove | [delta_test.rs](pg-tide-relay/tests/delta_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Apache Iceberg](docs/src/support/connector-compatibility.md#iceberg) | sink | experimental | no | unknown | @grove | [iceberg_test.rs](pg-tide-relay/tests/iceberg_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [DuckLake](docs/src/support/connector-compatibility.md#ducklake) | sink | experimental | no | unknown | @grove | [ducklake_test.rs](pg-tide-relay/tests/ducklake_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [RockLake](docs/src/support/connector-compatibility.md#rocklake) | bidirectional | experimental | no | RockLake v0.27.14 | @grove | [rocklake_test.rs](pg-tide-relay/tests/rocklake_test.rs), [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [Fan-in compatibility surface](docs/src/support/connector-compatibility.md#fan-in) | source | experimental | no | disabled | @grove | [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [DuckLake reverse source (unavailable)](docs/src/support/connector-compatibility.md#ducklake-reverse) | unavailable | experimental | no | not registered | @grove | [metrics.rs](pg-tide-relay/src/metrics.rs) |
-| [PostgreSQL WAL logical source (groundwork)](docs/src/support/connector-compatibility.md#wal-logical-source) | source | experimental | no | not registered | @grove | [metrics.rs](pg-tide-relay/src/metrics.rs) |
 <!-- END GENERATED CONNECTORS -->
 
 ## Wire Formats
 
-All pipelines support a pluggable wire format selected per-pipeline in the catalog:
+All pipelines support a wire format selected per-pipeline in the catalog:
 
 | Format | Direction | Description |
 |--------|-----------|-------------|
-| `native` | bidirectional | Default pg_tide JSON envelope |
-| `debezium` | bidirectional | Debezium JSON — encode outbox rows, decode from Kafka CDC topics |
-| `cloudevents` | bidirectional | CloudEvents v1.0 JSON with AsyncAPI 3.0 export |
-| `maxwell` | decode only | Maxwell (MySQL CDC) JSON → inbox |
-| `canal` | decode only | Alibaba Canal (MySQL CDC) JSON → inbox |
-| `cdc_json` | bidirectional | Custom CDC JSON with user-supplied dot-notation path mapping |
-
-The Debezium encoder emits tombstones after DELETE so Kafka log-compacted topics compact correctly.
+| `native` | outbound | Default pg_tide JSON envelope |
+| `cloudevents` | outbound | CloudEvents v1.0 JSON |
 
 ## Operational CLI
 
@@ -195,21 +156,9 @@ pg-tide status --postgres-url "postgres://..." --inbox-summary
 # Verify the installed extension meets a minimum version (useful in initContainers)
 pg-tide --expect-extension-version 0.34.0 --self-test --postgres-url "postgres://..."
 
-# Delete consumed outbox rows older than the retention window
-pg-tide sweep --postgres-url "postgres://..."
-
-# Validate pipeline config without processing any messages
-pg-tide validate-config --pipeline orders-nats
-
-# Replay workbench
-pg-tide replay preview  --pipeline orders-nats --from-lsn 0/1000000 --to-lsn 0/2000000
-pg-tide replay dlq-requeue --pipeline orders-nats --event-id abc123
-
-# Generate an AsyncAPI 3.0 document from relay catalog metadata (with live payload schema sampling)
-pg-tide asyncapi export --postgres-url "postgres://..." --full-schema
-
-# Validate local catalog against a published AsyncAPI spec
-pg-tide asyncapi validate --spec-url https://example.com/asyncapi.yaml
+# Replay and DLQ recovery
+pg-tide replay preview --outbox orders --from-id 100 --to-id 200
+pg-tide replay dlq-requeue --pipeline orders-nats --dedup-key orders:42:0
 ```
 
 ## Security
@@ -219,11 +168,11 @@ pg-tide asyncapi validate --spec-url https://example.com/asyncapi.yaml
 - **SSRF protection** — webhook sinks reject loopback, link-local, private ranges, and plain HTTP by default
 - **Secret redaction** — `${env:…}` and `${file:…}` references are replaced with `[REDACTED]` in logs
 - **Supply-chain audit** — `cargo-deny` checks every dependency for RUSTSEC advisories and license compliance in CI
-- **Envelope Encryption Foundation** — `tide.outbox_encryption_config` catalog table and `EncryptionEnvelope` trait for AES-256-GCM KMS-backed payload encryption; `LocalKeyFile` provider is fully implemented (including key rotation) in v0.35.0; cloud providers (AWS KMS, GCP Cloud KMS, HashiCorp Vault) ship in v1.0.0
+- **Envelope encryption foundation** — the extension keeps the versioned encryption catalog contract; supported relay paths use native payloads and fail closed on unsupported encrypted payload handling
 
 ## Observability
 
-- **OpenTelemetry spans** — `relay.source.poll`, `relay.sink.publish`, `relay.transform.evaluate`, `relay.routing.apply`, `relay.dlq.insert`, `relay.schema_evolution.check`, and more; works with Jaeger, Tempo, Honeycomb, or Datadog
+- **Structured observability** — Prometheus metrics, health checks, structured logs, DLQ visibility, and pipeline lag tracking
 - **Prometheus metrics** — messages published/consumed, sink latency histogram, DLQ entries, pipeline health, consumer lag, connection pool utilisation, and per-tenant labels
 - **Grafana dashboard** — pre-built dashboard in `pg-tide/dashboards/relay-health.json` with pipeline health, sink latency, connection pool, and per-tenant rows; metric names validated against `metrics.rs` in CI
 - **Alerting rules** — `pg-tide/dashboards/alerts.yaml` ships five production-ready Prometheus alerting rules (pipeline paused, high consumer lag, DLQ depth, DLQ write error, pool saturation)
@@ -258,8 +207,7 @@ All functions live in the `tide` schema. Key functions by area:
 
 | Function | Description |
 |----------|-------------|
-| `tide.relay_set_outbox_v2(config jsonb)` | Configure forward pipeline (outbox → sink); keys: `name`, `outbox`, `sink_type`, `config`, optional `source_mode` (`native` default / `pg_trickle`) |
-| `tide.relay_set_inbox_v2(config jsonb)` | Configure reverse pipeline (source → inbox) |
+| `tide.relay_set_outbox_v2(config jsonb)` | Configure a native forward pipeline; keys: `name`, `outbox`, `sink_type`, and `config` |
 | `tide.relay_set_tenant(pipeline, tenant)` | Assign a pipeline to a tenant |
 | `tide.relay_grant_tenant(pipeline, tenant, role)` | Grant tenant access |
 
@@ -278,14 +226,6 @@ All functions live in the `tide` schema. Key functions by area:
 | `tide.relay_replay_preview(pipeline, from_lsn, to_lsn)` | Dry-run replay; no offsets committed |
 | `tide.dlq_resolve(pipeline, event_id)` | Mark DLQ entry resolved |
 | `tide.dlq_requeue(pipeline, event_id)` | Reschedule DLQ entry for reprocessing |
-
-**Backfill**
-
-| Function | Description |
-|----------|-------------|
-| `tide.backfill_create(outbox, sink_pipeline, chunk_size)` | Create a cataloged backfill job |
-| `tide.backfill_pause(job_id)` / `tide.backfill_resume(job_id)` | Pause or resume a backfill job |
-| `tide.backfill_status(job_id)` | Job status JSON; `NULL` for fleet summary |
 
 Views: `tide.outbox_retention_status` · `tide.relay_pipeline_lag` ·
 `tide.outbox_cleanup_state` · `tide.inbox_fleet_summary`
@@ -312,17 +252,6 @@ SELECT tide.relay_grant_tenant('orders-nats', 'acme-corp', 'acme_app_role');
 ```
 
 Row-level security on relay config tables ensures each tenant can only see and modify their own pipelines. All Prometheus metrics carry a `tenant` label so you can build per-tenant dashboards without extra filtering.
-
-## Schema Evolution
-
-The `SchemaEvolutionGuard` computes SHA-256 fingerprints of message payload schemas per pipeline, detects `Initial` / `Additive` / `Breaking` changes, and enforces a configurable policy:
-
-| Policy | Effect |
-|--------|--------|
-| `warn` | Log a warning and continue |
-| `continue` | Silently accept the change |
-| `pause` | Stop the pipeline until the schema is acknowledged |
-| `dlq` | Route the message to the dead-letter queue |
 
 ## Examples
 
@@ -370,17 +299,6 @@ ALTER EXTENSION pg_tide UPDATE TO '0.34.0';
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for per-release migration tables and breaking changes.
-
-## Integration with pg_trickle
-
-If you use [pg_trickle](https://github.com/trickle-labs/pg-trickle) ≥ v0.46.0,
-install pg_tide first and then use `pgtrickle.attach_outbox()` to automatically
-publish stream table changes to an outbox:
-
-```sql
-CREATE EXTENSION pg_tide;
-SELECT pgtrickle.attach_outbox('my_stream_table', retention_hours := 48);
-```
 
 ## License
 

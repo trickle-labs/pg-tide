@@ -144,6 +144,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
         },
+        Some(Commands::MigrateConfig { postgres_url }) => {
+            let url = postgres_url
+                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
+                .unwrap_or_else(|| cfg.postgres_url.clone());
+            require_postgres_url(&url, "migrate-config");
+            return cmd::migrate_config::run_migrate_config(&url).await;
+        }
         Some(Commands::Maintenance(MaintenanceCommands::Sweep {
             outbox,
             batch_size,
@@ -183,68 +190,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             require_postgres_url(&url, "doctor");
             return cmd::doctor::run_doctor(&url, cli.output_format).await;
         }
-        Some(Commands::ValidateConfig {
-            pipeline,
-            postgres_url,
-        }) => {
-            eprintln!("warning: `validate-config` is deprecated; use `config validate`");
-            let url = postgres_url
-                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                .unwrap_or_else(|| cfg.postgres_url.clone());
-            require_postgres_url(&url, "validate-config");
-            let result =
-                cmd::validate_config::run_validate_config(&url, &pipeline, cli.output_format).await;
-            if let Err(error) = result {
-                cmd::output::failure(
-                    "config validate",
-                    cmd::diagnostic::from_error("postgres.catalog", &error),
-                    cli.output_format,
-                )?;
-                return Err(error);
-            }
-            return Ok(());
-        }
         Some(Commands::Replay(replay_cmd)) => {
             return cmd::replay::run_replay_command(replay_cmd, &cfg.postgres_url).await;
-        }
-        Some(Commands::Asyncapi(asyncapi_cmd)) => {
-            return cmd::asyncapi::run_asyncapi_command(asyncapi_cmd, &cfg.postgres_url).await;
-        }
-        Some(Commands::Ducklake(ducklake_cmd)) => {
-            return cmd::ducklake::run_ducklake_command(ducklake_cmd, &cfg.postgres_url).await;
-        }
-        Some(Commands::Sweep {
-            outbox,
-            batch_size,
-            max_batches,
-            dry_run,
-            postgres_url,
-        }) => {
-            eprintln!("warning: `sweep` is deprecated; use `maintenance sweep`");
-            let url = postgres_url
-                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                .unwrap_or_else(|| cfg.postgres_url.clone());
-            require_postgres_url(&url, "sweep");
-            let result = cmd::sweep::run_sweep_with_options(
-                &url,
-                outbox.as_deref(),
-                batch_size,
-                max_batches,
-                dry_run,
-                cli.output_format,
-            )
-            .await;
-            if let Err(error) = result {
-                if matches!(cli.output_format, OutputFormat::Json) {
-                    cmd::output::failure(
-                        "maintenance sweep",
-                        cmd::diagnostic::from_error("postgres.maintenance", &error),
-                        cli.output_format,
-                    )?;
-                }
-                return Err(error);
-            }
-            return Ok(());
         }
         Some(Commands::Status {
             postgres_url,
@@ -267,53 +214,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             return Ok(());
         }
-        Some(Commands::MigrateConfig { postgres_url }) => {
-            let url = postgres_url
-                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                .unwrap_or_else(|| cfg.postgres_url.clone());
-            return cmd::migrate_config::run_migrate_config(&cfg, Some(url.as_str())).await;
-        }
-        Some(Commands::Template(template_cmd)) => {
-            use cli::TemplateCommands;
-            match template_cmd {
-                TemplateCommands::List { postgres_url } => {
-                    let url = postgres_url
-                        .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                        .unwrap_or_else(|| cfg.postgres_url.clone());
-                    require_postgres_url(&url, "template list");
-                    return cmd::template::run_template_list(&url).await;
-                }
-                TemplateCommands::Show { name, postgres_url } => {
-                    let url = postgres_url
-                        .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                        .unwrap_or_else(|| cfg.postgres_url.clone());
-                    require_postgres_url(&url, "template show");
-                    return cmd::template::run_template_show(&url, &name).await;
-                }
-                TemplateCommands::Apply {
-                    name,
-                    outbox,
-                    set,
-                    postgres_url,
-                } => {
-                    let url = postgres_url
-                        .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                        .unwrap_or_else(|| cfg.postgres_url.clone());
-                    require_postgres_url(&url, "template apply");
-                    // Parse "key=value" pairs.
-                    let mut pairs: Vec<(String, String)> = Vec::new();
-                    for kv in &set {
-                        if let Some((k, v)) = kv.split_once('=') {
-                            pairs.push((k.to_string(), v.to_string()));
-                        } else {
-                            eprintln!("Invalid --set value '{}': expected key=value", kv);
-                            std::process::exit(2);
-                        }
-                    }
-                    return cmd::template::run_template_apply(&url, &name, &outbox, &pairs).await;
-                }
-            }
-        }
         Some(Commands::History {
             pipeline,
             limit,
@@ -327,54 +227,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             require_postgres_url(&url, "history");
             return cmd::history::run_history(&url, &pipeline, limit, since.as_deref(), &output)
                 .await;
-        }
-        Some(Commands::Backfill(backfill_cmd)) => {
-            use cli::BackfillCommands;
-            match backfill_cmd {
-                BackfillCommands::Pause {
-                    job_name,
-                    postgres_url,
-                } => {
-                    let url = postgres_url
-                        .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                        .unwrap_or_else(|| cfg.postgres_url.clone());
-                    require_postgres_url(&url, "backfill pause");
-                    return cmd::backfill_cmd::run_backfill_pause(&url, &job_name).await;
-                }
-                BackfillCommands::Resume {
-                    job_name,
-                    postgres_url,
-                } => {
-                    let url = postgres_url
-                        .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                        .unwrap_or_else(|| cfg.postgres_url.clone());
-                    require_postgres_url(&url, "backfill resume");
-                    return cmd::backfill_cmd::run_backfill_resume(&url, &job_name).await;
-                }
-                BackfillCommands::Cancel {
-                    job_name,
-                    postgres_url,
-                } => {
-                    let url = postgres_url
-                        .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                        .unwrap_or_else(|| cfg.postgres_url.clone());
-                    require_postgres_url(&url, "backfill cancel");
-                    return cmd::backfill_cmd::run_backfill_cancel(&url, &job_name).await;
-                }
-                BackfillCommands::Status {
-                    job_name,
-                    postgres_url,
-                } => {
-                    let url = postgres_url
-                        .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                        .unwrap_or_else(|| cfg.postgres_url.clone());
-                    require_postgres_url(&url, "backfill status");
-                    return cmd::backfill_cmd::run_backfill_status(&url, job_name.as_deref()).await;
-                }
-            }
-        }
-        Some(Commands::Dag(dag_cmd)) => {
-            return cmd::dag::run_dag_command(dag_cmd, &cfg.postgres_url).await;
         }
         None => {
             eprintln!("warning: commandless relay startup is deprecated; use `run`");

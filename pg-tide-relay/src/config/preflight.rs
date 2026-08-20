@@ -32,9 +32,8 @@ impl PreflightReport {
 }
 
 /// Validate every catalog row before ownership, polling, or worker creation.
-/// Disabled rows are structurally validated too. Known preview, experimental,
-/// and diagnostic connectors remain outside the v1 contract and are warnings;
-/// unavailable connectors, unknown types, and malformed rows remain errors.
+/// Disabled rows are structurally validated too. Removed and unknown surface
+/// values are errors before any worker can poll messages.
 pub fn validate_pipelines(pipelines: &[PipelineConfig]) -> PreflightReport {
     let mut issues = Vec::new();
     for pipeline in pipelines {
@@ -52,20 +51,6 @@ pub fn validate_pipelines(pipelines: &[PipelineConfig]) -> PreflightReport {
                         descriptors::sink_type_to_descriptor(&document.sink_type),
                     ),
                 ] {
-                    let v1_supported = match field {
-                        "source_type" => {
-                            descriptors::V1_SUPPORTED_SOURCE_TYPES.contains(&connector)
-                        }
-                        "sink_type" => descriptors::V1_SUPPORTED_SINK_TYPES.contains(&connector),
-                        _ => false,
-                    };
-                    if !v1_supported {
-                        issues.push(PreflightIssue {
-                            pipeline: pipeline.name.clone(),
-                            severity: PreflightSeverity::Warning,
-                            reason: format!("{field} '{connector}' is outside pipeline schema v1"),
-                        });
-                    }
                     if !descriptor.is_some_and(descriptors::is_available) {
                         issues.push(PreflightIssue {
                             pipeline: pipeline.name.clone(),
@@ -135,17 +120,14 @@ mod tests {
         assert_eq!(report.issues[1].pipeline, "z");
         assert!(matches!(
             report.issues[1].severity,
-            PreflightSeverity::Warning
+            PreflightSeverity::Error
         ));
     }
 
     #[test]
-    fn allows_known_diagnostic_connectors_outside_v1() {
+    fn allows_diagnostic_output() {
         let report = validate_pipelines(&[pipeline("diagnostic", true, "outbox")]);
         assert!(report.is_valid());
-        assert!(report
-            .issues
-            .iter()
-            .any(|issue| issue.reason.contains("sink_type 'stdout'")));
+        assert!(report.issues.is_empty());
     }
 }
