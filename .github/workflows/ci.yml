@@ -673,6 +673,7 @@ jobs:
             https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v040-source"
           (
             cd "$GITHUB_WORKSPACE/v040-source"
+            sed -i 's/members = \["pg-tide-ext", "pg-tide-relay"\]/members = ["pg-tide-ext"]/' Cargo.toml
             cargo pgrx install --package pg-tide-ext \
               --pg-config /usr/lib/postgresql/18/bin/pg_config
           )
