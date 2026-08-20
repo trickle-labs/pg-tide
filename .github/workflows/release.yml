@@ -718,7 +718,15 @@ jobs:
           find artifacts release-evidence -type f -print0 |
             sort -z |
             while IFS= read -r -d '' file; do
-              gh release upload "$tag" "$file" --clobber
+              for attempt in 1 2 3; do
+                if gh release upload "$tag" "$file" --clobber; then
+                  break
+                fi
+                if [[ "$attempt" == 3 ]]; then
+                  exit 1
+                fi
+                sleep 5
+              done
             done
 
           gh release edit "$tag" --draft=false --verify-tag
