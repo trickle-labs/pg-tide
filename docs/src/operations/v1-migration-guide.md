@@ -11,6 +11,39 @@ It includes several **breaking changes** from the v0.x series that require expli
 action before upgrading.  This guide covers each breaking change, the upgrade
 procedure, the rollback procedure, and the feature compatibility matrix.
 
+## v0.49.0 focused-surface upgrade
+
+The v0.49.0 extension and relay keep the PostgreSQL outbox path and these
+destinations: PostgreSQL inbox, NATS JetStream, Apache Kafka, and HTTPS webhook.
+Native JSON and CloudEvents remain the supported envelopes. `stdout` and file
+output are diagnostics only.
+
+Before upgrading, inventory the catalog without changing it:
+
+```bash
+pg-tide migrate-config --postgres-url "$DATABASE_URL"
+pg-tide config export --postgres-url "$DATABASE_URL" > pg-tide-v0.48.0.json
+```
+
+The inventory reports reverse pipelines, `pg_trickle` sources, removed sinks,
+and removed wire formats with `PGTIDE_CONFIG_UNSUPPORTED_SURFACE` and
+`last_version=0.48.0`. Export every affected row, then disable, replace, or
+delete it. The `0.48.0 → 0.49.0` SQL migration aborts before dropping any
+non-empty unsupported state, so retry the extension update only after the
+reported rows and state have been handled.
+
+```sql
+ALTER EXTENSION pg_tide UPDATE TO '0.49.0';
+```
+
+Use `tide.relay_set_outbox_v2` with `source_type = 'outbox'` (or omit the
+source type) and a retained sink. New PostgreSQL destinations should use
+`sink_type = 'inbox'`; `pg_outbox` remains a compatibility alias.
+
+If the migration is blocked, leave the database at v0.48.0, keep the export,
+and restore the prior relay binary. The migration does not provide a down
+migration; a database backup is the rollback boundary.
+
 ---
 
 ## Breaking Changes

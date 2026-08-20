@@ -86,39 +86,6 @@ async fn test_replay_does_not_advance_consumer_offset() {
 }
 
 #[tokio::test]
-async fn test_replay_combined_with_dry_run() {
-    let db = PgTideTestDb::start().await;
-    db.setup_outbox("replay-dry-outbox").await;
-
-    // Publish 10 messages.
-    let payloads: Vec<serde_json::Value> = (1..=10).map(|i| serde_json::json!({"n": i})).collect();
-    db.publish_messages("replay-dry-outbox", &payloads).await;
-
-    // With dry_run + replay, messages are logged but NOT consumed or relayed.
-    let config = serde_json::json!({
-        "dry_run": true,
-        "replay": { "from_offset": 1, "to_offset": 5 }
-    });
-
-    let dry_run = config
-        .get("dry_run")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let from = config
-        .pointer("/replay/from_offset")
-        .and_then(|v| v.as_i64());
-    let to = config.pointer("/replay/to_offset").and_then(|v| v.as_i64());
-
-    assert!(dry_run);
-    assert_eq!(from, Some(1));
-    assert_eq!(to, Some(5));
-
-    // Verify messages are still pending.
-    let count = db.pending_count("replay-dry-outbox").await;
-    assert_eq!(count, 10, "dry-run replay must not consume messages");
-}
-
-#[tokio::test]
 async fn test_replay_config_via_sql() {
     let db = PgTideTestDb::start().await;
 

@@ -2,11 +2,11 @@ apiVersion: v2
 name: pg-tide
 description: >
   pg_tide relay — bridges PostgreSQL transactional outboxes and idempotent
-  inboxes with external messaging systems (NATS, Kafka, Redis, RabbitMQ,
-  SQS, HTTP webhooks).
+  inboxes with NATS JetStream, Apache Kafka, PostgreSQL inboxes, and HTTPS
+  webhooks.
 type: application
-version: 0.48.0
-appVersion: "0.48.0"
+version: 0.49.0
+appVersion: "0.49.0"
 home: https://github.com/trickle-labs/pg-tide
 sources:
   - https://github.com/trickle-labs/pg-tide

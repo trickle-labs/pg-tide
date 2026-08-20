@@ -10,7 +10,7 @@
 - [ ] Verify `sslmode` is set appropriately for your PostgreSQL deployment:
   - Development: `sslmode=disable` (explicit plaintext override only)
   - Staging/Production: `sslmode=require` or `sslmode=verify-full` (required)
-- [ ] If using `sslmode=require`, compile with `--features native-tls` or use the `latest-experimental` Docker image.
+- [ ] If using `sslmode=require`, compile with the named `core` profile, which includes `native-tls`.
 - [ ] Run `pg-tide doctor` and confirm: `[OK] TLS connection: TLSv1.2` or `TLSv1.3`.
 - [ ] Cloud-managed PostgreSQL services (RDS, Cloud SQL, Azure Database) behind a TLS proxy work without the `native-tls` feature.
 
@@ -63,7 +63,6 @@ pg-tide doctor: all checks passed.
 ```
 
 **Expected warnings (non-blocking):**
-- `[INFO] DuckLake catalog tables not found` — expected unless DuckLake is in use.
 - `[INFO] Connection is plaintext` — acceptable in private-network deployments.
 
 **Blocking failures (must resolve before GA):**

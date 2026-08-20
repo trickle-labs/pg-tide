@@ -391,7 +391,7 @@ This is the foundational pattern. From here, you can:
 - Add more pipelines to fan out events to multiple systems
 - Create an inbox to receive events from external services
 - Add more relay instances for high availability
-- Configure different backends (Kafka, Redis, webhooks, etc.)
+- Configure different destinations (PostgreSQL inbox, Kafka, NATS, and webhooks)
 
 ---
 
@@ -399,6 +399,6 @@ This is the foundational pattern. From here, you can:
 
 - [Concepts: Message Guarantees →](../concepts/message-guarantees.md) — understand at-least-once delivery and application-level deduplication in depth
 - [Concepts: Consumption and Relay →](../concepts/consumption-and-relay.md) — deep dive into consumer groups and pipeline mechanics
-- [Relay Guide: Backends →](../relay-guide/backends.md) — configure NATS, Kafka, Redis, and more
-- [Tutorial: End-to-End Pipeline →](../tutorials/end-to-end-pipeline.md) — build a forward + reverse pipeline with Kafka
+- [Relay Guide: Configuration →](../relay-guide/configuration.md) — configure the supported relay destinations
+- [Tutorial: End-to-End Pipeline →](../tutorials/end-to-end-pipeline.md) — build a forward pipeline with Kafka
 - [Operations: Deployment →](../operations/deployment.md) — production deployment patterns

@@ -4,7 +4,7 @@
 
 pg_tide gives your PostgreSQL database a built-in messaging backbone. Publish events within your existing transactions — no dual-writes, no distributed transactions, no message brokers required at the database layer.
 
-When you're ready to fan out to Kafka, NATS, Redis Streams, or any other system,
+When you're ready to deliver to PostgreSQL, NATS, Kafka, or HTTPS,
 the `pg-tide` relay binary bridges the gap with at-least-once transport and
 stable event identities. A PostgreSQL inbox can provide an effectively
 exactly-once application outcome through durable deduplication.
@@ -45,7 +45,7 @@ pg_tide eliminates this entire class of bugs by implementing the **transactional
 └──────────────────────────────────────────────────────────────┘
                          │
                          ▼
-          NATS · Kafka · Redis · RabbitMQ · SQS · Webhooks
+          PostgreSQL · NATS · Kafka · Webhooks
 ```
 
 ---
@@ -58,7 +58,7 @@ pg_tide eliminates this entire class of bugs by implementing the **transactional
 | **Idempotent Inbox** | Durable deduplication via unique constraints; effectively exactly-once processing when application work is transactional. |
 | **Consumer Groups** | Kafka-style offset tracking with heartbeats, visibility leases, and independent progress per consumer. |
 | **Relay Binary** | Standalone `pg-tide` process that bridges outboxes/inboxes with external systems. |
-| **Multi-Backend** | NATS, Kafka, Redis Streams, RabbitMQ, SQS, HTTP Webhooks — all supported. |
+| **Focused delivery** | PostgreSQL inbox, NATS JetStream, Apache Kafka, and HTTPS webhooks. |
 | **Hot Reload** | Pipeline config lives in PostgreSQL. Changes apply without relay restart. |
 | **HA Ready** | Advisory lock coordination provides automatic failover across relay instances. |
 
@@ -116,11 +116,11 @@ Key terms used throughout this documentation:
 | **Outbox** | A named message stream stored in PostgreSQL. Messages are published to an outbox within a transaction. |
 | **Inbox** | A named receiving table with durable deduplication. External messages are written here with at-least-once transport and can be processed transactionally. |
 | **Relay** | The `pg-tide` binary that bridges outboxes/inboxes with external systems. |
-| **Pipeline** | A configured connection between an outbox and a sink (forward) or a source and an inbox (reverse). |
+| **Pipeline** | A configured connection from a PostgreSQL outbox to a retained sink. |
 | **Consumer Group** | A named entity that tracks reading progress through an outbox independently. |
 | **Offset** | The ID of the last message successfully processed by a consumer group. |
 | **Sink** | The destination system in a forward pipeline (e.g., NATS, Kafka). |
-| **Source** | The origin system in a reverse pipeline (e.g., NATS subscription, webhook endpoint). |
+| **Source** | The PostgreSQL outbox that supplies relay messages. |
 | **DLQ (Dead-Letter Queue)** | Messages that have exhausted retry attempts. Stored in the inbox for investigation and replay. |
 | **Advisory Lock** | A PostgreSQL lock mechanism used to coordinate pipeline ownership across relay instances. |
 | **Relay Group ID** | An identifier that namespaces advisory locks, allowing multiple relay deployments to coexist. |

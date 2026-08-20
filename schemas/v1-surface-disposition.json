@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pg-tide.dev/schemas/v1-surface-disposition.json",
+  "schema_version": 1,
+  "release": "v0.49.0",
+  "baseline": {
+    "release": "v0.48.0",
+    "available_reference": "release-evidence/pre-v1-baseline/baseline.json",
+    "available_reference_release": "v0.47.0",
+    "starting_commit": "8b861d29b1e565c6a431bcab492976b9803dcb1b",
+    "status": "v0.48.0 measurement unavailable; comparable baseline methods retained"
+  },
+  "current_boundary": {
+    "source": ["outbox"],
+    "production_destinations": ["inbox", "nats", "kafka", "webhook"],
+    "diagnostic_destinations": ["stdout", "file"],
+    "wire_formats": ["native", "cloudevents"],
+    "release_profiles": ["core", "core-kafka"]
+  },
+  "items": {
+    "connector": {
+      "retain": ["postgresql-outbox", "diagnostics", "postgresql-inbox", "nats-jetstream-sink", "webhook-sink", "kafka-sink"],
+      "remove": [
+        {"id": "pg-trickle-compatibility", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "nats-source", "last_version": "v0.48.0", "replacement": "nats-jetstream-sink", "state": "legacy-present"},
+        {"id": "webhook-source", "last_version": "v0.48.0", "replacement": "webhook-sink", "state": "legacy-present"},
+        {"id": "kafka-source", "last_version": "v0.48.0", "replacement": "kafka-sink", "state": "legacy-present"},
+        {"id": "redis", "last_version": "v0.48.0", "replacement": "nats-jetstream-sink or kafka-sink", "state": "legacy-present"},
+        {"id": "sqs", "last_version": "v0.48.0", "replacement": "webhook-sink", "state": "legacy-present"},
+        {"id": "rabbitmq", "last_version": "v0.48.0", "replacement": "nats-jetstream-sink or kafka-sink", "state": "legacy-present"},
+        {"id": "pubsub", "last_version": "v0.48.0", "replacement": "nats-jetstream-sink or kafka-sink", "state": "legacy-present"},
+        {"id": "kinesis", "last_version": "v0.48.0", "replacement": "kafka-sink", "state": "legacy-present"},
+        {"id": "servicebus", "last_version": "v0.48.0", "replacement": "nats-jetstream-sink or kafka-sink", "state": "legacy-present"},
+        {"id": "mqtt", "last_version": "v0.48.0", "replacement": "nats-jetstream-sink", "state": "legacy-present"},
+        {"id": "eventhubs", "last_version": "v0.48.0", "replacement": "kafka-sink", "state": "legacy-present"},
+        {"id": "elasticsearch", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "object-storage", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "slack", "last_version": "v0.48.0", "replacement": "webhook-sink", "state": "legacy-present"},
+        {"id": "discord", "last_version": "v0.48.0", "replacement": "webhook-sink", "state": "legacy-present"},
+        {"id": "pagerduty", "last_version": "v0.48.0", "replacement": "webhook-sink", "state": "legacy-present"},
+        {"id": "arrow-flight", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "singer", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "airbyte", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "clickhouse", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "mongodb", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "bigquery", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "snowflake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "delta", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "iceberg", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "ducklake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "rocklake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "fan-in", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "ducklake-reverse", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "wal-logical-source", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"}
+      ],
+      "labs": []
+    },
+    "runtime-source": {
+      "retain": ["outbox"],
+      "remove": [
+        {"id": "pg_trickle_outbox", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "stdin", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "nats", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "webhook", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "kafka", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "redis", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "sqs", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "rabbitmq", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "pubsub", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "kinesis", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "servicebus", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "mqtt", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "eventhubs", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "singer", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "airbyte", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "rocklake", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "fanin", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "pg_logical", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"}
+      ],
+      "labs": []
+    },
+    "runtime-sink": {
+      "retain": ["stdout", "file", "inbox", "pg_outbox", "nats", "webhook", "kafka"],
+      "remove": [
+        {"id": "redis", "last_version": "v0.48.0", "replacement": "nats or kafka", "state": "legacy-present"},
+        {"id": "sqs", "last_version": "v0.48.0", "replacement": "webhook", "state": "legacy-present"},
+        {"id": "rabbitmq", "last_version": "v0.48.0", "replacement": "nats or kafka", "state": "legacy-present"},
+        {"id": "pubsub", "last_version": "v0.48.0", "replacement": "nats or kafka", "state": "legacy-present"},
+        {"id": "kinesis", "last_version": "v0.48.0", "replacement": "kafka", "state": "legacy-present"},
+        {"id": "servicebus", "last_version": "v0.48.0", "replacement": "nats or kafka", "state": "legacy-present"},
+        {"id": "mqtt", "last_version": "v0.48.0", "replacement": "nats", "state": "legacy-present"},
+        {"id": "eventhubs", "last_version": "v0.48.0", "replacement": "kafka", "state": "legacy-present"},
+        {"id": "elasticsearch", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "object-storage", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "slack", "last_version": "v0.48.0", "replacement": "webhook", "state": "legacy-present"},
+        {"id": "discord", "last_version": "v0.48.0", "replacement": "webhook", "state": "legacy-present"},
+        {"id": "pagerduty", "last_version": "v0.48.0", "replacement": "webhook", "state": "legacy-present"},
+        {"id": "arrow-flight", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "singer", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "airbyte", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "clickhouse", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "mongodb", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "bigquery", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "snowflake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "delta", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "iceberg", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "ducklake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "rocklake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"}
+      ],
+      "labs": []
+    },
+    "wire-format": {
+      "retain": ["native", "cloudevents"],
+      "remove": [
+        {"id": "debezium", "last_version": "v0.48.0", "replacement": "native or cloudevents", "state": "legacy-present"},
+        {"id": "maxwell", "last_version": "v0.48.0", "replacement": "native or cloudevents", "state": "legacy-present"},
+        {"id": "canal", "last_version": "v0.48.0", "replacement": "native or cloudevents", "state": "legacy-present"},
+        {"id": "cdc_json", "last_version": "v0.48.0", "replacement": "native or cloudevents", "state": "legacy-present"}
+      ],
+      "labs": []
+    },
+    "profile": {
+      "retain": ["core", "core-kafka"],
+      "remove": [{"id": "experimental-full", "last_version": "v0.48.0", "replacement": "core or core-kafka", "state": "legacy-present"}],
+      "labs": []
+    },
+    "feature": {
+      "retain": ["default", "core", "core-kafka", "test-failpoints", "nats", "webhook", "kafka", "stdout", "native-tls", "kms", "kms-local"],
+      "remove": [
+        {"id": "experimental-full", "last_version": "v0.48.0", "replacement": "core or core-kafka", "state": "legacy-present"},
+        {"id": "redis", "last_version": "v0.48.0", "replacement": "nats or kafka", "state": "legacy-present"},
+        {"id": "sqs", "last_version": "v0.48.0", "replacement": "webhook", "state": "legacy-present"},
+        {"id": "rabbitmq", "last_version": "v0.48.0", "replacement": "nats or kafka", "state": "legacy-present"},
+        {"id": "elasticsearch", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "pubsub", "last_version": "v0.48.0", "replacement": "nats or kafka", "state": "legacy-present"},
+        {"id": "kinesis", "last_version": "v0.48.0", "replacement": "kafka", "state": "legacy-present"},
+        {"id": "servicebus", "last_version": "v0.48.0", "replacement": "nats or kafka", "state": "legacy-present"},
+        {"id": "mqtt", "last_version": "v0.48.0", "replacement": "nats", "state": "legacy-present"},
+        {"id": "eventhubs", "last_version": "v0.48.0", "replacement": "kafka", "state": "legacy-present"},
+        {"id": "object-storage", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "schema-registry", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "otel", "last_version": "v0.48.0", "replacement": "native metrics and logs", "state": "legacy-present"},
+        {"id": "slack", "last_version": "v0.48.0", "replacement": "webhook", "state": "legacy-present"},
+        {"id": "discord", "last_version": "v0.48.0", "replacement": "webhook", "state": "legacy-present"},
+        {"id": "pagerduty", "last_version": "v0.48.0", "replacement": "webhook", "state": "legacy-present"},
+        {"id": "arrow-flight", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "singer", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "airbyte", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "clickhouse", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "mongodb", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "snowflake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "bigquery", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "iceberg", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "delta", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "ducklake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "rocklake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "debezium", "last_version": "v0.48.0", "replacement": "native or cloudevents", "state": "legacy-present"},
+        {"id": "maxwell", "last_version": "v0.48.0", "replacement": "native or cloudevents", "state": "legacy-present"},
+        {"id": "canal", "last_version": "v0.48.0", "replacement": "native or cloudevents", "state": "legacy-present"},
+        {"id": "cdc-json", "last_version": "v0.48.0", "replacement": "native or cloudevents", "state": "legacy-present"},
+        {"id": "wal-source", "last_version": "v0.48.0", "replacement": "outbox", "state": "legacy-present"},
+        {"id": "kms-aws", "last_version": "v0.48.0", "replacement": "kms-local", "state": "legacy-present"},
+        {"id": "kms-gcp", "last_version": "v0.48.0", "replacement": "kms-local", "state": "legacy-present"},
+        {"id": "kms-vault", "last_version": "v0.48.0", "replacement": "kms-local", "state": "legacy-present"}
+      ],
+      "labs": []
+    },
+    "cli-command": {
+      "retain": ["run", "config", "maintenance", "migrate-config", "doctor", "replay", "status", "history"],
+      "remove": [
+        {"id": "validate-config", "last_version": "v0.48.0", "replacement": "config validate", "state": "legacy-present"},
+        {"id": "sweep", "last_version": "v0.48.0", "replacement": "maintenance sweep", "state": "legacy-present"},
+        {"id": "asyncapi", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "ducklake", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "template", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "backfill", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"},
+        {"id": "dag", "last_version": "v0.48.0", "replacement": "none", "state": "legacy-present"}
+      ],
+      "labs": []
+    }
+  },
+  "exclusions": [
+    "CHANGELOG.md and docs/CHANGELOG.md",
+    "sql/ and migration files",
+    "docs/archive/ and docs/adr/",
+    "plans/ and the v0.49.0 migration guide",
+    "generated connector output"
+  ]
+}

@@ -77,7 +77,7 @@ Use the transactional outbox when:
 | Approach | Consistency | Complexity | Trade-offs |
 |----------|:-----------:|:----------:|-----------|
 | Transactional outbox (pg_tide) | Strong | Low | Slight delivery latency (polling interval) |
-| WAL-based CDC (Debezium) | Eventual | Medium | Captures all changes, less control |
+| WAL-based CDC | Eventual | Medium | Captures all changes, less control |
 | Dual-write (publish + commit) | Weak | Low | Events can be lost or orphaned |
 | Saga / 2PC | Strong | High | Complex failure handling |
 

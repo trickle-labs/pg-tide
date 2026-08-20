@@ -130,7 +130,7 @@ SELECT tide.outbox_sweep(
 
 `p_batch_size` must be between 1 and 10,000. Candidates satisfy both the
 retention cutoff and the minimum checkpoint across all configured native
-pipelines, consumer groups, enabled fan-in members, and overlapping leases.
+pipelines, consumer groups, and overlapping leases.
 Disabled pipelines remain participants. Dry-run examines at most
 `p_batch_size + 1` rows and returns `has_more` without deleting.
 

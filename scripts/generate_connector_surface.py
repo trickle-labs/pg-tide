@@ -22,10 +22,6 @@ PROFILE_END = "# END GENERATED CONNECTOR PROFILES"
 README_START = "<!-- BEGIN GENERATED CONNECTORS -->"
 README_END = "<!-- END GENERATED CONNECTORS -->"
 INTERNAL_FEATURES = {"test-failpoints"}
-# KMS compatibility names are deliberately not part of the generated
-# evaluation profile. LocalKeyFile remains available through `kms-local`;
-# cloud provider names are unsupported until they have real implementations.
-PROFILE_EXCLUDED_FEATURES = {"kms", "kms-aws", "kms-gcp", "kms-vault"}
 MATURITY = {"supported", "preview", "experimental"}
 KINDS = {"connector", "diagnostic", "compatibility"}
 DICTIONS = {"source", "sink", "bidirectional", "unavailable"}
@@ -250,7 +246,9 @@ def factory_types() -> tuple[set[str], set[str]]:
     source = (ROOT / "pg-tide-relay/src/coordinator.rs").read_text()
     source_start = source.index("// ── Source factory")
     sink_start = source.index("async fn build_sink", source_start)
-    helper_start = source.index("// ── Object store factory helper", sink_start)
+    helper_start = source.find("// ── Object store factory helper", sink_start)
+    if helper_start < 0:
+        helper_start = source.index("// ── Public factory wrappers", sink_start)
     arm = re.compile(r'^        "([^"]+)"\s*=>', re.MULTILINE)
     return set(arm.findall(source[source_start:sink_start])), set(
         arm.findall(source[sink_start:helper_start])
@@ -326,7 +324,7 @@ def validate(rows: list[dict]) -> tuple[set[str], set[str], set[str]]:
 
 
 def profile_lines(rows: list[dict], features: set[str]) -> str:
-    profile_names = {"default", "core", "core-kafka", "experimental-full"}
+    profile_names = {"default", "core", "core-kafka"}
     core: list[str] = []
     for row in rows:
         if row.get("default_build"):
@@ -334,15 +332,11 @@ def profile_lines(rows: list[dict], features: set[str]) -> str:
             if feature and feature not in core:
                 core.append(feature)
     core.sort()
-    all_features = sorted(
-        features - profile_names - INTERNAL_FEATURES - PROFILE_EXCLUDED_FEATURES
-    )
     return "\n".join(
         [
             'default = ["core"]',
             f"core = [{', '.join(repr(feature) for feature in core)}]".replace("'", '"'),
             'core-kafka = ["core", "kafka"]',
-            f"experimental-full = [{', '.join(repr(feature) for feature in all_features)}]".replace("'", '"'),
         ]
     )
 
@@ -399,7 +393,7 @@ def render_matrix(rows: list[dict]) -> str:
     ]
     for row in rows:
         feature = row.get("cargo_feature", "built in")
-        profiles = ", ".join(row.get("profiles", [])) or ("core" if row.get("default_build") else "experimental-full" if feature else "built in")
+        profiles = ", ".join(row.get("profiles", [])) or ("core" if row.get("default_build") else "built in")
         evidence = links(evidence_paths(row), ROOT / "docs/src/support")
         lines.append(
             f"| <a id=\"{row['id']}\"></a>{row['id']} | {direction(row)} | {row['maturity']} | "
@@ -499,6 +493,12 @@ def render_descriptors(rows: list[dict]) -> str:
         {
             runtime_type
             for row in supported_rows
+            for runtime_type in path_list(row, "sink_types")
+        }
+        | {
+            runtime_type
+            for row in rows
+            if row["kind"] == "diagnostic" and row["maturity"] == "supported"
             for runtime_type in path_list(row, "sink_types")
         }
     )

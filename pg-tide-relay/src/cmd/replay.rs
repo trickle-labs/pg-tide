@@ -1,4 +1,4 @@
-/// `pg-tide replay` — workbench for previewing, dry-running, and resolving DLQ entries.
+/// `pg-tide replay` — preview outbox ranges and resolve DLQ entries.
 use pg_tide_relay::pg_tls;
 
 use crate::cli::ReplayCommands;
@@ -24,22 +24,6 @@ pub async fn run_replay_command(
                 std::process::exit(1);
             }
             run_replay_preview(&url, &outbox, from_id, to_id, limit).await
-        }
-        ReplayCommands::DryRun {
-            pipeline,
-            from_id,
-            to_id,
-            limit,
-            postgres_url,
-        } => {
-            let url = postgres_url
-                .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
-                .unwrap_or_else(|| default_url.to_string());
-            if url.is_empty() {
-                eprintln!("error: --postgres-url is required for replay dry-run");
-                std::process::exit(1);
-            }
-            run_replay_dry_run(&url, &pipeline, from_id, to_id, limit).await
         }
         ReplayCommands::DlqResolve {
             pipeline,
@@ -115,83 +99,6 @@ async fn run_replay_preview(
     }
 
     eprintln!("{} message(s) previewed from outbox '{outbox}'", rows.len());
-    Ok(())
-}
-
-/// `pg-tide replay dry-run` — evaluate transforms without publishing.
-async fn run_replay_dry_run(
-    url: &str,
-    pipeline: &str,
-    from_id: i64,
-    to_id: i64,
-    limit: i32,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let (client, conn) = pg_tls::connect(url).await?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-
-    // Load pipeline config.
-    let row = client
-        .query_opt(
-            "SELECT config FROM tide.relay_outbox_config WHERE name = $1
-             UNION ALL
-             SELECT config FROM tide.relay_inbox_config WHERE name = $1
-             LIMIT 1",
-            &[&pipeline],
-        )
-        .await?;
-
-    let config: serde_json::Value = match row {
-        Some(r) => r.get(0),
-        None => {
-            eprintln!("error: pipeline '{pipeline}' not found");
-            std::process::exit(1);
-        }
-    };
-
-    let outbox = config
-        .pointer("/source/outbox")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let wire_fmt = pg_tide_relay::wire_format::from_config(&config);
-
-    let rows = client
-        .query(
-            "SELECT id, outbox_name, payload, headers
-             FROM tide.tide_outbox_messages
-             WHERE outbox_name = $1 AND id BETWEEN $2 AND $3
-             ORDER BY id
-             LIMIT $4",
-            &[&outbox, &from_id, &to_id, &(limit as i64)],
-        )
-        .await?;
-
-    eprintln!(
-        "Dry-run transform evaluation for pipeline '{pipeline}' ({} message(s)):",
-        rows.len()
-    );
-    for row in &rows {
-        let id: i64 = row.get("id");
-        let payload: serde_json::Value = row.get("payload");
-        let raw = pg_tide_relay::wire_format::RawMessage::from_json(&outbox, &payload);
-        match wire_fmt.decode(&raw) {
-            Ok(Some(inbox_row)) => {
-                let out = serde_json::json!({
-                    "outbox_id": id,
-                    "event_id": inbox_row.event_id,
-                    "op": inbox_row.op,
-                    "payload": inbox_row.payload,
-                });
-                println!("{}", serde_json::to_string(&out)?);
-            }
-            Ok(None) => eprintln!("  [SKIP] id={id} (tombstone or filtered)"),
-            Err(e) => eprintln!("  [ERROR] id={id}: {e}"),
-        }
-    }
-
     Ok(())
 }
 

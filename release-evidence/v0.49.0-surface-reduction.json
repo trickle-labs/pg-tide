@@ -1,0 +1,46 @@
+{
+  "release": "v0.49.0",
+  "status": "captured",
+  "captured_commit": "pending-implementation-commit",
+  "disposition": "schemas/v1-surface-disposition.json",
+  "baseline": {
+    "release": "v0.47.0",
+    "reference": "release-evidence/pre-v1-baseline/baseline.json",
+    "v0.48.0_measurement": "unavailable in this checkout"
+  },
+  "measurements": {
+    "connector_registry_rows": 6,
+    "connector_registry_rows_by_classification": {"supported": 5, "diagnostic": 1, "preview": 0, "experimental": 0},
+    "relay_feature_names": 11,
+    "relay_runtime_dependencies": 30,
+    "relay_dev_dependencies": 12,
+    "locked_dependency_tree": {
+      "lines": 5297,
+      "bytes": 129609,
+      "sha256": "3e1f350a6416033aec50e803ce5365268aa519ce658c5f869f760b0d87028bec"
+    },
+    "relay_source_rs_files": 45,
+    "relay_test_rs_files": 46,
+    "active_mdbook_pages": 41,
+    "ci_jobs": 35,
+    "release_jobs": 10,
+    "release_profiles": ["core", "core-kafka"],
+    "runtime_sources": ["outbox"],
+    "runtime_sinks": ["inbox", "pg_outbox", "nats", "webhook", "kafka", "stdout", "file"],
+    "wire_formats": ["native", "cloudevents"]
+  },
+  "method": {
+    "registry": "tomllib parse of connectors.toml",
+    "features_and_dependencies": "tomllib parse of pg-tide-relay/Cargo.toml",
+    "runtime_and_boundary": "generated descriptors and scripts/check_v1_surface.py",
+    "comparison": "v0.47.0 pre-v1 baseline methods; no unmeasured v0.48.0 percentage claimed",
+    "environment": "local checkout on 2026-08-20; Python 3 stdlib and Cargo workspace tools",
+    "commands": [
+      "python3 scripts/check_v1_surface.py",
+      "python3 scripts/generate_connector_surface.py --check",
+      "tomllib parse of pg-tide-relay/Cargo.toml",
+      "wc -l -c Cargo.lock",
+      "sha256sum Cargo.lock"
+    ]
+  }
+}

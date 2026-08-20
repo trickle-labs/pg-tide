@@ -16,10 +16,8 @@ use crate::config::{
 };
 use crate::dlq::{DlqConfig, DlqEntry, ErrorKind};
 use crate::error::RelayError;
-use crate::jmespath_transform::{apply_transforms, TransformConfig};
 use crate::metrics::{HealthState, RelayMetrics};
 use crate::rate_limiter::build_rate_limiter;
-use crate::routing::{apply_routing, RoutingConfig};
 
 /// Coordinator manages pipeline ownership via advisory locks.
 /// v0.15.0: Uses a deadpool-postgres Pool for coordinator metadata operations,
@@ -184,17 +182,11 @@ impl Coordinator {
             .map_err(|e| RelayError::other(format!("coordinator pool error: {e}")))?;
 
         let rows = if let Some(ref tid) = self.tenant_id {
-            // Per-tenant filtering: only own pipelines belonging to this tenant.
             client
                 .query(
                     "SELECT name, 'forward' AS direction, enabled, config,
                             COALESCE(tenant_name, 'default') AS tenant_name
                        FROM tide.relay_outbox_config
-                      WHERE enabled = true AND tenant_name = $1
-                     UNION ALL
-                     SELECT name, 'reverse' AS direction, enabled, config,
-                            COALESCE(tenant_name, 'default') AS tenant_name
-                       FROM tide.relay_inbox_config
                       WHERE enabled = true AND tenant_name = $1",
                     &[tid],
                 )
@@ -205,11 +197,6 @@ impl Coordinator {
                     "SELECT name, 'forward' AS direction, enabled, config,
                             COALESCE(tenant_name, 'default') AS tenant_name
                        FROM tide.relay_outbox_config
-                      WHERE enabled = true
-                     UNION ALL
-                     SELECT name, 'reverse' AS direction, enabled, config,
-                            COALESCE(tenant_name, 'default') AS tenant_name
-                       FROM tide.relay_inbox_config
                       WHERE enabled = true",
                     &[],
                 )
@@ -229,11 +216,14 @@ impl Coordinator {
             let tenant_name: String = row.get("tenant_name");
 
             pipelines.push(PipelineConfig {
-                name,
+                name: name.clone(),
                 direction: if direction == "forward" {
                     PipelineDirection::Forward
                 } else {
-                    PipelineDirection::Reverse
+                    return Err(RelayError::InvalidConfig {
+                        name,
+                        reason: format!("unsupported pipeline direction '{direction}'"),
+                    });
                 },
                 enabled,
                 config,
@@ -297,10 +287,7 @@ impl Coordinator {
             let _ = lost_tx.send(true);
         });
 
-        let direction = match pipeline.direction {
-            PipelineDirection::Forward => "forward",
-            PipelineDirection::Reverse => "reverse",
-        };
+        let direction = "forward";
         let lock_scope = format!("{}:{}:{}", pipeline.tenant_name, direction, pipeline.name);
         let row = client
             .query_one(
@@ -378,109 +365,6 @@ impl Coordinator {
     }
 
     // ── Private ──────────────────────────────────────────────────────────
-
-    /// v0.30.0: Check whether a pipeline's upstream DAG dependencies allow it
-    /// to be acquired.  Returns `true` when all upstream policies are satisfied
-    /// (pipeline is eligible), `false` when any policy gates acquisition.
-    ///
-    /// Policy semantics:
-    ///   - `always`: downstream acquires unconditionally (always returns true).
-    ///   - `on_idle`: downstream only acquires when upstream consumer lag is 0.
-    ///   - `on_offset_gte(N)`: downstream only acquires when upstream committed ≥ N.
-    ///
-    /// When the `relay_pipeline_deps` table does not exist (pre-v0.30.0 schema),
-    /// this function returns `true` so the coordinator degrades gracefully.
-    async fn dag_check_acquisition(&self, pipeline_id: &str) -> bool {
-        let conn = match self.pool.get().await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(
-                    pipeline = %pipeline_id,
-                    error = %e,
-                    "dag-check: failed to get pool connection — allowing acquisition"
-                );
-                return true;
-            }
-        };
-
-        // Check if the table exists (schema may be pre-v0.30.0).
-        let table_exists: bool = conn
-            .query_one(
-                "SELECT EXISTS(SELECT 1 FROM information_schema.tables \
-                 WHERE table_schema = 'tide' AND table_name = 'relay_pipeline_deps')",
-                &[],
-            )
-            .await
-            .map(|r| r.get(0))
-            .unwrap_or(false);
-
-        if !table_exists {
-            return true;
-        }
-
-        // Fetch all upstream edges for this pipeline.
-        let rows = match conn
-            .query(
-                "SELECT d.upstream_pipeline, d.trigger_policy, \
-                        COALESCE(o.last_change_id, 0) AS committed, \
-                        COALESCE((SELECT MAX(id) FROM tide.tide_outbox_messages \
-                                  WHERE stream_table = d.upstream_pipeline), 0) AS max_id \
-                 FROM tide.relay_pipeline_deps d \
-                 LEFT JOIN tide.relay_consumer_offsets o \
-                   ON o.pipeline_id = d.upstream_pipeline \
-                  AND o.relay_group_id = $2 \
-                 WHERE d.downstream_pipeline = $1",
-                &[&pipeline_id, &self.relay_group_id],
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(
-                    pipeline = %pipeline_id,
-                    error = %e,
-                    "dag-check: query failed — allowing acquisition"
-                );
-                return true;
-            }
-        };
-
-        for row in &rows {
-            let upstream: String = row.get(0);
-            let policy: String = row.get(1);
-            let committed: i64 = row.get(2);
-            let max_id: i64 = row.get(3);
-            let lag = max_id.saturating_sub(committed);
-
-            let satisfied = match policy.as_str() {
-                "always" => true,
-                "on_idle" => lag == 0,
-                p if p.starts_with("on_offset_gte(") => {
-                    let threshold: i64 = p
-                        .trim_start_matches("on_offset_gte(")
-                        .trim_end_matches(')')
-                        .parse()
-                        .unwrap_or(0);
-                    committed >= threshold
-                }
-                _ => true,
-            };
-
-            if !satisfied {
-                tracing::debug!(
-                    pipeline = %pipeline_id,
-                    upstream = %upstream,
-                    policy = %policy,
-                    committed,
-                    lag,
-                    "dag-check: upstream policy unsatisfied — skipping acquisition"
-                );
-                return false;
-            }
-        }
-
-        true
-    }
 
     /// v0.29.0: Check for pipelines with auto_resume_after set that have been
     /// paused longer than the configured interval, and re-enable them.
@@ -669,13 +553,6 @@ impl Coordinator {
                 break;
             }
 
-            // v0.30.0: DAG-aware acquisition — check upstream policy before
-            // attempting the advisory lock.  If any upstream is not satisfied,
-            // skip this pipeline; it will be retried on the next reconcile cycle.
-            if !self.dag_check_acquisition(&pipeline.name).await {
-                continue;
-            }
-
             // RELAY-SEC: resolve ${env:VAR} / ${file:/path} tokens before
             // handing the config to the worker.  A bad secret disables only
             // this pipeline — all others continue running.
@@ -815,10 +692,7 @@ async fn upsert_runtime_status(
     pipeline: &PipelineConfig,
     owner_token: Option<&str>,
 ) {
-    let direction = match pipeline.direction {
-        PipelineDirection::Forward => "forward",
-        PipelineDirection::Reverse => "reverse",
-    };
+    let direction = "forward";
     if let Err(error) = db
         .execute(
             "INSERT INTO tide.relay_runtime_status
@@ -1068,8 +942,6 @@ async fn worker_inner(
     // v0.7.0: Parse operational config.
     let dry_run = pipeline.opt_bool(&["dry_run"]).unwrap_or(false);
     let dlq_config = DlqConfig::from_pipeline_config(&pipeline.config);
-    let transform_config = TransformConfig::from_pipeline_config(&pipeline.config);
-    let routing_config = RoutingConfig::from_pipeline_config(&pipeline.config);
     let rate_limiter = build_rate_limiter(&pipeline.config);
     let mut circuit_breaker = CircuitBreaker::from_pipeline_config(&pipeline.config);
 
@@ -1079,15 +951,8 @@ async fn worker_inner(
     let is_replay = replay_from.is_some();
 
     // v0.13.0: Wire-format factory — instantiate the configured wire format.
-    let wire_format = crate::wire_format::from_config(&pipeline.config);
+    let wire_format = crate::wire_format::from_config(&pipeline.config)?;
 
-    // v0.16.0: Schema evolution guard — tracks fingerprints and enforces
-    // the configured on_schema_change policy.
-    let mut schema_guard = crate::schema_evolution::SchemaEvolutionGuard::from_config(
-        &pipeline.name,
-        Arc::clone(&db),
-        &pipeline.config,
-    );
     tracing::info!(
         pipeline = %pipeline.name,
         wire_format = wire_format.name(),
@@ -1112,10 +977,7 @@ async fn worker_inner(
     }
     let mut sink = build_sink(&pipeline, Arc::clone(&db)).await?;
 
-    let direction_label = match pipeline.direction {
-        PipelineDirection::Forward => "forward".to_string(),
-        PipelineDirection::Reverse => "reverse".to_string(),
-    };
+    let direction_label = "forward".to_string();
 
     // v0.14.0: Tenant label for per-tenant Prometheus dimension.
     let tenant_label = pipeline.tenant_name.clone();
@@ -1261,24 +1123,6 @@ async fn worker_inner(
         // v0.13.0: Record the poll timestamp for end-to-end latency tracking.
         let poll_instant = std::time::Instant::now();
 
-        // v0.7.0: Apply JMESPath transforms, schema evolution, and routing.
-        // v0.18.0: Extracted into process_batch() helper for independent testability.
-        let batch = {
-            let span = tracing::info_span!(
-                "relay.transform.evaluate",
-                pipeline = %pipeline.name,
-                batch_size = batch.len(),
-            );
-            let _enter = span.enter();
-            match apply_transforms(&transform_config, batch) {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!(pipeline = %pipeline.name, error = %e, "transform error");
-                    return Err(e);
-                }
-            }
-        };
-
         if batch.is_empty() {
             // All messages filtered out — acknowledge the source and continue.
             commit_checkpoint(
@@ -1300,34 +1144,6 @@ async fn worker_inner(
             continue;
         }
 
-        // v0.16.0: Schema evolution check — compare payload schema fingerprint
-        // against stored fingerprint and apply the configured policy.
-        // v0.27.0: Extracted into apply_schema_evolution_check() for independent
-        // testability and fuzz coverage.
-        if apply_schema_evolution_check(&batch, &mut schema_guard, &pipeline.name).await {
-            commit_checkpoint(
-                &mut source,
-                checkpoint.as_deref(),
-                &metrics,
-                &pipeline.name,
-                "intentionally_filtered",
-            )
-            .await?;
-            continue;
-        }
-
-        // v0.7.0: Apply content-based routing.
-        // v0.16.0: OTel span around routing evaluation.
-        let mut batch = batch;
-        {
-            let span = tracing::info_span!(
-                "relay.routing.apply",
-                pipeline = %pipeline.name,
-                batch_size = batch.len(),
-            );
-            let _enter = span.enter();
-            apply_routing(&routing_config, &mut batch);
-        }
         crate::failpoints::hit("after_prepare", &pipeline.name).await?;
 
         // v0.7.0: Dry-run mode — log what would be published, skip actual publish.
@@ -2075,71 +1891,6 @@ fn safe_dlq_reason(error: &RelayError) -> String {
     format!("{}: {}", error.public_code(), error.public_summary())
 }
 
-/// Apply the configured schema evolution policy to a batch.
-///
-/// Returns `true` if the batch should be **skipped** (breaking change +
-/// `Pause` policy triggered). Returns `false` if the batch may proceed.
-///
-/// v0.27.0: Extracted from `worker_inner()` so the schema evolution path is
-/// independently fuzzable and unit-testable.
-async fn apply_schema_evolution_check(
-    batch: &[crate::envelope::RelayMessage],
-    schema_guard: &mut crate::schema_evolution::SchemaEvolutionGuard,
-    pipeline_name: &str,
-) -> bool {
-    let topic = batch
-        .first()
-        .map(|m| m.subject.as_str())
-        .unwrap_or("unknown");
-    let columns: Vec<String> = batch
-        .first()
-        .and_then(|m| m.payload.as_object())
-        .map(|obj| obj.keys().cloned().collect())
-        .unwrap_or_default();
-
-    let se_span = tracing::info_span!(
-        "relay.schema_evolution.check",
-        pipeline = %pipeline_name,
-        topic,
-    );
-    let _enter = se_span.enter();
-    match schema_guard.observe(topic, &columns).await {
-        Ok((
-            crate::schema_evolution::SchemaChangeKind::Breaking,
-            crate::schema_evolution::OnSchemaChange::Pause,
-        )) => {
-            tracing::warn!(
-                pipeline = %pipeline_name,
-                topic,
-                "breaking schema change detected — pausing pipeline per policy"
-            );
-            true // skip this batch
-        }
-        Ok((kind, policy)) => {
-            if kind != crate::schema_evolution::SchemaChangeKind::NoChange
-                && kind != crate::schema_evolution::SchemaChangeKind::Initial
-            {
-                tracing::warn!(
-                    pipeline = %pipeline_name,
-                    topic,
-                    change_kind = ?kind,
-                    policy = policy.as_str(),
-                    "schema change detected"
-                );
-            }
-            false // proceed
-        }
-        Err(e) => {
-            tracing::warn!(
-                pipeline = %pipeline_name,
-                error = %e,
-                "schema evolution check error — continuing"
-            );
-            false // proceed on error
-        }
-    }
-}
-
 // ── Source factory ────────────────────────────────────────────────────────
 
 async fn build_source(
@@ -2147,380 +1898,47 @@ async fn build_source(
     db: Arc<Client>,
     relay_group_id: &str,
 ) -> Result<Box<dyn crate::source::Source>, RelayError> {
-    let source_type = pipeline.require_str(&["source_type"])?;
-    match source_type {
-        // v0.40.0 (ADR-011): Native shared-table path. Polls
-        // tide.tide_outbox_messages with a static query and decodes native
-        // payloads by default.
-        "outbox" => {
-            let outbox = pipeline.require_str(&["source", "outbox"])?;
-            let subject_template = pipeline
-                .opt_str(&["source", "subject_template"])
-                .unwrap_or("{outbox}.{op}");
-
-            if let Some(group_name) = pipeline.opt_str(&["source", "consumer_group"]) {
-                let consumer_id = pipeline
-                    .opt_str(&["source", "consumer_id"])
-                    .unwrap_or("pg-tide");
-                let visibility = pipeline
-                    .opt_i64(&["source", "visibility_seconds"])
-                    .unwrap_or(30) as i32;
-                let src = crate::source::outbox::OutboxPollerSource::new_consumer_group(
-                    db,
-                    outbox,
-                    subject_template,
-                    relay_group_id,
-                    &pipeline.name,
-                    group_name,
-                    consumer_id,
-                    visibility,
-                )
-                .await?;
-                Ok(Box::new(src))
-            } else {
-                let src = crate::source::outbox::OutboxPollerSource::new_simple_native(
-                    db,
-                    outbox,
-                    subject_template,
-                    relay_group_id,
-                    &pipeline.name,
-                )
-                .await?;
-                Ok(Box::new(src))
-            }
-        }
-
-        // v0.40.0 (ADR-011 §10): Explicit pg_trickle compatibility path. Uses
-        // the legacy dynamic per-outbox relation and v:1 envelope decoding.
-        "pg_trickle_outbox" => {
-            let outbox = pipeline.require_str(&["source", "outbox"])?;
-            let subject_template = pipeline
-                .opt_str(&["source", "subject_template"])
-                .unwrap_or("{stream_table}.{op}");
-            let src = crate::source::outbox::OutboxPollerSource::new_simple_pg_trickle(
-                db,
-                outbox,
-                subject_template,
-                relay_group_id,
-                &pipeline.name,
-            )
-            .await?;
-            Ok(Box::new(src))
-        }
-
-        "stdin" => {
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            Ok(Box::new(crate::source::stdin::StdinSource::new(event_type)))
-        }
-
-        #[cfg(feature = "nats")]
-        "nats" => {
-            let url = pipeline.require_str(&["source", "url"])?;
-            let stream = pipeline.require_str(&["source", "stream"])?;
-            let consumer = pipeline.require_str(&["source", "consumer"])?;
-            let subject = pipeline.require_str(&["source", "subject"])?;
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let src =
-                crate::source::nats::NatsSource::new(url, stream, consumer, subject, event_type)
-                    .await?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "kafka")]
-        "kafka" => {
-            let brokers = pipeline.require_str(&["source", "brokers"])?;
-            let group_id = pipeline.require_str(&["source", "group_id"])?;
-            let topic = pipeline.require_str(&["source", "topic"])?;
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            Ok(Box::new(crate::source::kafka::KafkaSource::new(
-                brokers, group_id, topic, event_type,
-            )?))
-        }
-
-        #[cfg(feature = "webhook")]
-        "webhook" => {
-            let addr = pipeline.require_str(&["source", "addr"])?;
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let src = crate::source::webhook::WebhookSource::bind(addr, event_type).await?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "redis")]
-        "redis" => {
-            let url = pipeline.require_str(&["source", "url"])?;
-            let stream_key = pipeline.require_str(&["source", "stream_key"])?;
-            let group = pipeline.require_str(&["source", "group"])?;
-            let consumer_id = pipeline
-                .opt_str(&["source", "consumer_id"])
-                .unwrap_or("pg-tide");
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let src = crate::source::redis::RedisSource::new(
-                url,
-                stream_key,
-                group,
-                consumer_id,
-                event_type,
-            )
-            .await?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "sqs")]
-        "sqs" => {
-            let queue_url = pipeline.require_str(&["source", "queue_url"])?;
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let max_messages = pipeline.opt_i64(&["source", "max_messages"]).unwrap_or(10) as i32;
-            let src =
-                crate::source::sqs::SqsSource::new(queue_url, event_type, max_messages).await?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "rabbitmq")]
-        "rabbitmq" => {
-            let url = pipeline.require_str(&["source", "url"])?;
-            let queue = pipeline.require_str(&["source", "queue"])?;
-            let consumer_tag = pipeline
-                .opt_str(&["source", "consumer_tag"])
-                .unwrap_or("pg-tide");
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let src =
-                crate::source::rabbitmq::RabbitMqSource::new(url, queue, consumer_tag, event_type)
-                    .await?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "pubsub")]
-        "pubsub" => {
-            let project_id = pipeline.require_str(&["source", "project_id"])?;
-            let subscription = pipeline.require_str(&["source", "subscription"])?;
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let src =
-                crate::source::pubsub::PubSubSource::new(project_id, subscription, event_type)?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "kinesis")]
-        "kinesis" => {
-            let stream_name = pipeline.require_str(&["source", "stream_name"])?;
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let iterator_type = pipeline
-                .opt_str(&["source", "iterator_type"])
-                .unwrap_or("TRIM_HORIZON");
-            let src =
-                crate::source::kinesis::KinesisSource::new(stream_name, event_type, iterator_type)
-                    .await?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "servicebus")]
-        "servicebus" => {
-            let connection_string = pipeline.require_str(&["source", "connection_string"])?;
-            let entity = pipeline.require_str(&["source", "entity"])?;
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let src = crate::source::servicebus::ServiceBusSource::new(
-                connection_string,
-                entity,
-                event_type,
-            )?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "mqtt")]
-        "mqtt" => {
-            let url = pipeline.require_str(&["source", "url"])?;
-            let topic = pipeline.require_str(&["source", "topic"])?;
-            let client_id = pipeline
-                .opt_str(&["source", "client_id"])
-                .unwrap_or("pg-tide-inbox");
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let src =
-                crate::source::mqtt::MqttSource::new(url, topic, client_id, event_type).await?;
-            Ok(Box::new(src))
-        }
-
-        #[cfg(feature = "eventhubs")]
-        "eventhubs" => {
-            let connection_string = pipeline.require_str(&["source", "connection_string"])?;
-            let event_hub = pipeline.require_str(&["source", "event_hub"])?;
-            let consumer_group = pipeline
-                .opt_str(&["source", "consumer_group"])
-                .unwrap_or("$Default");
-            let partition_count = pipeline
-                .opt_i64(&["source", "partition_count"])
-                .unwrap_or(1) as usize;
-            let event_type = pipeline
-                .opt_str(&["source", "event_type"])
-                .unwrap_or("event");
-            let src = crate::source::eventhubs::EventHubsSource::new(
-                connection_string,
-                event_hub,
-                consumer_group,
-                partition_count,
-                event_type,
-            )?;
-            Ok(Box::new(src))
-        }
-
-        // v0.9.0: Singer protocol adapter (tap source)
-        #[cfg(feature = "singer")]
-        "singer" => {
-            let tap_command = pipeline.require_str(&["source", "tap_command"])?;
-            let tap_args: Vec<String> = pipeline
-                .config
-                .pointer("/source/tap_args")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let tap_name = pipeline
-                .opt_str(&["source", "tap_name"])
-                .unwrap_or(tap_command);
-            let on_schema_change = crate::sink::singer::OnSchemaChange::from_str(
-                pipeline
-                    .opt_str(&["source", "on_schema_change"])
-                    .unwrap_or("log"),
-            );
-            let src = crate::source::singer::SingerSource::new(
-                Arc::clone(&db),
-                &pipeline.name,
-                tap_command,
-                &tap_args,
-                tap_name,
-                on_schema_change,
-            )
-            .await?;
-            Ok(Box::new(src))
-        }
-
-        // v0.9.0: Airbyte protocol adapter (connector source)
-        #[cfg(feature = "airbyte")]
-        "airbyte" => {
-            let source_name;
-            let catalog = pipeline
-                .config
-                .pointer("/source/configured_catalog")
-                .cloned()
-                .unwrap_or(serde_json::json!({"streams": []}));
-
-            let src: Box<dyn crate::source::Source> =
-                if let Some(image) = pipeline.opt_str(&["source", "source_image"]) {
-                    let source_config = pipeline
-                        .config
-                        .pointer("/source/source_config")
-                        .cloned()
-                        .unwrap_or(serde_json::json!({}));
-                    source_name = pipeline
-                        .opt_str(&["source", "source_name"])
-                        .unwrap_or(image)
-                        .to_string();
-                    Box::new(
-                        crate::source::airbyte::AirbyteSource::new_docker(
-                            Arc::clone(&db),
-                            &pipeline.name,
-                            image,
-                            &source_config,
-                            &catalog,
-                            &source_name,
-                        )
-                        .await?,
-                    )
-                } else {
-                    let cmd = pipeline.require_str(&["source", "source_command"])?;
-                    let args: Vec<String> = pipeline
-                        .config
-                        .pointer("/source/source_args")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    source_name = pipeline
-                        .opt_str(&["source", "source_name"])
-                        .unwrap_or(cmd)
-                        .to_string();
-                    Box::new(
-                        crate::source::airbyte::AirbyteSource::new_command(
-                            Arc::clone(&db),
-                            &pipeline.name,
-                            cmd,
-                            &args,
-                            &source_name,
-                        )
-                        .await?,
-                    )
-                };
-            Ok(src)
-        }
-
-        // v0.40.0 (ADR-011 §12): Fan-in is experimental and quarantined.
-        // The coordinator does not start fan-in workers in the production path.
-        // Catalog rows and offsets are retained for a future release.
-        "fanin" => Err(RelayError::InvalidConfig {
+    if pipeline.require_str(&["source_type"])? != "outbox" {
+        return Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
-            reason: format!(
-                "fan-in pipeline '{}' is experimental and disabled in v0.40.0 \
-                 (ADR-011). Fan-in configs are retained but not runnable; \
-                 fan-in support returns in a later release.",
-                pipeline.name
-            ),
-        }),
+            reason: "only source_type 'outbox' is supported".to_string(),
+        });
+    }
 
-        // v0.37.0: RockLake reverse relay source.
-        // Polls new snapshots from a RockLake PG-wire catalog sidecar.
-        // Uses only the bounded SQL subset (single non-JOIN SELECT).
-        #[cfg(feature = "rocklake")]
-        "rocklake" => {
-            use crate::source::rocklake::{RockLakeSource, RockLakeSourceConfig};
-            let catalog_connection = pipeline.require_str(&["source", "catalog_connection"])?;
-            let schema = pipeline.require_str(&["source", "schema"])?;
-            let table = pipeline.require_str(&["source", "table"])?;
-            let poll_ms = pipeline
-                .opt_i64(&["source", "snapshot_poll_interval_ms"])
-                .unwrap_or(1_000) as u64;
-            let consumer_group = pipeline
-                .opt_str(&["source", "consumer_group"])
-                .unwrap_or("default")
-                .to_string();
-            let last_snapshot_id = pipeline
-                .opt_i64(&["source", "last_snapshot_id"])
-                .unwrap_or(0);
-            let mut cfg = RockLakeSourceConfig::new(catalog_connection, schema, table);
-            cfg.snapshot_poll_interval_ms = poll_ms;
-            cfg.consumer_group = consumer_group;
-            Ok(Box::new(RockLakeSource::new(cfg, last_snapshot_id)))
-        }
+    let outbox = pipeline.require_str(&["source", "outbox"])?;
+    let subject_template = pipeline
+        .opt_str(&["source", "subject_template"])
+        .unwrap_or("{outbox}.{op}");
 
-        other => Err(RelayError::InvalidConfig {
-            name: pipeline.name.clone(),
-            reason: format!("unknown source_type: {other}"),
-        }),
+    if let Some(group_name) = pipeline.opt_str(&["source", "consumer_group"]) {
+        let consumer_id = pipeline
+            .opt_str(&["source", "consumer_id"])
+            .unwrap_or("pg-tide");
+        let visibility = pipeline
+            .opt_i64(&["source", "visibility_seconds"])
+            .unwrap_or(30) as i32;
+        let source = crate::source::outbox::OutboxPollerSource::new_consumer_group(
+            db,
+            outbox,
+            subject_template,
+            relay_group_id,
+            &pipeline.name,
+            group_name,
+            consumer_id,
+            visibility,
+        )
+        .await?;
+        Ok(Box::new(source))
+    } else {
+        let source = crate::source::outbox::OutboxPollerSource::new_simple_native(
+            db,
+            outbox,
+            subject_template,
+            relay_group_id,
+            &pipeline.name,
+        )
+        .await?;
+        Ok(Box::new(source))
     }
 }
 
@@ -2541,6 +1959,7 @@ async fn build_sink(
             reason: format!("sink_type '{sink_type}' is not compiled in"),
         });
     }
+
     match sink_type {
         #[cfg(feature = "stdout")]
         "stdout" => {
@@ -2550,7 +1969,6 @@ async fn build_sink(
             };
             Ok(Box::new(crate::sink::stdout::StdoutSink::new(format)))
         }
-
         #[cfg(feature = "stdout")]
         "file" => {
             let path = pipeline.require_str(&["sink", "path"])?;
@@ -2562,7 +1980,6 @@ async fn build_sink(
                 crate::sink::stdout::FileSink::new(path, format).await?,
             ))
         }
-
         "inbox" => {
             let inbox = pipeline.require_str(&["sink", "inbox"])?;
             if let Some(postgres_url) = pipeline.opt_str(&["sink", "postgres_url"]) {
@@ -2573,20 +1990,22 @@ async fn build_sink(
                 Ok(Box::new(crate::sink::inbox::InboxSink::new(db, inbox)?))
             }
         }
-
+        "pg_outbox" => {
+            let postgres_url = pipeline.require_str(&["sink", "postgres_url"])?;
+            let inbox = pipeline.require_str(&["sink", "inbox"])?;
+            Ok(Box::new(
+                crate::sink::pg_outbox::PgInboxSink::new(postgres_url, inbox).await?,
+            ))
+        }
         #[cfg(feature = "nats")]
         "nats" => {
             let url = pipeline.require_str(&["sink", "url"])?;
-            // v0.40.0 (ADR-011 §13): The sink renders the subject from config —
-            // a fixed `subject` or a `subject_template`. When neither is set the
-            // documented default template ({outbox}.{op}) applies.
             let subject = pipeline.opt_str(&["sink", "subject"]);
             let subject_template = pipeline.opt_str(&["sink", "subject_template"]);
             Ok(Box::new(
                 crate::sink::nats::NatsSink::new(url, subject, subject_template).await?,
             ))
         }
-
         #[cfg(feature = "kafka")]
         "kafka" => {
             let brokers = pipeline.require_str(&["sink", "brokers"])?;
@@ -2599,7 +2018,6 @@ async fn build_sink(
                 topic_template,
             )?))
         }
-
         #[cfg(feature = "webhook")]
         "webhook" => {
             let url = pipeline.require_str(&["sink", "url"])?;
@@ -2623,713 +2041,10 @@ async fn build_sink(
                 )?,
             ))
         }
-
-        #[cfg(feature = "redis")]
-        "redis" => {
-            let url = pipeline.require_str(&["sink", "url"])?;
-            let stream_key_template = pipeline
-                .opt_str(&["sink", "stream_key_template"])
-                .unwrap_or("{stream_table}");
-            let max_len = pipeline.opt_i64(&["sink", "max_len"]).map(|n| n as usize);
-            Ok(Box::new(
-                crate::sink::redis::RedisSink::new(url, stream_key_template, max_len).await?,
-            ))
-        }
-
-        #[cfg(feature = "sqs")]
-        "sqs" => {
-            let queue_url = pipeline.require_str(&["sink", "queue_url"])?;
-            let is_fifo = pipeline.opt_bool(&["sink", "is_fifo"]).unwrap_or(false);
-            Ok(Box::new(
-                crate::sink::sqs::SqsSink::new(queue_url, is_fifo).await?,
-            ))
-        }
-
-        #[cfg(feature = "rabbitmq")]
-        "rabbitmq" => {
-            let url = pipeline.require_str(&["sink", "url"])?;
-            let exchange = pipeline.opt_str(&["sink", "exchange"]).unwrap_or("");
-            let routing_key_template = pipeline
-                .opt_str(&["sink", "routing_key_template"])
-                .unwrap_or("{stream_table}");
-            Ok(Box::new(
-                crate::sink::rabbitmq::RabbitMqSink::new(url, exchange, routing_key_template)
-                    .await?,
-            ))
-        }
-
-        #[cfg(feature = "elasticsearch")]
-        "elasticsearch" => {
-            let url = pipeline.require_str(&["sink", "url"])?;
-            let index_template = pipeline
-                .opt_str(&["sink", "index_template"])
-                .unwrap_or("pg-tide-{stream_table}");
-            let allow_http = pipeline.opt_bool(&["sink", "allow_http"]).unwrap_or(false);
-            let ssrf_protection = pipeline
-                .opt_bool(&["sink", "ssrf_protection"])
-                .unwrap_or(true);
-            Ok(Box::new(
-                crate::sink::elasticsearch::ElasticsearchSink::new(
-                    url,
-                    index_template,
-                    allow_http,
-                    ssrf_protection,
-                )?,
-            ))
-        }
-
-        #[cfg(feature = "pubsub")]
-        "pubsub" => {
-            let project_id = pipeline.require_str(&["sink", "project_id"])?;
-            let topic = pipeline.require_str(&["sink", "topic"])?;
-            Ok(Box::new(crate::sink::pubsub::PubSubSink::new(
-                project_id, topic,
-            )?))
-        }
-
-        #[cfg(feature = "kinesis")]
-        "kinesis" => {
-            let stream_name = pipeline.require_str(&["sink", "stream_name"])?;
-            let partition_key_template = pipeline
-                .opt_str(&["sink", "partition_key_template"])
-                .unwrap_or("{stream_table}");
-            Ok(Box::new(
-                crate::sink::kinesis::KinesisSink::new(stream_name, partition_key_template).await?,
-            ))
-        }
-
-        #[cfg(feature = "servicebus")]
-        "servicebus" => {
-            let connection_string = pipeline.require_str(&["sink", "connection_string"])?;
-            let entity = pipeline.require_str(&["sink", "entity"])?;
-            Ok(Box::new(crate::sink::servicebus::ServiceBusSink::new(
-                connection_string,
-                entity,
-            )?))
-        }
-
-        #[cfg(feature = "mqtt")]
-        "mqtt" => {
-            let url = pipeline.require_str(&["sink", "url"])?;
-            let client_id = pipeline
-                .opt_str(&["sink", "client_id"])
-                .unwrap_or("pg-tide");
-            let topic_template = pipeline
-                .opt_str(&["sink", "topic_template"])
-                .unwrap_or("pg-tide/{stream_table}/{op}");
-            let qos = pipeline.opt_i64(&["sink", "qos"]).unwrap_or(1) as u8;
-            Ok(Box::new(
-                crate::sink::mqtt::MqttSink::new(url, client_id, topic_template, qos).await?,
-            ))
-        }
-
-        #[cfg(feature = "eventhubs")]
-        "eventhubs" => {
-            let connection_string = pipeline.require_str(&["sink", "connection_string"])?;
-            let event_hub = pipeline.require_str(&["sink", "event_hub"])?;
-            let partition_key_template = pipeline
-                .opt_str(&["sink", "partition_key_template"])
-                .unwrap_or("{stream_table}");
-            Ok(Box::new(crate::sink::eventhubs::EventHubsSink::new(
-                connection_string,
-                event_hub,
-                partition_key_template,
-            )?))
-        }
-
-        #[cfg(feature = "object-storage")]
-        "object-storage" => {
-            use crate::sink::object_storage::{
-                ObjectStorageFormat, ObjectStorageProvider, ObjectStorageSink,
-            };
-
-            let provider_str = pipeline.require_str(&["sink", "provider"])?;
-            let prefix = pipeline.opt_str(&["sink", "prefix"]).unwrap_or("pg-tide");
-            let format_str = pipeline.opt_str(&["sink", "format"]).unwrap_or("jsonl");
-            let format = match format_str {
-                "parquet" => ObjectStorageFormat::Parquet,
-                _ => ObjectStorageFormat::Jsonl,
-            };
-            let buffer_max_rows = pipeline
-                .opt_i64(&["sink", "buffer_max_rows"])
-                .unwrap_or(100_000) as usize;
-            let buffer_max_bytes = pipeline
-                .opt_i64(&["sink", "buffer_max_bytes"])
-                .unwrap_or(268_435_456) as usize;
-            let buffer_max_seconds = pipeline
-                .opt_i64(&["sink", "buffer_max_seconds"])
-                .unwrap_or(300) as u64;
-            let partition_by_date = pipeline
-                .opt_bool(&["sink", "partition_by_date"])
-                .unwrap_or(true);
-
-            let provider = match provider_str {
-                "s3" => {
-                    let bucket = pipeline.require_str(&["sink", "bucket"])?;
-                    let region = pipeline.opt_str(&["sink", "region"]).map(String::from);
-                    let endpoint = pipeline.opt_str(&["sink", "endpoint"]).map(String::from);
-                    ObjectStorageProvider::S3 {
-                        bucket: bucket.to_string(),
-                        region,
-                        endpoint,
-                    }
-                }
-                "gcs" => {
-                    let bucket = pipeline.require_str(&["sink", "bucket"])?;
-                    ObjectStorageProvider::Gcs {
-                        bucket: bucket.to_string(),
-                    }
-                }
-                "azure-blob" => {
-                    let account = pipeline.require_str(&["sink", "account"])?;
-                    let container = pipeline.require_str(&["sink", "container"])?;
-                    ObjectStorageProvider::Azure {
-                        account: account.to_string(),
-                        container: container.to_string(),
-                    }
-                }
-                "local" => {
-                    let root = pipeline.require_str(&["sink", "root"])?;
-                    ObjectStorageProvider::Local {
-                        root: std::path::PathBuf::from(root),
-                    }
-                }
-                other => {
-                    return Err(RelayError::InvalidConfig {
-                        name: pipeline.name.clone(),
-                        reason: format!("unknown object-storage provider: {other}"),
-                    });
-                }
-            };
-
-            Ok(Box::new(ObjectStorageSink::new(
-                provider,
-                prefix,
-                format,
-                buffer_max_rows,
-                buffer_max_bytes,
-                buffer_max_seconds,
-                partition_by_date,
-            )?))
-        }
-
-        // v0.8.0: Notification sinks + Arrow Flight
-        #[cfg(feature = "slack")]
-        "slack" => {
-            let webhook_url = pipeline.require_str(&["sink", "webhook_url"])?;
-            let username = pipeline.opt_str(&["sink", "username"]).map(String::from);
-            let icon_emoji = pipeline.opt_str(&["sink", "icon_emoji"]).map(String::from);
-            let batch_limit = pipeline.opt_i64(&["sink", "batch_limit"]).unwrap_or(50) as usize;
-            Ok(Box::new(crate::sink::slack::SlackSink::new(
-                webhook_url,
-                username,
-                icon_emoji,
-                batch_limit,
-            )?))
-        }
-
-        #[cfg(feature = "discord")]
-        "discord" => {
-            let webhook_url = pipeline.require_str(&["sink", "webhook_url"])?;
-            let username = pipeline.opt_str(&["sink", "username"]).map(String::from);
-            let avatar_url = pipeline.opt_str(&["sink", "avatar_url"]).map(String::from);
-            let batch_limit = pipeline.opt_i64(&["sink", "batch_limit"]).unwrap_or(10) as usize;
-            Ok(Box::new(crate::sink::discord::DiscordSink::new(
-                webhook_url,
-                username,
-                avatar_url,
-                batch_limit,
-            )?))
-        }
-
-        #[cfg(feature = "pagerduty")]
-        "pagerduty" => {
-            let routing_key = pipeline.require_str(&["sink", "routing_key"])?;
-            let severity = pipeline.opt_str(&["sink", "severity"]).unwrap_or("info");
-            let source = pipeline.opt_str(&["sink", "source"]).map(String::from);
-            let component = pipeline.opt_str(&["sink", "component"]).map(String::from);
-            Ok(Box::new(crate::sink::pagerduty::PagerDutySink::new(
-                routing_key,
-                severity,
-                source,
-                component,
-            )?))
-        }
-
-        #[cfg(feature = "arrow-flight")]
-        "arrow-flight" => {
-            let url = pipeline.require_str(&["sink", "url"])?;
-            let auth_token = pipeline.opt_str(&["sink", "auth_token"]).map(String::from);
-            let descriptor_path: Vec<String> = pipeline
-                .opt_str(&["sink", "descriptor_path"])
-                .unwrap_or("pg-tide")
-                .split('/')
-                .map(String::from)
-                .collect();
-            let allow_http = pipeline.opt_bool(&["sink", "allow_http"]).unwrap_or(false);
-            let ssrf_protection = pipeline
-                .opt_bool(&["sink", "ssrf_protection"])
-                .unwrap_or(true);
-            Ok(Box::new(crate::sink::arrow_flight::ArrowFlightSink::new(
-                url,
-                auth_token,
-                descriptor_path,
-                allow_http,
-                ssrf_protection,
-            )?))
-        }
-
-        // v0.9.0: Singer protocol adapter
-        #[cfg(feature = "singer")]
-        "singer" => {
-            let target_command = pipeline.require_str(&["sink", "target_command"])?;
-            let target_args: Vec<String> = pipeline
-                .config
-                .pointer("/sink/target_args")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let target_name = pipeline
-                .opt_str(&["sink", "target_name"])
-                .unwrap_or(target_command);
-            let stream_name_template = pipeline
-                .opt_str(&["sink", "stream_name_template"])
-                .unwrap_or("{stream_table}");
-            let on_schema_change = crate::sink::singer::OnSchemaChange::from_str(
-                pipeline
-                    .opt_str(&["sink", "on_schema_change"])
-                    .unwrap_or("log"),
-            );
-            Ok(Box::new(crate::sink::singer::SingerSink::new(
-                Arc::clone(&db),
-                &pipeline.name,
-                target_command,
-                &target_args,
-                target_name,
-                stream_name_template,
-                on_schema_change,
-            )?))
-        }
-
-        // v0.9.0: Airbyte protocol adapter
-        #[cfg(feature = "airbyte")]
-        "airbyte" => {
-            let stream_name_template = pipeline
-                .opt_str(&["sink", "stream_name_template"])
-                .unwrap_or("{stream_table}");
-            let namespace = pipeline.opt_str(&["sink", "namespace"]).unwrap_or("pgtide");
-            let destination_name;
-
-            if let Some(image) = pipeline.opt_str(&["sink", "destination_image"]) {
-                let destination_config = pipeline
-                    .config
-                    .pointer("/sink/destination_config")
-                    .cloned()
-                    .unwrap_or(serde_json::json!({}));
-                destination_name = pipeline
-                    .opt_str(&["sink", "destination_name"])
-                    .unwrap_or(image)
-                    .to_string();
-                Ok(Box::new(crate::sink::airbyte::AirbyteSink::new_docker(
-                    Arc::clone(&db),
-                    &pipeline.name,
-                    image,
-                    &destination_config,
-                    &destination_name,
-                    stream_name_template,
-                    namespace,
-                )?))
-            } else {
-                let cmd = pipeline.require_str(&["sink", "destination_command"])?;
-                let args: Vec<String> = pipeline
-                    .config
-                    .pointer("/sink/destination_args")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                destination_name = pipeline
-                    .opt_str(&["sink", "destination_name"])
-                    .unwrap_or(cmd)
-                    .to_string();
-                Ok(Box::new(crate::sink::airbyte::AirbyteSink::new_command(
-                    Arc::clone(&db),
-                    &pipeline.name,
-                    cmd,
-                    &args,
-                    &destination_name,
-                    stream_name_template,
-                    namespace,
-                )?))
-            }
-        }
-
-        // v0.34.0: Register previously unregistered analytics / data-lake / document sinks.
-        // These implementations existed since v0.10.0 but were never wired into
-        // build_sink(), so they were unavailable for reverse pipelines (and also
-        // for forward pipelines configured via the relay catalog rather than TOML).
-        #[cfg(feature = "clickhouse")]
-        "clickhouse" => {
-            use crate::sink::clickhouse::ClickHouseConfig;
-            let url = pipeline.require_str(&["sink", "url"])?;
-            let database = pipeline.require_str(&["sink", "database"])?;
-            let table_template = pipeline
-                .opt_str(&["sink", "table_template"])
-                .unwrap_or("{stream_table}");
-            let username = pipeline.opt_str(&["sink", "username"]).map(String::from);
-            let password = pipeline.opt_str(&["sink", "password"]).map(String::from);
-            let allow_http = pipeline.opt_bool(&["sink", "allow_http"]).unwrap_or(false);
-            let ssrf_protection = pipeline
-                .opt_bool(&["sink", "ssrf_protection"])
-                .unwrap_or(true);
-            Ok(Box::new(crate::sink::clickhouse::ClickHouseSink::new(
-                ClickHouseConfig {
-                    url: url.to_string(),
-                    database: database.to_string(),
-                    table_template: table_template.to_string(),
-                    username,
-                    password,
-                    allow_http,
-                    ssrf_protection,
-                },
-            )?))
-        }
-
-        #[cfg(feature = "mongodb")]
-        "mongodb" => {
-            use crate::sink::mongodb::MongoDbConfig;
-            let connection_string = pipeline.require_str(&["sink", "connection_string"])?;
-            let database = pipeline.require_str(&["sink", "database"])?;
-            let collection_template = pipeline
-                .opt_str(&["sink", "collection_template"])
-                .unwrap_or("{stream_table}");
-            let doc_id_field = pipeline
-                .opt_str(&["sink", "doc_id_field"])
-                .unwrap_or("dedup_key");
-            let write_concern = pipeline
-                .opt_str(&["sink", "write_concern"])
-                .unwrap_or("majority");
-            let mut cfg = MongoDbConfig::new(connection_string, database);
-            cfg.collection_template = collection_template.to_string();
-            cfg.doc_id_field = doc_id_field.to_string();
-            cfg.write_concern = write_concern.to_string();
-            Ok(Box::new(crate::sink::mongodb::MongoDbSink::new(cfg).await?))
-        }
-
-        #[cfg(feature = "bigquery")]
-        "bigquery" => {
-            use crate::sink::bigquery::{BigQueryConfig, BigQueryWriteMode};
-            let project_id = pipeline.require_str(&["sink", "project_id"])?;
-            let dataset_id = pipeline.require_str(&["sink", "dataset_id"])?;
-            let table_template = pipeline
-                .opt_str(&["sink", "table_template"])
-                .unwrap_or("{stream_table}");
-            let access_token = pipeline.require_str(&["sink", "access_token"])?;
-            let write_mode = match pipeline
-                .opt_str(&["sink", "write_mode"])
-                .unwrap_or("streaming")
-            {
-                "batch" => BigQueryWriteMode::Batch,
-                _ => BigQueryWriteMode::Streaming,
-            };
-            Ok(Box::new(crate::sink::bigquery::BigQuerySink::new(
-                BigQueryConfig {
-                    project_id: project_id.to_string(),
-                    dataset_id: dataset_id.to_string(),
-                    table_template: table_template.to_string(),
-                    write_mode,
-                    access_token: access_token.to_string(),
-                },
-            )?))
-        }
-
-        #[cfg(feature = "snowflake")]
-        "snowflake" => {
-            use crate::sink::snowflake::SnowflakeConfig;
-            let account = pipeline.require_str(&["sink", "account"])?;
-            let database = pipeline.require_str(&["sink", "database"])?;
-            let schema = pipeline.opt_str(&["sink", "schema"]).unwrap_or("PUBLIC");
-            let table_template = pipeline
-                .opt_str(&["sink", "table_template"])
-                .unwrap_or("{stream_table}");
-            let user = pipeline.require_str(&["sink", "user"])?;
-            let auth_token = pipeline.require_str(&["sink", "auth_token"])?;
-            let batch_size = pipeline.opt_i64(&["sink", "batch_size"]).unwrap_or(16_384) as usize;
-            Ok(Box::new(crate::sink::snowflake::SnowflakeSink::new(
-                SnowflakeConfig {
-                    account: account.to_string(),
-                    database: database.to_string(),
-                    schema: schema.to_string(),
-                    table_template: table_template.to_string(),
-                    user: user.to_string(),
-                    auth_token: auth_token.to_string(),
-                    batch_size,
-                },
-            )?))
-        }
-
-        #[cfg(feature = "delta")]
-        "delta" => {
-            use crate::sink::delta::{DeltaConfig, DeltaSink};
-            let table_path = pipeline.require_str(&["sink", "table_path"])?;
-            let change_data_feed = pipeline
-                .opt_bool(&["sink", "change_data_feed"])
-                .unwrap_or(false);
-            let rows_per_file = pipeline
-                .opt_i64(&["sink", "rows_per_file"])
-                .unwrap_or(50_000) as usize;
-            let store = build_object_store_from_pipeline(pipeline)?;
-            let cfg = DeltaConfig {
-                table_path: table_path.to_string(),
-                change_data_feed,
-                rows_per_file,
-            };
-            Ok(Box::new(DeltaSink::new(store, cfg)))
-        }
-
-        #[cfg(feature = "iceberg")]
-        "iceberg" => {
-            use crate::sink::iceberg::{IcebergConfig, IcebergSink, IcebergWriteMode};
-            let warehouse_path = pipeline.require_str(&["sink", "warehouse_path"])?;
-            let namespace = pipeline
-                .opt_str(&["sink", "namespace"])
-                .unwrap_or("default");
-            let table_template = pipeline
-                .opt_str(&["sink", "table_template"])
-                .unwrap_or("{stream_table}");
-            let write_mode = match pipeline
-                .opt_str(&["sink", "write_mode"])
-                .unwrap_or("append")
-            {
-                "overwrite" => IcebergWriteMode::Overwrite,
-                _ => IcebergWriteMode::Append,
-            };
-            let rows_per_file = pipeline
-                .opt_i64(&["sink", "rows_per_file"])
-                .unwrap_or(50_000) as usize;
-            let store = build_object_store_from_pipeline(pipeline)?;
-            let cfg = IcebergConfig {
-                warehouse_path: warehouse_path.to_string(),
-                namespace: namespace.to_string(),
-                table_template: table_template.to_string(),
-                write_mode,
-                rows_per_file,
-            };
-            Ok(Box::new(IcebergSink::new(store, cfg)))
-        }
-
-        #[cfg(feature = "ducklake")]
-        "ducklake" => {
-            use crate::sink::ducklake::{
-                DuckLakeConfig, DuckLakePartition, DuckLakeSink, SchemaChangePolicy,
-            };
-            let data_path = pipeline.require_str(&["sink", "data_path"])?;
-            let namespace = pipeline.opt_str(&["sink", "namespace"]).unwrap_or("pgtide");
-            let catalog_schema = pipeline
-                .opt_str(&["sink", "catalog_schema"])
-                .unwrap_or("ducklake");
-            let inline_row_limit = pipeline
-                .opt_i64(&["sink", "inline_row_limit"])
-                .unwrap_or(10) as usize;
-            let on_schema_change = match pipeline
-                .opt_str(&["sink", "on_schema_change"])
-                .unwrap_or("warn_and_continue")
-            {
-                "pause" => SchemaChangePolicy::Pause,
-                "route_to_dlq" => SchemaChangePolicy::RouteToDlq,
-                "auto_new_stream" => SchemaChangePolicy::AutoNewStream,
-                _ => SchemaChangePolicy::WarnAndContinue,
-            };
-            let partition = match pipeline.opt_str(&["sink", "partition"]).unwrap_or("none") {
-                "daily" => DuckLakePartition::Daily,
-                "monthly" => DuckLakePartition::Monthly,
-                other => {
-                    if let Some(n) = other
-                        .strip_prefix("bucket:")
-                        .and_then(|s| s.parse::<u32>().ok())
-                    {
-                        DuckLakePartition::Bucket(n)
-                    } else {
-                        DuckLakePartition::None
-                    }
-                }
-            };
-            let atomic_lake_writes = pipeline
-                .opt_bool(&["sink", "atomic_lake_writes"])
-                .unwrap_or(false);
-            // `catalog_connection` is required: the DuckLake sink needs its own
-            // transaction-capable PostgreSQL client to commit catalog entries atomically.
-            let catalog_url = pipeline.require_str(&["sink", "catalog_connection"])?;
-            let (catalog_client, catalog_conn) = crate::pg_tls::connect(catalog_url).await?;
-            tokio::spawn(async move {
-                if let Err(e) = catalog_conn.await {
-                    tracing::error!("ducklake catalog connection closed with error: {e}");
-                }
-            });
-            let store = build_object_store_from_pipeline(pipeline)?;
-            let mut cfg = DuckLakeConfig::new(data_path, namespace);
-            cfg.catalog_schema = catalog_schema.to_string();
-            cfg.inline_row_limit = inline_row_limit;
-            cfg.on_schema_change = on_schema_change;
-            cfg.partition = partition;
-            cfg.atomic_lake_writes = atomic_lake_writes;
-            cfg.pipeline_name = Some(pipeline.name.clone());
-            Ok(Box::new(DuckLakeSink::new(store, catalog_client, cfg)))
-        }
-
-        // v0.34.0: Register remote PostgreSQL inbox sink (pg_outbox.rs — PgInboxSink).
-        // Delivers messages to a pg_tide inbox on a remote PostgreSQL instance.
-        // This is the feature = "pg-inbox" sink path; no extra Cargo feature required
-        // (uses tokio-postgres which is already a core dependency).
-        "pg_outbox" => {
-            let postgres_url = pipeline.require_str(&["sink", "postgres_url"])?;
-            let inbox = pipeline.require_str(&["sink", "inbox"])?;
-            Ok(Box::new(
-                crate::sink::pg_outbox::PgInboxSink::new(postgres_url, inbox).await?,
-            ))
-        }
-
-        // v0.37.0: RockLake PG-wire sidecar sink.
-        // Speaks RockLake's bounded SQL subset (no nextval, no ON CONFLICT,
-        // no RETURNING, no catalog DDL).  Shares Parquet-building logic with
-        // DuckLakeSink via the ducklake_common module.
-        #[cfg(feature = "rocklake")]
-        "rocklake" => {
-            use crate::ducklake_common::{DuckLakePartition, SchemaChangePolicy};
-            use crate::sink::rocklake::{RockLakeConfig, RockLakeSink};
-            let data_path = pipeline.require_str(&["sink", "data_path"])?;
-            let namespace = pipeline.opt_str(&["sink", "namespace"]).unwrap_or("pgtide");
-            let catalog_schema = pipeline
-                .opt_str(&["sink", "catalog_schema"])
-                .unwrap_or("ducklake");
-            let inline_row_limit = pipeline
-                .opt_i64(&["sink", "inline_row_limit"])
-                .unwrap_or(10) as usize;
-            let on_schema_change = match pipeline
-                .opt_str(&["sink", "on_schema_change"])
-                .unwrap_or("warn_and_continue")
-            {
-                "pause" => SchemaChangePolicy::Pause,
-                "route_to_dlq" => SchemaChangePolicy::RouteToDlq,
-                "auto_new_stream" => SchemaChangePolicy::AutoNewStream,
-                _ => SchemaChangePolicy::WarnAndContinue,
-            };
-            let partition = match pipeline.opt_str(&["sink", "partition"]).unwrap_or("none") {
-                "daily" => DuckLakePartition::Daily,
-                "monthly" => DuckLakePartition::Monthly,
-                other => {
-                    if let Some(n) = other
-                        .strip_prefix("bucket:")
-                        .and_then(|s| s.parse::<u32>().ok())
-                    {
-                        DuckLakePartition::Bucket(n)
-                    } else {
-                        DuckLakePartition::None
-                    }
-                }
-            };
-            // `catalog_connection` is required: the RockLake sink needs its own
-            // connection to the RockLake PG-wire sidecar for catalog commits.
-            let catalog_url = pipeline.require_str(&["sink", "catalog_connection"])?;
-            let (catalog_client, catalog_conn) = crate::pg_tls::connect(catalog_url).await?;
-            tokio::spawn(async move {
-                if let Err(e) = catalog_conn.await {
-                    tracing::error!("rocklake catalog connection closed with error: {e}");
-                }
-            });
-            let store = build_object_store_from_pipeline(pipeline)?;
-            let mut cfg = RockLakeConfig::new(data_path, namespace);
-            cfg.catalog_schema = catalog_schema.to_string();
-            cfg.inline_row_limit = inline_row_limit;
-            cfg.on_schema_change = on_schema_change;
-            cfg.partition = partition;
-            cfg.pipeline_name = Some(pipeline.name.clone());
-            Ok(Box::new(RockLakeSink::new(store, catalog_client, cfg)))
-        }
-
         other => Err(RelayError::InvalidConfig {
             name: pipeline.name.clone(),
-            reason: format!("unknown sink_type: {other}"),
+            reason: format!("unknown or removed sink_type '{other}'"),
         }),
-    }
-}
-
-// ── Object store factory helper (v0.34.0) ────────────────────────────────
-
-/// Build an `ObjectStore` from the pipeline's `sink` config section.
-///
-/// Reads `sink.storage_provider` (`s3` | `gcs` | `azure` | `local`, default
-/// `local`) and the corresponding provider-specific keys.  Used by the
-/// `delta`, `iceberg`, `ducklake`, and `rocklake` sink arms introduced in v0.34.0–v0.37.0.
-#[cfg(any(
-    feature = "delta",
-    feature = "iceberg",
-    feature = "ducklake",
-    feature = "rocklake"
-))]
-fn build_object_store_from_pipeline(
-    pipeline: &PipelineConfig,
-) -> Result<std::sync::Arc<dyn object_store::ObjectStore>, RelayError> {
-    let provider = pipeline
-        .opt_str(&["sink", "storage_provider"])
-        .unwrap_or("local");
-
-    match provider {
-        "s3" => {
-            let bucket = pipeline.require_str(&["sink", "bucket"])?;
-            let region = pipeline.opt_str(&["sink", "region"]).map(String::from);
-            let endpoint = pipeline.opt_str(&["sink", "endpoint"]).map(String::from);
-            let mut builder =
-                object_store::aws::AmazonS3Builder::from_env().with_bucket_name(bucket);
-            if let Some(r) = region {
-                builder = builder.with_region(r);
-            }
-            if let Some(e) = endpoint {
-                builder = builder.with_endpoint(e);
-                // For LocalStack / MinIO — allow plain HTTP.
-                builder = builder.with_allow_http(true);
-            }
-            Ok(std::sync::Arc::new(builder.build().map_err(|e| {
-                RelayError::config(format!("S3 config error: {e}"))
-            })?))
-        }
-        "gcs" => {
-            let bucket = pipeline.require_str(&["sink", "bucket"])?;
-            Ok(std::sync::Arc::new(
-                object_store::gcp::GoogleCloudStorageBuilder::from_env()
-                    .with_bucket_name(bucket)
-                    .build()
-                    .map_err(|e| RelayError::config(format!("GCS config error: {e}")))?,
-            ))
-        }
-        "azure" => {
-            let account = pipeline.require_str(&["sink", "account"])?;
-            let container = pipeline.require_str(&["sink", "container"])?;
-            Ok(std::sync::Arc::new(
-                object_store::azure::MicrosoftAzureBuilder::from_env()
-                    .with_account(account)
-                    .with_container_name(container)
-                    .build()
-                    .map_err(|e| RelayError::config(format!("Azure Blob config error: {e}")))?,
-            ))
-        }
-        // Default: local filesystem. `sink.root` sets the prefix (default /tmp/pg-tide-objects).
-        _ => {
-            let root = pipeline
-                .opt_str(&["sink", "root"])
-                .unwrap_or("/tmp/pg-tide-objects");
-            Ok(std::sync::Arc::new(
-                object_store::local::LocalFileSystem::new_with_prefix(std::path::Path::new(root))
-                    .map_err(|e| RelayError::config(format!("local fs error: {e}")))?,
-            ))
-        }
     }
 }
 

@@ -33,7 +33,7 @@ configuration remain outside the guarantee.
 ## Explicit exclusions
 
 There is no v1 guarantee for PostgreSQL versions other than 18, inbound
-connectors, `experimental-full`, preview or experimental connectors, a stable
+connectors, preview-only integrations, or internal tooling, a stable
 Rust/plugin ABI, arbitrary source-to-sink combinations, or exactly-once
 transport. See the [support policy](support/support-policy.md) and
 [production-supported definition](support/production-supported.md).

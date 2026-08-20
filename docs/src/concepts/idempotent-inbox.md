@@ -69,7 +69,7 @@ The dedup key uniquely identifies a message. Common strategies:
 | Composite | `"order-ORD-001-created"` | Derived from payload |
 | Kafka offset | `"topic-0-12345"` | Kafka partition + offset |
 
-pg_tide extracts the dedup key from the message based on the wire format configuration. For native format, it uses the message key. For Debezium, it uses the record key.
+pg_tide extracts the dedup key from the native or CloudEvents message key.
 
 ## Failure Handling
 

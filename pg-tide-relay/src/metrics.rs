@@ -28,10 +28,6 @@ pub const METRIC_POOL_CONNECTIONS: &str = "pg_tide_relay_pool_connections";
 pub const METRIC_POOL_ACQUIRE_DURATION: &str = "pg_tide_relay_pool_acquire_duration_seconds";
 /// v0.28.0: Delivery receipt write counter.
 pub const METRIC_RECEIPTS_WRITTEN: &str = "pg_tide_relay_receipts_written_total";
-/// v0.29.0: Fan-in source consumer lag gauge.
-pub const METRIC_FANIN_SOURCE_LAG: &str = "pg_tide_relay_fanin_source_lag";
-/// v0.29.0: Fan-in merged messages counter.
-pub const METRIC_FANIN_MESSAGES_MERGED: &str = "pg_tide_relay_fanin_messages_merged_total";
 pub const METRIC_DELIVERY_STAGE: &str = "pg_tide_relay_delivery_stage_total";
 pub const METRIC_CHECKPOINT_ERRORS: &str = "pg_tide_relay_checkpoint_commit_errors_total";
 pub const METRIC_OWNERSHIP_EVENTS: &str = "pg_tide_relay_ownership_events_total";
@@ -81,10 +77,6 @@ pub struct RelayMetrics {
     pub pool_acquire_duration_seconds: HistogramVec,
     /// v0.28.0: Delivery receipts written counter (pipeline × sink_type).
     pub receipts_written: IntCounterVec,
-    /// v0.29.0: Fan-in source consumer lag gauge (pipeline × outbox).
-    pub fanin_source_lag: IntGaugeVec,
-    /// v0.29.0: Fan-in merged messages counter (pipeline × outbox).
-    pub fanin_messages_merged: IntCounterVec,
     /// v0.42.0: Fixed-cardinality delivery transition counter.
     pub delivery_stage_total: IntCounterVec,
     /// v0.42.0: Source checkpoint commit failures.
@@ -282,25 +274,6 @@ impl RelayMetrics {
         )?;
         registry.register(Box::new(receipts_written.clone()))?;
 
-        // v0.29.0: Fan-in source metrics.
-        let fanin_source_lag = IntGaugeVec::new(
-            prometheus::opts!(
-                METRIC_FANIN_SOURCE_LAG,
-                "Consumer lag per source outbox in fan-in pipelines"
-            ),
-            &["pipeline", "outbox", "tenant"],
-        )?;
-        registry.register(Box::new(fanin_source_lag.clone()))?;
-
-        let fanin_messages_merged = IntCounterVec::new(
-            prometheus::opts!(
-                METRIC_FANIN_MESSAGES_MERGED,
-                "Total messages merged from each source outbox in fan-in pipelines"
-            ),
-            &["pipeline", "outbox", "tenant"],
-        )?;
-        registry.register(Box::new(fanin_messages_merged.clone()))?;
-
         let delivery_stage_total = IntCounterVec::new(
             prometheus::opts!(METRIC_DELIVERY_STAGE, "Delivery state-machine transitions"),
             &["pipeline", "stage", "outcome"],
@@ -424,8 +397,6 @@ impl RelayMetrics {
             pool_connections,
             pool_acquire_duration_seconds,
             receipts_written,
-            fanin_source_lag,
-            fanin_messages_merged,
             delivery_stage_total,
             checkpoint_commit_errors,
             ownership_events,

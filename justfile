@@ -12,7 +12,7 @@ fmt:
 # Run clippy (must pass with zero warnings)
 # pg-tide-ext (pgrx) needs cargo-pgrx + PostgreSQL 18; relay is pure Rust.
 lint:
-    cargo clippy --package pg-tide-relay --all-targets --no-default-features --features experimental-full -- -D warnings
+    cargo clippy --package pg-tide-relay --all-targets --no-default-features --features core -- -D warnings
     cargo fmt --all -- --check
 
 # v0.26.0: Guard against bare expect() in production (non-test) relay code.
@@ -214,6 +214,10 @@ check-connectors:
 # Validate the v1 contract inventory and frozen connector matrix.
 check-v1-contracts:
     python3 scripts/check_v1_contracts.py
+
+# Validate the v1 product surface and active metadata boundary.
+check-v1-surface:
+    python3 scripts/check_v1_surface.py
 
 # Validate time-bounded flake exceptions; the registry never suppresses tests.
 check-flakes:
@@ -583,10 +587,10 @@ test-runbooks:
     python3 scripts/check_observability.py
 
 test-operator-cli:
-    cargo test -p pg-tide-relay --no-default-features --features experimental-full cli
+    cargo test -p pg-tide-relay --no-default-features --features core cli
 
 test-config-contract:
-    cargo test -p pg-tide-relay --no-default-features --features experimental-full config
+    cargo test -p pg-tide-relay --no-default-features --features core config
 
 test-upgrade:
     bash scripts/check_upgrade_completeness.sh

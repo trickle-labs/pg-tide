@@ -70,6 +70,12 @@ pub enum RelayError {
     #[error("invalid config for pipeline '{name}': {reason}")]
     InvalidConfig { name: String, reason: String },
 
+    #[error("PGTIDE_CONFIG_UNSUPPORTED_SURFACE: {surface}; last_version=0.48.0; alternative={alternative}")]
+    UnsupportedSurface {
+        surface: String,
+        alternative: String,
+    },
+
     #[error("pipeline '{0}' not found")]
     PipelineNotFound(String),
 

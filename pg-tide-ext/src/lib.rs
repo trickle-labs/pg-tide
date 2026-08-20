@@ -9,9 +9,7 @@
 
 use pgrx::prelude::*;
 
-mod backfill;
 mod error;
-mod fanin;
 mod inbox;
 mod lifecycle;
 mod outbox;
@@ -284,6 +282,11 @@ pgrx::extension_sql_file!(
     name = "pg_tide_m_0_48",
     requires = ["pg_tide_m_0_47"]
 );
+pgrx::extension_sql_file!(
+    "../../sql/pg_tide--0.48.0--0.49.0.sql",
+    name = "pg_tide_m_0_49",
+    requires = ["pg_tide_m_0_48"]
+);
 
 /// Extension initialization — runs once when the extension is loaded.
 #[pg_guard]
@@ -293,10 +296,6 @@ extern "C-unwind" fn _PG_init() {
 }
 
 // Re-export all pg_extern functions so pgrx discovers them.
-#[allow(unused_imports)]
-use crate::backfill::*;
-#[allow(unused_imports)]
-use crate::fanin::*;
 #[allow(unused_imports)]
 use crate::inbox::*;
 #[allow(unused_imports)]

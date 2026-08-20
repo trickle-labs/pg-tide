@@ -15,9 +15,8 @@ reviewed candidate boundary, not a GA feature list.
 
 ## Outside the current scope
 
-- Inbound NATS, Kafka, and webhook paths and all other preview or experimental
-  connectors.
-- Fan-in, DAG orchestration, managed backfill, data-lake, and other unproven
+- Inbound or reverse relay paths and all preview or experimental connectors.
+- Orchestration, managed backfills, data-lake integrations, and other non-core
   roadmap surfaces.
 - PostgreSQL versions below 18, arbitrary source-to-sink combinations,
   exactly-once transport, and a stable Rust or plugin ABI.

@@ -132,23 +132,6 @@ SELECT tide.relay_set_outbox_v2(
 );
 ```
 
-### Reverse Pipelines (Source → Inbox)
-
-```sql
-SELECT tide.relay_set_inbox_v2(
-  jsonb_build_object(
-    'name', 'nats-orders-inbox',
-    'inbox', 'order_events',
-    'source', 'nats',
-    'config', '{
-      "url": "nats://localhost:4222",
-      "subject": "orders.>",
-      "consumer_name": "pg-tide-inbox"
-    }'::jsonb
-  )
-);
-```
-
 ### Enabling / Disabling Pipelines
 
 ```sql
@@ -167,7 +150,7 @@ Pipeline changes are picked up via:
 
 ## Hot Reload
 
-The relay watches for `NOTIFY` signals on the `tide_relay_config_changed` channel. When you modify a pipeline via `tide.relay_set_outbox_v2()` or `tide.relay_set_inbox_v2()`, the trigger fires a notification and the relay reloads within seconds — no restart required.
+The relay watches for `NOTIFY` signals on the `tide_relay_config_changed` channel. When you modify a pipeline via `tide.relay_set_outbox_v2()`, the trigger fires a notification and the relay reloads within seconds — no restart required.
 
 If `LISTEN` is interrupted (connection blip), the periodic discovery poll acts as a safety net.
 
@@ -222,9 +205,6 @@ Encryption is enabled per-outbox in the `tide.outbox_encryption_config` catalog 
 | Provider | Feature flag | Status | Notes |
 |---|---|---|---|
 | `LocalKeyFile` | `kms-local` | **Fully implemented** (v0.35.0) | AES-256-GCM with key rotation via `key_path_previous`. Ready for production use in non-cloud environments. |
-| `AwsKms` | `kms-aws` | Unavailable/experimental | Not a production capability in v0.44.0. |
-| `GcpKms` | `kms-gcp` | Unavailable/experimental | Not a production capability in v0.44.0. |
-| `VaultKms` | `kms-vault` | Unavailable/experimental | Not a production capability in v0.44.0. |
 
 Unsupported providers fail validation or worker construction before the source
 polls messages. There is no plaintext fallback.

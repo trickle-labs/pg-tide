@@ -37,7 +37,7 @@ examines at most `batch_size + 1` candidates; it does not count the entire
 table.
 
 The safe offset is the minimum checkpoint across every configured native
-pipeline, relay group, consumer group, enabled fan-in member, and overlapping
+pipeline, relay group, consumer group, and overlapping
 lease. A disabled pipeline still blocks cleanup. Both retention age and safe
 offset are required. `consumed_at` and delivery receipts are not cleanup
 authority.

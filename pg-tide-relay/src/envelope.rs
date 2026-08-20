@@ -1,28 +1,27 @@
-/// RelayMessage — unified message envelope for both forward and reverse relay modes.
+/// RelayMessage — the message envelope used by the forward relay.
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Unified message envelope used by both forward and reverse relay.
+/// Message envelope shared by the forward relay and diagnostic sinks.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RelayMessage {
     /// Dedup key for idempotent delivery.
     /// Forward: "{outbox_table}:{outbox_id}:{row_index}"
-    /// Reverse: source-specific (e.g. Kafka offset, NATS msg ID)
     pub dedup_key: String,
 
-    /// Resolved subject/topic (forward) or inbox event_type (reverse).
+    /// Resolved subject or topic.
     pub subject: String,
 
     /// The row/event payload as JSON.
     pub payload: serde_json::Value,
 
-    /// Operation: "insert", "delete", or "event" (reverse generic).
+    /// Operation: "insert", "update", or "delete".
     pub op: String,
 
     /// Whether this batch is a full-refresh snapshot (forward only).
     pub is_full_refresh: bool,
 
-    /// pg-trickle outbox metadata (forward only, None in reverse).
+    /// Native outbox metadata.
     pub outbox_id: Option<i64>,
     pub refresh_id: Option<Uuid>,
 
@@ -51,13 +50,6 @@ pub enum AckToken {
     #[default]
     None,
     OutboxOffset(i64),
-    KafkaOffset {
-        partition: i32,
-        offset: i64,
-    },
-    RedisStreamId(String),
-    SqsReceiptHandle(String),
-    RabbitMqDeliveryTag(u64),
 }
 
 impl RelayMessage {

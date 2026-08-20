@@ -655,24 +655,10 @@ fn sweep_one_locked(name: &str, batch_size: i32, dry_run: bool) -> Result<Value,
                    LEFT JOIN tide.tide_consumer_offsets o USING (group_name)
                   WHERE g.outbox_name = $1
                   GROUP BY g.group_name
-               ), fanin_participants AS (
-                 SELECT f.name::text || '/' || member::text AS participant,
-                        f.enabled,
-                        COALESCE(MIN(o.last_change_id), 0)::bigint AS safe_offset
-                   FROM tide.relay_fanin_config f
-                   CROSS JOIN LATERAL unnest(f.outbox_names) AS members(member)
-                   LEFT JOIN tide.relay_consumer_offsets o
-                     ON o.pipeline_id = f.name
-                    AND o.outbox_name = member
-                    AND o.fanin_member = member
-                  WHERE f.enabled AND member = $1
-                  GROUP BY f.name, f.enabled, member
                ), all_participants AS (
                  SELECT * FROM relay_participants
                  UNION ALL
                  SELECT * FROM group_participants
-                 UNION ALL
-                 SELECT * FROM fanin_participants
                )
                SELECT MIN(safe_offset)::bigint,
                       COALESCE(jsonb_agg(jsonb_build_object(

@@ -1,88 +1,92 @@
-/// `pg-tide migrate-config` — emit SQL to migrate TOML pipeline config to catalog.
-///
-/// Reads the active TOML configuration (from the TOML file loaded by the CLI)
-/// and prints the equivalent `SELECT tide.relay_set_outbox_v2(...)` /
-/// `SELECT tide.relay_set_inbox_v2(...)` SQL statements to stdout.
-///
-/// This is a dry-run, read-only operation.  No changes are made to the database.
-/// Pipe the output into psql to apply the migration:
-///
-///   pg-tide migrate-config --postgres-url $URL | psql $URL
-///
-/// After migrating all pipelines, switch to `--config-mode catalog_only` to
-/// enforce catalog-first configuration.
-use pg_tide_relay::config::RelayConfig;
+//! `pg-tide migrate-config` — inspect catalog rows before the v0.49.0 upgrade.
 
-/// Run the migrate-config command.
-///
-/// Reads pipeline definitions from `cfg` and emits SQL to migrate them
-/// to the catalog.  If `postgres_url` is provided, also checks the catalog
-/// for existing entries and skips any that already match.
-pub async fn run_migrate_config(
-    cfg: &RelayConfig,
-    postgres_url: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!("-- pg-tide migrate-config v{}", env!("CARGO_PKG_VERSION"));
-    println!("-- Emit these statements to migrate TOML pipeline config to the catalog.");
-    println!("-- Apply with: pg-tide migrate-config | psql <connection-string>");
-    println!();
+use pg_tide_relay::pg_tls;
+use serde_json::Value;
 
-    // In v0.28.0 the relay does not support inline TOML [[pipeline]] blocks —
-    // all pipeline configuration is stored in the PostgreSQL catalog.  This
-    // command is therefore a no-op for relay instances that already use
-    // catalog-only configuration, which is the standard deployment mode.
-    //
-    // For backward-compat with any operator who hand-crafted TOML pipeline
-    // sections (not supported by this version's TOML schema but potentially
-    // inherited from older configs), we emit a helpful migration notice.
-    println!(
-        "-- INFO: pg-tide v{} uses catalog-first configuration.",
-        env!("CARGO_PKG_VERSION")
-    );
-    println!("-- All pipeline definitions should be stored in the PostgreSQL catalog.");
-    println!("-- Use `tide.relay_set_outbox_v2(config JSONB)` to define forward pipelines.");
-    println!("-- Use `tide.relay_set_inbox_v2(config JSONB)` to define reverse pipelines.");
-    println!();
+const SUPPORTED_SINKS: &[&str] = &[
+    "inbox",
+    "pg_outbox",
+    "nats",
+    "kafka",
+    "webhook",
+    "stdout",
+    "file",
+];
 
-    if let Some(url) = postgres_url {
-        println!("-- Connecting to {url} to check existing catalog entries...");
-        match pg_tide_relay::pg_tls::connect(url).await {
-            Ok((client, conn)) => {
-                tokio::spawn(async move {
-                    let _ = conn.await;
-                });
-                let outbox_count: i64 = client
-                    .query_one("SELECT COUNT(*) FROM tide.relay_outbox_config", &[])
-                    .await
-                    .map(|r| r.get(0))
-                    .unwrap_or(0);
-                let inbox_count: i64 = client
-                    .query_one("SELECT COUNT(*) FROM tide.relay_inbox_config", &[])
-                    .await
-                    .map(|r| r.get(0))
-                    .unwrap_or(0);
-                println!(
-                    "-- Catalog currently contains {outbox_count} forward and {inbox_count} reverse pipeline(s)."
-                );
-                println!(
-                    "-- Run `pg-tide status --postgres-url {url}` to list all configured pipelines."
-                );
-            }
-            Err(e) => {
-                println!("-- WARN: Could not connect to check catalog: {e}");
-            }
+fn removed_surface(config: &Value, reverse: bool) -> Option<String> {
+    if reverse {
+        return Some("reverse pipeline".to_string());
+    }
+    if config.get("source_mode").and_then(Value::as_str) == Some("pg_trickle") {
+        return Some("source_mode=pg_trickle".to_string());
+    }
+    let source = config
+        .get("source_type")
+        .and_then(Value::as_str)
+        .unwrap_or("outbox");
+    if source != "outbox" {
+        return Some(format!("source_type={source}"));
+    }
+    if let Some(sink) = config.get("sink_type").and_then(Value::as_str) {
+        if !SUPPORTED_SINKS.contains(&sink) {
+            return Some(format!("sink_type={sink}"));
+        }
+    }
+    if let Some(format) = config.get("wire_format").and_then(Value::as_str) {
+        if !matches!(format, "native" | "cloudevents") {
+            return Some(format!("wire_format={format}"));
+        }
+    }
+    None
+}
+
+/// Inventory every catalog row that requires operator action before upgrading.
+pub async fn run_migrate_config(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (client, connection) = pg_tls::connect(url).await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let mut affected = 0usize;
+    for row in client
+        .query(
+            "SELECT name, enabled, config FROM tide.relay_outbox_config ORDER BY name",
+            &[],
+        )
+        .await?
+    {
+        let name: String = row.get("name");
+        let enabled: bool = row.get("enabled");
+        let config: Value = row.get("config");
+        if let Some(surface) = removed_surface(&config, false) {
+            affected += 1;
+            println!(
+                "PGTIDE_CONFIG_UNSUPPORTED_SURFACE: pipeline='{name}' enabled={enabled} surface={surface}; last_version=0.48.0; alternative=export, disable, replace, or delete before upgrading"
+            );
         }
     }
 
-    println!();
-    println!("-- Config mode: {:?}", cfg.config_mode);
-    println!("-- Relay group: {}", cfg.relay_group_id);
-    if let Some(ref tid) = cfg.tenant_id {
-        println!("-- Tenant: {}", tid);
+    for row in client
+        .query(
+            "SELECT name, enabled FROM tide.relay_inbox_config ORDER BY name",
+            &[],
+        )
+        .await?
+    {
+        let name: String = row.get("name");
+        let enabled: bool = row.get("enabled");
+        affected += 1;
+        println!(
+            "PGTIDE_CONFIG_UNSUPPORTED_SURFACE: pipeline='{name}' enabled={enabled} surface=reverse pipeline; last_version=0.48.0; alternative=export, disable, replace, or delete before upgrading"
+        );
     }
-    println!();
-    println!("-- No TOML [[pipeline]] blocks found to migrate.");
-    println!("-- All pipeline config is already catalog-first in this deployment.");
 
+    if affected == 0 {
+        println!("No v0.49.0-removed pipeline configuration found.");
+    } else {
+        println!(
+            "Found {affected} affected pipeline(s). Export configuration, then disable, replace, or delete each row before retrying the upgrade."
+        );
+    }
     Ok(())
 }

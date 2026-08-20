@@ -81,19 +81,13 @@ Jitter randomizes each delay by ±20%, so the actual sequence might be: 85ms, 22
 
 **Resolution:** Usually self-healing. Monitor the error rate and investigate if it persists beyond expected maintenance windows.
 
-### Source errors (reverse mode)
+### Unsupported configuration
 
-**Symptoms:** Relay logs `"source poll error"` for reverse pipelines.
+**Symptoms:** Relay startup reports `PGTIDE_CONFIG_UNSUPPORTED_SURFACE`.
 
-**What happens:**
-1. The relay retries subscription/polling with exponential backoff
-2. Once reconnected, consumption resumes from the last acknowledged position
-3. No messages are skipped (the source tracks its own offset)
-
-**Common causes:**
-- External source (NATS, Kafka, SQS) is temporarily unavailable
-- Subscription expired or was revoked
-- Consumer group rebalancing (Kafka)
+**What happens:** The pipeline is rejected before polling or catalog mutation.
+Export the configuration, replace the removed source, sink, or wire format with
+a supported value, and retry.
 
 ### Payload errors (permanent)
 
@@ -147,7 +141,7 @@ The drain timeout prevents the relay from hanging indefinitely if a sink is unre
 
 ## Dead-Letter Queue (Inbox Side)
 
-For reverse pipelines that write to inboxes, messages that fail processing are managed through the inbox's built-in DLQ mechanism.
+For inbox processing, messages that fail are managed through the inbox's built-in retry and failure tracking.
 
 ### How messages enter the DLQ
 

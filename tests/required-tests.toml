@@ -1,5 +1,5 @@
 schema_version = 1
-inventory_version = "0.48.0"
+inventory_version = "0.49.0"
 
 [[test]]
 id = "connector-registry-pr"
@@ -34,6 +34,22 @@ flake_policy = "never-quarantine"
 evidence = ["target/required-tests/{id}.json"]
 
 [[test]]
+id = "v1-surface-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "v1-surface"
+command = "python3 scripts/check_v1_surface.py"
+targets = ["plans/V1_SURFACE_DISPOSITION.md", "schemas/v1-surface-disposition.json", "scripts/check_v1_surface.py"]
+dependencies = ["python3"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
 id = "operational-contract-pr"
 level = "pr"
 triggers = ["pull_request", "push"]
@@ -55,7 +71,7 @@ level = "pr"
 triggers = ["pull_request", "push"]
 workflow = ".github/workflows/ci.yml"
 ci_job = "clean-checkout"
-command = "cargo test --workspace --exclude pg-tide-ext --locked --no-default-features --features experimental-full"
+command = "cargo test --workspace --exclude pg-tide-ext --locked --no-default-features --features core"
 targets = ["Cargo.lock", "pg-tide-relay"]
 dependencies = ["rust-1.97.1"]
 owner = "@grove"
@@ -119,7 +135,7 @@ level = "pr"
 triggers = ["pull_request", "push"]
 workflow = ".github/workflows/ci.yml"
 ci_job = "test-integration"
-command = "cargo test --package pg-tide-relay --test '*' --no-default-features --features experimental-full -- --test-threads=1"
+command = "cargo test --package pg-tide-relay --test '*' --no-default-features --features core -- --test-threads=1"
 targets = ["pg-tide-relay/tests"]
 dependencies = ["rust-1.97.1", "docker"]
 owner = "@grove"
