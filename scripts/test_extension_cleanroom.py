@@ -53,6 +53,7 @@ def main() -> int:
 
     output = args.output if args.output.is_absolute() else ROOT / args.output
     output.mkdir(parents=True, exist_ok=True)
+    output.chmod(0o777)
     image_key = hashlib.sha256(
         b"".join(path.read_bytes() for path in (HARNESS / "Dockerfile", ROOT / "Cargo.lock", ROOT / "rust-toolchain.toml"))
     ).hexdigest()[:16]
