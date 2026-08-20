@@ -34,6 +34,8 @@ jobs:
         run: python3 scripts/check_flake_registry.py --check
       - name: Check pre-v1 baseline
         run: python3 scripts/check_pre_v1_baseline.py --check
+      - name: Install just
+        uses: extractions/setup-just@v3
       - name: Run authoritative extension clean room
         run: GITHUB_JOB=extension-cleanroom python3 scripts/run_required_test.py extension-cleanroom
       - name: Validate extension clean-room result
