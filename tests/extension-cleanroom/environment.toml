@@ -1,0 +1,7 @@
+schema_version = 1
+postgres_image = "postgres:18.0-bookworm"
+postgresql_major = 18
+rust_version = "1.97.1"
+cargo_pgrx_version = "0.18.0"
+test_command = "cargo pgrx test pg18 --package pg-tide-ext"
+runtime_user = "pgtide"

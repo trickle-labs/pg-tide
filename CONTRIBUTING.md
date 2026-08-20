@@ -89,6 +89,31 @@ All dynamic SQL identifiers (table names, schema names) must be validated with
 interpolation.  Never interpolate user-supplied strings into `format!()` SQL queries without
 prior validation.
 
+## Required Tests And Flakes
+
+`tests/required-tests.toml` is the authoritative inventory of PR, scheduled,
+and release-required checks. Each entry names its workflow job, command,
+targets, dependencies, owner, retry limit, and evidence path. Renaming,
+removing, or replacing a required test requires an inventory change in the
+same pull request and a written coverage or disposition decision.
+
+Run the inventory checks locally:
+
+```bash
+just check-required-tests
+just check-flakes
+```
+
+The flake registry at `tests/flake-registry.toml` is empty until a real
+exception is reviewed. An active exception must identify an owner, issue,
+sanitized failure signature, severity, release impact, first and last observed
+dates, and an expiry. P0/P1 and release-blocking tests cannot be quarantined;
+expired entries fail validation. The required-test wrapper still runs a flaky
+test and records the original failure. It never retries a test or treats a
+quarantine as a pass. Infrastructure retries, when permitted by a workflow,
+must remain visible in the execution artifact. The registry must be empty
+before `v1.0.0-rc.1`.
+
 ---
 
 ## Submitting Changes

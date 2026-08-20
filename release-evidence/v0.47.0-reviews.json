@@ -6,6 +6,7 @@
     {
       "id": "postgresql-extension",
       "status": "pending",
+      "pending_reason": "No independent review approval is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "findings": [],
@@ -19,6 +20,7 @@
     {
       "id": "rust-async-concurrency",
       "status": "pending",
+      "pending_reason": "No independent review approval is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "findings": [],
@@ -32,6 +34,7 @@
     {
       "id": "delivery-semantics",
       "status": "pending",
+      "pending_reason": "No independent review approval is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "findings": [],
@@ -45,6 +48,7 @@
     {
       "id": "security",
       "status": "pending",
+      "pending_reason": "No independent review approval is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "findings": [],
@@ -58,6 +62,7 @@
     {
       "id": "operations",
       "status": "pending",
+      "pending_reason": "No independent review approval is recorded against the v0.47.0 tag and an exact artifact digest.",
       "candidate_commit": null,
       "artifact_digests": [],
       "findings": [],

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "release": "v0.47.0",
+  "captured_commit": "faef7f1025536f3013dcee104b90992a8f6d212d",
+  "dirty": false,
+  "checkout": "git archive v0.47.0 extracted to a temporary directory",
+  "environment": {
+    "rust_toolchain": "1.97.1",
+    "postgresql_major": 18,
+    "cargo_pgrx": "0.18.0",
+    "host_architecture": "arm64"
+  },
+  "commands": [
+    {"command": "git rev-parse v0.47.0^{commit}", "purpose": "resolve exact parent release commit", "exit_status": 0},
+    {"command": "git archive v0.47.0 | tar -x -C <temporary-directory>", "purpose": "create clean checkout without later branch files", "exit_status": 0},
+    {"command": "cargo metadata --locked --format-version=1", "purpose": "measure workspace packages and direct dependencies", "exit_status": 0},
+    {"command": "cargo tree --workspace --locked", "purpose": "capture full locked dependency tree", "exit_status": 0},
+    {"command": "git ls-tree -r --name-only v0.47.0", "purpose": "count tracked files by top-level path", "exit_status": 0},
+    {"command": "python3 baseline measurement script", "purpose": "count source, tests, connectors, docs, and operational fields", "exit_status": 0},
+    {"command": "rustc --version; cargo --version; cargo pgrx --version; docker --version", "purpose": "record capture tool versions", "exit_status": 0}
+  ],
+  "artifacts": [
+    {"path": "dependency-tree.txt", "sha256": "b7060f902a847be7c538ae34005554492040ae847f7803d355b76c236caee213"},
+    {"path": "baseline.json", "source": "summary of the commands above"}
+  ]
+}

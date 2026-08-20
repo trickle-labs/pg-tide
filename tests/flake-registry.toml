@@ -1,0 +1,5 @@
+schema_version = 1
+release = "v0.48.0"
+
+# Keep this file empty until a real, owned exception is reviewed. A listed
+# flake never suppresses the test; it only records the known failure.

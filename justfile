@@ -176,6 +176,14 @@ test-integration:
 test-pgrx:
     cargo pgrx test pg18 --package {{PG_TIDE_EXT}}
 
+# Authoritative PostgreSQL 18/pgrx clean-room suite (requires Docker).
+test-extension-clean:
+    python3 scripts/test_extension_cleanroom.py
+
+# Reproducible relay unit suite from a locked clean checkout.
+test-unit-clean:
+    cargo test --package {{PG_TIDE_RELAY}} --bins --locked -- --test-threads=4
+
 # Run all tests
 test-all: test-unit test-integration
 
@@ -206,6 +214,18 @@ check-connectors:
 # Validate the v1 contract inventory and frozen connector matrix.
 check-v1-contracts:
     python3 scripts/check_v1_contracts.py
+
+# Validate time-bounded flake exceptions; the registry never suppresses tests.
+check-flakes:
+    python3 scripts/check_flake_registry.py --check
+
+# Validate the authoritative PR, scheduled, and release test inventory.
+check-required-tests:
+    python3 scripts/check_required_tests.py --check-manifest
+
+# Validate the clean-tag pre-v1 comparison baseline and dependency digest.
+check-baseline:
+    python3 scripts/check_pre_v1_baseline.py --check
 
 # Explicitly refresh generated contract inputs; CI only runs check-v1-contracts.
 update-v1-contracts:

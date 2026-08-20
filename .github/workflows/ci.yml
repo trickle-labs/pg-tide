@@ -30,6 +30,12 @@ jobs:
           fi
       - name: Check v1 machine-readable artifacts
         run: python3 scripts/check_v1_artifacts.py
+      - name: Check required-test inventory
+        run: python3 scripts/check_required_tests.py --check-manifest
+      - name: Check flake registry
+        run: python3 scripts/check_flake_registry.py --check
+      - name: Check pre-v1 baseline
+        run: python3 scripts/check_pre_v1_baseline.py --check
       - name: Check release-evidence indexes
         run: |
           python3 - <<'PY'

@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "release": "v0.47.0",
+  "captured_commit": "faef7f1025536f3013dcee104b90992a8f6d212d",
+  "dirty": false,
+  "status": "complete-with-pending-fields",
+  "environment": {
+    "capture_platform": {"status": "measured", "value": "macOS-26.6.1-arm64-arm-64bit-Mach-O", "method": "python3 platform.platform()"},
+    "architecture": {"status": "measured", "value": "arm64", "method": "python3 platform.machine()"},
+    "rust": {"status": "measured", "value": "rustc 1.97.1 (8bab26f4f 2026-07-14)", "method": "rustc --version"},
+    "cargo": {"status": "measured", "value": "cargo 1.97.1 (c980f4866 2026-06-30)", "method": "cargo --version"},
+    "cargo_pgrx": {"status": "measured", "value": "cargo-pgrx 0.18.0", "method": "cargo pgrx --version"},
+    "docker": {"status": "measured", "value": "Docker version 29.7.2, build a7dcaa6fdb", "method": "docker --version"},
+    "postgresql": {"status": "pending", "reason": "No PostgreSQL server was used for the source baseline; the authoritative PostgreSQL 18 clean-room is a v0.48.0 measurement."}
+  },
+  "source_surface": {
+    "measurements": {
+      "cargo_workspace_packages": {"status": "measured", "value": 2, "method": "cargo metadata --locked --format-version=1 from a clean v0.47.0 archive"},
+      "sql_migration_files": {"status": "measured", "value": 48, "method": "find sql -name '*.sql' from the clean v0.47.0 archive"},
+      "connector_rows": {"status": "measured", "value": 37, "method": "tomllib parse of connectors.toml"},
+      "connector_maturity_counts": {"status": "measured", "value": {"supported": 6, "preview": 4, "experimental": 27}, "method": "tomllib parse of connectors.toml grouped by maturity"},
+      "relay_features": {"status": "measured", "value": 45, "method": "tomllib parse of pg-tide-relay/Cargo.toml feature names"},
+      "release_profiles": {"status": "measured", "value": ["core", "core-kafka", "experimental-full"], "method": "tomllib parse of pg-tide-relay/Cargo.toml"}
+    }
+  },
+  "dependencies": {
+    "measurements": {
+      "direct_dependencies_by_package": {"status": "measured", "value": {"pg-tide-ext": 5, "pg-tide-relay": 76}, "method": "cargo metadata --locked --format-version=1"},
+      "locked_tree_lines": {"status": "measured", "value": 2393, "method": "cargo tree --workspace --locked"},
+      "locked_tree_bytes": {"status": "measured", "value": 120080, "method": "wc -c release-evidence/pre-v1-baseline/dependency-tree.txt"},
+      "locked_tree_sha256": {"status": "measured", "value": "b7060f902a847be7c538ae34005554492040ae847f7803d355b76c236caee213", "method": "shasum -a 256 dependency-tree.txt"}
+    }
+  },
+  "artifacts": {
+    "measurements": {
+      "relay_binary_size": {"status": "pending", "reason": "No clean release-profile build was captured during the tag-only baseline run."},
+      "crate_package_size": {"status": "pending", "reason": "Packaging was not run during the tag-only baseline capture."},
+      "container_image": {"status": "pending", "reason": "No v0.47.0 image digest or size was available in the tagged evidence."}
+    }
+  },
+  "tests_and_ci": {
+    "measurements": {
+      "relay_test_files": {"status": "measured", "value": 83, "method": "find pg-tide-relay/tests -name '*.rs'"},
+      "relay_test_functions": {"status": "measured", "value": 782, "method": "count #[test] and #[tokio::test] attributes in relay Rust sources"},
+      "extension_pg_tests": {"status": "measured", "value": 54, "method": "count #[pg_test] attributes in pg-tide-ext sources"},
+      "ci_job_count": {"status": "measured", "value": 32, "method": "count v0.47.0 .github/workflows/ci.yml job IDs"},
+      "required_test_manifest": {"status": "pending", "reason": "The required-test inventory is a v0.48.0 artifact and was not present at the v0.47.0 tag."},
+      "retry_and_skip_policy": {"status": "pending", "reason": "The v0.47.0 workflows did not emit a normalized retry or skipped-test record."}
+    }
+  },
+  "documentation": {
+    "measurements": {
+      "mdbook_source_pages": {"status": "measured", "value": 169, "method": "find docs/src -name '*.md'"},
+      "plan_files": {"status": "measured", "value": 8, "method": "find plans -maxdepth 1 -name '*.md'"},
+      "script_files": {"status": "measured", "value": 13, "method": "find scripts -maxdepth 1 -type f"},
+      "tracked_files_by_top_level": {"status": "measured", "value": {".github": 8, "benchmarks": 3, "docs": 205, "examples": 12, "helm": 10, "pg-tide-ext": 12, "pg-tide-relay": 189, "schemas": 9, "scripts": 13, "sql": 48, "tests": 1}, "method": "git ls-tree -r --name-only v0.47.0 grouped by top-level path"}
+    }
+  },
+  "operational_evidence": {
+    "measurements": {
+      "benchmark_status": {"status": "measured", "value": "pending_reference_run", "method": "read benchmarks/operational/baseline.json at v0.47.0"},
+      "benchmark_metric_count": {"status": "measured", "value": 21, "method": "count metrics in benchmarks/operational/baseline.json"},
+      "benchmark_non_null_metric_count": {"status": "measured", "value": 0, "method": "count non-null metrics in benchmarks/operational/baseline.json"},
+      "capacity_values": {"status": "pending", "reason": "The tagged operational baseline has no reference-run provenance or numeric capacity values."}
+    }
+  },
+  "provenance": {
+    "tag": "v0.47.0",
+    "commands": "release-evidence/pre-v1-baseline/commands.json",
+    "dependency_tree": "release-evidence/pre-v1-baseline/dependency-tree.txt",
+    "dependency_tree_sha256": "b7060f902a847be7c538ae34005554492040ae847f7803d355b76c236caee213",
+    "raw_logs": {"status": "not_available", "reason": "Raw build and CI logs were not committed; only deterministic summaries and digests are retained."}
+  }
+}
