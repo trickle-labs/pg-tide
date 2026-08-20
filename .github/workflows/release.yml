@@ -592,7 +592,7 @@ jobs:
           docker pull --platform linux/amd64 "${IMAGE}"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
           digest="$(docker buildx imagetools inspect "${IMAGE}" |
-            awk '/Digest:/ {print $2; exit}')"
+            awk '/Digest:/ && !found {print $2; found=1}')"
           test -n "${digest}"
           cat > release-evidence/pg-tide-image.provenance.json <<EOF
           {
