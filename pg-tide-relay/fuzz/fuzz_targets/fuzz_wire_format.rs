@@ -29,7 +29,9 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let config = serde_json::json!({ "wire_format": format_name });
-    let decoder = from_config(&config);
+    let Ok(decoder) = from_config(&config) else {
+        return;
+    };
 
     let raw = RawMessage::new("fuzz-topic", None, Some(payload.to_vec()));
 

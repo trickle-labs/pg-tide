@@ -629,8 +629,8 @@ jobs:
           python3 scripts/run_quickstart_sql.py \
             README.md docs/src/getting-started/first-pipeline.md
 
-  # v0.41.0 (Workstream I): Real packaged fresh-install vs upgrade parity.
-  # CREATE EXTENSION '0.41.0' vs CREATE EXTENSION '0.40.0' + ALTER EXTENSION UPDATE.
+  # v0.49.0: Real packaged fresh-install vs upgrade parity.
+  # CREATE EXTENSION '0.49.0' vs CREATE EXTENSION '0.48.0' + ALTER EXTENSION UPDATE.
   real-extension-parity:
     name: Real Fresh Install vs Upgrade Parity
     runs-on: ubuntu-latest
@@ -664,28 +664,28 @@ jobs:
           cargo install cargo-pgrx --version "=0.18.0" --locked
           cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
 
-      - name: Install packaged v0.40.0 extension
+      - name: Install packaged v0.48.0 extension
         run: |
           sudo chown -R "$(id -u):$(id -g)" \
             /usr/share/postgresql/18/extension \
             /usr/lib/postgresql/18/lib
-          git clone --depth 1 --branch v0.40.0 \
-            https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v040-source"
+          git clone --depth 1 --branch v0.48.0 \
+            https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v048-source"
           (
-            cd "$GITHUB_WORKSPACE/v040-source"
+            cd "$GITHUB_WORKSPACE/v048-source"
             sed -i 's/members = \["pg-tide-ext", "pg-tide-relay"\]/members = ["pg-tide-ext"]/' Cargo.toml
             cargo pgrx install --package pg-tide-ext \
               --pg-config /usr/lib/postgresql/18/bin/pg_config
           )
 
-      - name: Install packaged v0.41.0 extension
+      - name: Install packaged v0.49.0 extension
         run: |
           sudo chown -R "$(id -u):$(id -g)" \
             /usr/share/postgresql/18/extension \
             /usr/lib/postgresql/18/lib
           cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
-          sudo cp sql/pg_tide--0.40.0--0.41.0.sql \
-            /usr/share/postgresql/18/extension/pg_tide--0.40.0--0.41.0.sql
+          sudo cp sql/pg_tide--0.48.0--0.49.0.sql \
+            /usr/share/postgresql/18/extension/pg_tide--0.48.0--0.49.0.sql
 
       - name: Verify upgrade path exists (chain completeness through workspace version)
         run: bash scripts/check_upgrade_completeness.sh
@@ -701,16 +701,16 @@ jobs:
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           export PGPASSWORD=postgres
           # Fresh install directly at the current version.
-          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS fresh41;"
-          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh41;"
-          psql -h 127.0.0.1 -U postgres -d fresh41 -c "CREATE EXTENSION pg_tide VERSION '0.41.0';"
-          # Upgrade from 0.40.0.
-          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade41;"
-          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade41;"
-          psql -h 127.0.0.1 -U postgres -d upgrade41 -c "CREATE EXTENSION pg_tide VERSION '0.40.0';"
-          psql -h 127.0.0.1 -U postgres -d upgrade41 -c "ALTER EXTENSION pg_tide UPDATE TO '0.41.0';"
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS fresh49;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh49;"
+          psql -h 127.0.0.1 -U postgres -d fresh49 -c "CREATE EXTENSION pg_tide VERSION '0.49.0';"
+          # Upgrade from the last pre-v0.49.0 surface.
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade49;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade49;"
+          psql -h 127.0.0.1 -U postgres -d upgrade49 -c "CREATE EXTENSION pg_tide VERSION '0.48.0';"
+          psql -h 127.0.0.1 -U postgres -d upgrade49 -c "ALTER EXTENSION pg_tide UPDATE TO '0.49.0';"
           # Normalized schema comparison.
-          for db in fresh41 upgrade41; do
+          for db in fresh49 upgrade49; do
             pg_dump -h 127.0.0.1 -U postgres -d "$db" --schema-only --schema=tide \
               --no-owner --no-privileges \
               | grep -v '^--' \
@@ -719,10 +719,10 @@ jobs:
               | grep -v '^\\unrestrict ' \
               | sort > "/dev/shm/${db}.sql"
           done
-          if diff --ignore-space-change /dev/shm/fresh41.sql /dev/shm/upgrade41.sql; then
-            echo "OK: real fresh install and 0.40.0 -> 0.41.0 upgrade produce identical tide schemas."
+          if diff --ignore-space-change /dev/shm/fresh49.sql /dev/shm/upgrade49.sql; then
+            echo "OK: real fresh install and 0.48.0 -> 0.49.0 upgrade produce identical tide schemas."
           else
-            echo "FAIL: fresh vs upgrade schema drift for v0.41.0."
+            echo "FAIL: fresh vs upgrade schema drift for v0.49.0."
             exit 1
           fi
 
