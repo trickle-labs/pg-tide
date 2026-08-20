@@ -1,7 +1,7 @@
 {
   "release": "v0.49.0",
   "status": "captured",
-  "captured_commit": "pending-implementation-commit",
+  "captured_commit": "1817b08",
   "disposition": "schemas/v1-surface-disposition.json",
   "baseline": {
     "release": "v0.47.0",
