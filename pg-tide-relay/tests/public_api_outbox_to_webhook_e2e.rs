@@ -62,7 +62,11 @@ async fn public_api_outbox_to_webhook_e2e() {
         "name": "e2e-webhook",
         "outbox": OUTBOX,
         "sink_type": "webhook",
-        "config": {"url": format!("http://127.0.0.1:{port}/events"), "allow_http": true},
+        "config": {
+            "url": format!("http://127.0.0.1:{port}/events"),
+            "allow_http": true,
+            "ssrf_protection": false
+        },
         "batch_size": 10
     });
     client
