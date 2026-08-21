@@ -1,9 +1,9 @@
-# Bounded v0.50.0 -> v0.51.0 rehearsal. Apply to an existing CNPG cluster;
+# Bounded v0.51.0 -> v0.52.0 rehearsal. Apply to an existing CNPG cluster;
 # extension migration is a one-shot job, not bootstrap postInitSQL.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: pg-tide-v051-migrate
+  name: pg-tide-v052-migrate
 spec:
   backoffLimit: 0
   template:
@@ -11,7 +11,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: migrate
-          image: ghcr.io/trickle-labs/pg-tide:0.51.0
+          image: ghcr.io/trickle-labs/pg-tide:0.52.0
           command: ["sh", "-ec"]
           args:
             - >-
@@ -42,7 +42,7 @@ spec:
     spec:
       containers:
         - name: relay
-          image: ghcr.io/trickle-labs/pg-tide:0.51.0
+          image: ghcr.io/trickle-labs/pg-tide:0.52.0
           args: ["run", "--metrics-addr=0.0.0.0:9090", "--drain-timeout=30"]
           env:
             - name: PG_TIDE_POSTGRES_URL

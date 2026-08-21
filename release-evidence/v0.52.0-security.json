@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "release": "v0.52.0",
+  "status": "pending",
+  "candidate": {"commit": null, "artifact_digests": []},
+  "scope": {"connectors": "connectors.toml", "contracts": "schemas/v1-contract-manifest.toml"},
+  "required_results": [
+    "security-contract-pr", "privilege-model-pr", "secret-canary-pr",
+    "network-security-core-pr", "network-security-kafka-pr", "supply-chain-pr",
+    "artifact-policy-pr", "artifact-verification-release", "lifecycle-contract-pr"
+  ],
+  "manual_evidence": [],
+  "approval": "release-evidence/v0.52.0-security-review.json"
+}

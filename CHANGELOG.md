@@ -8,6 +8,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 
 <!-- TOC start -->
 - [0.51.0 — Upgrade, Rollback, and Recovery Integrity](#0510--upgrade-rollback-and-recovery-integrity)
+- [0.52.0 — Security and Supply-Chain Assurance](#0520--security-and-supply-chain-assurance)
 - [0.50.0 — Delivery Correctness and Failure Semantics](#0500--delivery-correctness-and-failure-semantics)
 - [0.48.0 — Baseline Closure and Deterministic CI](#0480--baseline-closure-and-deterministic-ci)
 - [0.47.0 — Public Beta & API Freeze](#0470--public-beta--api-freeze)
@@ -57,6 +58,17 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.52.0] — 2026-08-21 — Security and Supply-Chain Assurance
+
+- Added the reduced-product threat model and candidate-bound security evidence.
+- Added the vulnerability-response procedure and release rehearsal record.
+- Extended the lifecycle contract and version compatibility documentation.
+
+Release evidence remains pending until the exact candidate passes every required
+security result and receives independent approval.
 
 ---
 

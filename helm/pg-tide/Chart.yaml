@@ -5,8 +5,8 @@ description: >
   inboxes with NATS JetStream, Apache Kafka, PostgreSQL inboxes, and HTTPS
   webhooks.
 type: application
-version: 0.51.0
-appVersion: "0.51.0"
+version: 0.52.0
+appVersion: "0.52.0"
 home: https://github.com/trickle-labs/pg-tide
 sources:
   - https://github.com/trickle-labs/pg-tide

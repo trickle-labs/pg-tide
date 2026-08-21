@@ -1,22 +1,36 @@
-# pg_tide Threat Model
+# pg_tide threat model
 
-v0.44.0 treats the database, relay host, connector endpoints, message data,
-and build inputs as separate trust boundaries. The extension protects its
-catalog and API boundary; it does not replace database superuser controls,
-network firewalls, destination credential management, or application payload
-validation.
+This model covers the v0.52.0 production profiles: `core` and `core-kafka`.
+It covers the PostgreSQL 18 extension, PostgreSQL inbox, NATS JetStream,
+Apache Kafka, and HTTPS webhook destinations. `stdout` and `file` are
+diagnostic sinks only.
 
-| Threat | Prevention | Detection | Recovery | Evidence | Owner |
-|---|---|---|---|---|---|
-| Unauthorized SQL mutation | Canonical roles, ACLs, `session_user`, revoked PUBLIC execute | Authorization errors and audit rows | Revoke membership/ACL; preserve offsets | Privilege matrix and migration validation | Database owner |
-| Cross-tenant access | Tenant checks fail closed and run in the same transaction as mutations | Tenant-filter errors and audit rows | Reconcile tenant grants; do not restore PUBLIC access | Tenant fault tests | Database owner |
-| Secret disclosure | Typed references, strict files, redacted output, sanitized status/history | Canary scans and leakage metrics | Rotate credential; protect pre-upgrade backup | Secret/redaction tests | Relay owner |
-| SSRF or unsafe outbound endpoint | Parsed URL policy, DNS answer checks, redirect revalidation, proxy opt-in | Policy refusal and bounded security metric | Remove endpoint; retain delivery state | SSRF and proxy tests | Relay owner |
-| Plaintext or unverified transport | Verified TLS defaults and explicit noisy development overrides | Startup warning and status | Install correct CA/certificate; do not globally disable verification | TLS tests | Platform owner |
-| Delivery loss or duplicate | Transactional outbox, monotonic offsets, deferred acknowledgments | Checkpoint/DLQ metrics and audit history | Replay from retained outbox; never mutate offsets directly | Crash and end-to-end tests | Relay owner |
-| Resource exhaustion | Batch, payload, retry, retention, and file-size bounds | Operational budgets and saturation metrics | Pause source, drain or replay bounded work | Budget and regression tests | Operations |
-| Dependency/build compromise | Pinned toolchain/actions, graph audits, signatures, SBOM, provenance | CI and release verification failures | Withdraw artifact and rebuild from reviewed commit | Supply-chain gates | Release owner |
-| Malicious connector or payload content | Connector maturity gates, schema validation, redaction, bounded templates | Sanitized errors and connector health | Disable connector; preserve source messages | Connector evidence index | Connector owner |
+| ID | Threat and control | Detection and recovery | Owner | Evidence |
+|---|---|---|---|---|
+| T01 | Publisher impersonation; role matrix, `session_user`, outbox ACL | Authorization error; revoke role or ACL | Database owner; security contact | `privilege-model-pr` |
+| T02 | Unauthorized pipeline modification; role grants and bounded admin API | Audit and config failure; restore reviewed config | Relay owner; security contact | `privilege-model-pr` |
+| T03 | Relay credential theft; reference-only fields and strict secret files | Canary scan; rotate credential and quarantine evidence | Relay owner; security contact | `secret-canary-pr` |
+| T04 | Malicious event payload; schema validation, size bounds, and redaction | Validation failure; quarantine or replay source event | Relay owner; security contact | `relay-unit-pr`, `relay-integration-pr` |
+| T05 | Webhook SSRF; URL, DNS, address, redirect, and proxy policy | SSRF refusal and zero-request assertion; remove endpoint | Relay owner; security contact | `network-security-core-pr` |
+| T06 | DNS or redirect manipulation; validate every answer and pin it | Policy refusal; remove endpoint and inspect DNS control | Platform owner; security contact | `network-security-core-pr` |
+| T07 | Destination impersonation; verified TLS and noisy development overrides | TLS refusal; install the correct CA or certificate | Platform owner; security contact | `network-security-core-pr`, `network-security-kafka-pr` |
+| T08 | Checkpoint tampering; monotonic offset API and exact grants | Rewind refusal; restore the last trusted state | Relay owner; security contact | `privilege-model-pr`, `delivery-model-pr` |
+| T09 | DLQ tampering; role matrix and transactional terminal state | State check; reconcile from source events | Relay owner; security contact | `privilege-model-pr`, `replay-recovery-pr` |
+| T10 | Unauthorized replay; bounded replay authorization and stable IDs | Refusal code; revoke operation access | Operations owner; security contact | `privilege-model-pr`, `replay-recovery-pr` |
+| T11 | Secret leakage; `SecretString`, masking, and sanitized errors | Positive-control canary scan; rotate secrets | Relay owner; security contact | `secret-canary-pr` |
+| T12 | Dependency compromise; locked graph and advisory/license policy | Graph gate failure; block and rebuild | Release owner; security contact | `supply-chain-pr` |
+| T13 | CI or release compromise; immutable digests and separate verifier | Digest or verification failure; withdraw and rebuild | Release owner; security contact | `artifact-policy-pr`, `artifact-verification-release` |
+| T14 | Excessive container contents; artifact allowlist and image policy | Inventory failure; withdraw and rebuild image | Release owner; security contact | `artifact-policy-pr` |
+| T15 | Extension privilege escalation; fixed owners and locked definer paths | Privilege inventory; revoke execute and migrate | Database owner; security contact | `privilege-model-pr` |
+| T16 | Unsafe search path; `pg_catalog, tide` for security-definer functions | Clean-room inventory; lock settings and retry | Database owner; security contact | `privilege-model-pr` |
+| T17 | Restore or rollback abuse; lifecycle matrix and migration boundary | Compatibility refusal; restore matching pair | Release owner; security contact | `lifecycle-contract-pr`, `lifecycle-adjacent-pr` |
 
-The relay cannot guarantee confidentiality after compromise of a PostgreSQL
-superuser, relay host, destination credential, or infrastructure firewall.
+Every row has a prevention control, detection signal, recovery action, owner,
+and evidence pointer. The paths for the controls are `sql/`,
+`deploy/postgres/pg_tide_roles.sql`, `pg-tide-relay/src/`,
+`schemas/lifecycle-compatibility-v1.json`, and `release-evidence/`.
+
+The model excludes compromise of a PostgreSQL superuser, relay-host root,
+destination administrator, or infrastructure firewall. Those actors can bypass
+controls outside pg_tide. The controls still reduce the effect of lesser
+compromise.
