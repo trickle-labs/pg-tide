@@ -32,6 +32,7 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 - Owner: @grove
 - [x] postgresql-inbox-round-trip (integration, sink): pg-tide-relay/tests/pg_inbox_sink_test.rs::test_pg_inbox_sink_round_trip in `test-integration-relay`
 - [x] postgresql-inbox-deduplication (integration, sink): pg-tide-relay/tests/inbox_sink_test.rs::test_inbox_deduplication in `test-integration-relay`
+- [x] postgresql-inbox-public-api (e2e, sink): pg-tide-relay/tests/public_api_outbox_to_pg_inbox_e2e.rs::public_api_outbox_to_pg_inbox_e2e in `public-api-nats-e2e`
 
 ## NATS JetStream outbound (`nats-jetstream-sink`)
 
@@ -44,6 +45,7 @@ Generated from [`connectors.toml`](../../../connectors.toml). This is a release-
 - Maturity: **supported**
 - Owner: @grove
 - [x] webhook-http-post (integration, sink): pg-tide-relay/tests/webhook_test.rs::test_webhook_sink_posts_messages in `test-integration`
+- [x] webhook-public-api (e2e, sink): pg-tide-relay/tests/public_api_outbox_to_webhook_e2e.rs::public_api_outbox_to_webhook_e2e in `public-api-nats-e2e`
 
 ## Apache Kafka outbound (`kafka-sink`)
 

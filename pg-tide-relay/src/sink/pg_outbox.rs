@@ -14,7 +14,7 @@ use crate::error::RelayError;
 /// Uses tokio-postgres directly for PostgreSQL connections.
 pub struct PgInboxSink {
     client: tokio_postgres::Client,
-    inbox_table: String,
+    inbox_relation: String,
     dedup_count: u64,
 }
 
@@ -36,10 +36,25 @@ impl PgInboxSink {
                 tracing::error!("pg-inbox remote connection error: {e}");
             }
         });
+        let inbox_relation = match crate::sink::inbox::resolve_inbox_relation(&client, &table).await
+        {
+            Ok(relation) => relation,
+            Err(error)
+                if table.ends_with("_inbox")
+                    && matches!(
+                        &error,
+                        RelayError::InvalidConfig { reason, .. }
+                            if reason.contains("not registered")
+                    ) =>
+            {
+                format!("tide.\"{table}\"")
+            }
+            Err(error) => return Err(error),
+        };
 
         Ok(Self {
             client,
-            inbox_table: table,
+            inbox_relation,
             dedup_count: 0,
         })
     }
@@ -79,15 +94,12 @@ impl super::Sink for PgInboxSink {
         let header_params: Vec<Json<&serde_json::Value>> = headers.iter().map(Json).collect();
 
         // v0.31.0: Double-quote the table identifier to handle inbox names
-        // containing hyphens (e.g. "order-events").  Consistent with the
-        // quoting already applied by the local InboxSink at sink/inbox.rs.
-        // QUOTED: tide."{inbox_table}" — identifier validated at construction
-        // via validate_relay_identifier() in PgInboxSink::new().
+        // containing hyphens (e.g. "order-events").
         let sql = format!(
-            "INSERT INTO tide.\"{}\" (event_id, source, payload, headers) \
+            "INSERT INTO {} (event_id, source, payload, headers) \
              SELECT * FROM UNNEST($1::text[], $2::text[], $3::jsonb[], $4::jsonb[]) \
              ON CONFLICT (event_id) DO NOTHING",
-            self.inbox_table
+            self.inbox_relation
         );
 
         let inserted = self

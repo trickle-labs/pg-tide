@@ -146,6 +146,12 @@ See [ADR-012](https://github.com/trickle-labs/pg-tide/blob/main/docs/adr/adr-012
 for the transition matrix, connector boundaries, ownership-session lifecycle,
 and observability contract.
 
+The canonical delivery vocabulary is `Polled -> Encoded -> PublishStarted ->
+SinkAccepted -> SinkAcknowledged -> CheckpointCommitted -> CleanupEligible`.
+Dry-run and intentional filtering branch from `Encoded`; failed publishing
+branches through `PublishFailed -> DlqPersisted`. The pure executable model in
+`pg-tide-relay/src/delivery_model.rs` tests these transitions without I/O.
+
 ## Further Reading
 
 - [Architecture](../evaluate/architecture.md) — System design overview

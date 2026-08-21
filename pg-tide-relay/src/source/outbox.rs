@@ -216,10 +216,14 @@ impl super::Source for OutboxPollerSource {
             }
         }
 
-        for oid in std::mem::take(&mut self.pending_cc_oids) {
-            if let Err(error) = self.db.execute("SELECT lo_unlink($1)", &[&oid]).await {
-                tracing::warn!(oid, error = %error, "lo_unlink failed after ack");
+        if !self.replay_mode {
+            for oid in std::mem::take(&mut self.pending_cc_oids) {
+                if let Err(error) = self.db.execute("SELECT lo_unlink($1)", &[&oid]).await {
+                    tracing::warn!(oid, error = %error, "lo_unlink failed after ack");
+                }
             }
+        } else {
+            self.pending_cc_oids.clear();
         }
         Ok(())
     }
@@ -426,7 +430,8 @@ async fn update_simple_offset(
         .await?;
     match row {
         Some(row) if row.get::<_, i64>(0) >= last_change_id => {
-            crate::failpoints::hit("after_offset_db_commit", pipeline_id).await
+            crate::test_failpoint!("after_offset_db_commit_before_cleanup", pipeline_id)?;
+            Ok(())
         }
         Some(_) => Err(RelayError::other("offset commit moved backwards")),
         None => Err(RelayError::other("offset commit wrote zero rows")),

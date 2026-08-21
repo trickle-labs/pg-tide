@@ -505,9 +505,22 @@ jobs:
         env:
           PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e"
         run: |
+          cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core
           PG_TIDE_E2E_DATABASE_URL="${PG_TIDE_E2E_DATABASE_URL}?sslmode=disable" \
             cargo test --package pg-tide-relay --test public_api_outbox_to_nats_e2e -- \
             --ignored --test-threads=1 --nocapture
+
+      - name: Run public API outbox → PostgreSQL inbox E2E
+        env:
+          PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e?sslmode=disable"
+          PG_TIDE_RELAY_BIN: "target/debug/pg-tide"
+        run: cargo test --package pg-tide-relay --test public_api_outbox_to_pg_inbox_e2e -- --ignored --test-threads=1 --nocapture
+
+      - name: Run public API outbox → webhook E2E
+        env:
+          PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e?sslmode=disable"
+          PG_TIDE_RELAY_BIN: "target/debug/pg-tide"
+        run: cargo test --package pg-tide-relay --test public_api_outbox_to_webhook_e2e -- --ignored --test-threads=1 --nocapture
 
   public-api-kafka-e2e:
     name: Public API Outbox -> Kafka KRaft E2E
@@ -573,8 +586,11 @@ jobs:
       - name: Run public API outbox -> Kafka KRaft E2E
         env:
           PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e?sslmode=disable"
-        run: cargo test --package pg-tide-relay --test public_api_outbox_to_kafka_e2e \
-          --no-default-features --features core-kafka -- --ignored --test-threads=1 --nocapture
+        run: |
+          cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core-kafka
+          PG_TIDE_RELAY_BIN=target/debug/pg-tide \
+            cargo test --package pg-tide-relay --test public_api_outbox_to_kafka_e2e \
+            --no-default-features --features core-kafka -- --ignored --test-threads=1 --nocapture
 
   # v0.40.0 (Workstream H.3): Execute the marked Quick Start SQL blocks against a
   # real installed extension.

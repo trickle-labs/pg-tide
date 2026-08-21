@@ -1,5 +1,5 @@
 schema_version = 1
-inventory_version = "0.49.0"
+inventory_version = "0.50.0"
 
 [[test]]
 id = "connector-registry-pr"
@@ -394,6 +394,86 @@ ci_job = "release"
 command = "python3 scripts/check_v1_artifacts.py"
 targets = ["scripts/check_v1_artifacts.py", "schemas"]
 dependencies = ["python3", "gh"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "delivery-model-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "test-unit"
+command = "cargo test --package pg-tide-relay --lib --no-default-features --features core delivery_model"
+targets = ["pg-tide-relay/src/delivery_model.rs"]
+dependencies = ["rust-1.97.1"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "replay-recovery-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "test-integration-relay"
+command = "cargo test --package pg-tide-relay --test replay_test -- --test-threads=1"
+targets = ["pg-tide-relay/src/cmd/replay.rs", "pg-tide-relay/tests/replay_test.rs"]
+dependencies = ["rust-1.97.1", "docker"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "fuzz-parsers-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "fuzz-wire-formats"
+command = "cargo +nightly fuzz run fuzz_config -- -max_total_time=60 -jobs=1"
+targets = ["pg-tide-relay/fuzz/fuzz_targets/fuzz_config.rs", "pg-tide-relay/fuzz/fuzz_targets/fuzz_subject.rs"]
+dependencies = ["rust-nightly", "cargo-fuzz"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "public-api-pg-inbox-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "public-api-nats-e2e"
+command = "cargo test --package pg-tide-relay --test public_api_outbox_to_pg_inbox_e2e -- --ignored --test-threads=1 --nocapture"
+targets = ["pg-tide-relay/tests/common/process.rs", "pg-tide-relay/tests/public_api_outbox_to_pg_inbox_e2e.rs"]
+dependencies = ["docker", "postgresql-18", "cargo-pgrx-0.18.0"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "public-api-webhook-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "public-api-nats-e2e"
+command = "cargo test --package pg-tide-relay --test public_api_outbox_to_webhook_e2e -- --ignored --test-threads=1 --nocapture"
+targets = ["pg-tide-relay/tests/common/process.rs", "pg-tide-relay/tests/public_api_outbox_to_webhook_e2e.rs"]
+dependencies = ["docker", "postgresql-18", "cargo-pgrx-0.18.0"]
 owner = "@grove"
 blocking = true
 max_retries = 0

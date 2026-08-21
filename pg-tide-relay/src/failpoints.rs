@@ -1,20 +1,37 @@
 //! Fixed, opt-in failpoints used by the crash-safety integration tests.
 
+#[cfg(any(feature = "test-failpoints", test))]
 const ALLOWED: &[&str] = &[
-    "after_poll",
-    "after_prepare",
-    "after_network_publish",
+    "after_poll_before_encode",
+    "after_encode_before_publish",
     "after_sink_ack",
-    "after_offset_db_commit",
+    "before_checkpoint_commit",
+    "after_offset_db_commit_before_cleanup",
     "after_checkpoint_commit",
     "during_dlq_write",
     "after_dlq_commit",
+    "during_replay",
     "ownership_connection_lost",
     "during_shutdown",
 ];
 
+#[cfg(any(feature = "test-failpoints", test))]
 pub fn is_allowed(name: &str) -> bool {
     ALLOWED.contains(&name)
+}
+
+#[macro_export]
+macro_rules! test_failpoint {
+    ($name:literal, $pipeline:expr) => {{
+        #[cfg(feature = "test-failpoints")]
+        {
+            $crate::failpoints::hit($name, $pipeline).await
+        }
+        #[cfg(not(feature = "test-failpoints"))]
+        {
+            Ok::<(), $crate::error::RelayError>(())
+        }
+    }};
 }
 
 #[cfg(feature = "test-failpoints")]
@@ -47,18 +64,13 @@ pub async fn hit(name: &str, pipeline: &str) -> Result<(), crate::error::RelayEr
     Ok(())
 }
 
-#[cfg(not(feature = "test-failpoints"))]
-pub async fn hit(_name: &str, _pipeline: &str) -> Result<(), crate::error::RelayError> {
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn only_fixed_failpoints_are_allowed() {
-        assert!(is_allowed("after_poll"));
+        assert!(is_allowed("after_poll_before_encode"));
         assert!(is_allowed("after_checkpoint_commit"));
         assert!(!is_allowed("arbitrary_command"));
     }

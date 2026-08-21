@@ -44,6 +44,22 @@ If the migration is blocked, leave the database at v0.48.0, keep the export,
 and restore the prior relay binary. The migration does not provide a down
 migration; a database backup is the rollback boundary.
 
+## v0.50.0 delivery-correctness upgrade
+
+Stop the relay before updating the extension and binary. The adjacent
+`0.49.0 → 0.50.0` migration is a no-op compatibility step; it adds no catalog
+objects.
+
+```sql
+ALTER EXTENSION pg_tide UPDATE TO '0.50.0';
+```
+
+Replace the relay binary, then start it with the same configuration. Delivery
+remains at least once: a crash after destination acknowledgment and before
+checkpoint commit may duplicate an event, but cannot silently lose it. Use
+`pg-tide replay execute --pipeline NAME --from-id N --to-id M` for bounded,
+checkpoint-neutral replay of retained outbox rows.
+
 ---
 
 ## Breaking Changes

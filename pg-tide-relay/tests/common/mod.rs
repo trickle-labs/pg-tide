@@ -4,6 +4,8 @@
 //! container with the pg_tide schema installed, ready for test scenarios.
 #![allow(dead_code)]
 
+pub mod process;
+
 /// Strip `COMMENT ON EXTENSION` statements from migration SQL.
 ///
 /// When migration scripts are executed as standalone SQL (outside the
@@ -248,6 +250,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0.48.0 -> 0.49.0",
         include_str!("../../../sql/pg_tide--0.48.0--0.49.0.sql"),
+    ),
+    (
+        "0.49.0 -> 0.50.0",
+        include_str!("../../../sql/pg_tide--0.49.0--0.50.0.sql"),
     ),
 ];
 

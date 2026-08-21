@@ -1,5 +1,5 @@
 //! Authoritative public-API end-to-end test: native outbox -> real relay
-//! coordinator -> Apache Kafka KRaft broker and consumer.
+//! compiled `pg-tide` process -> Apache Kafka KRaft broker and consumer.
 //!
 //! Run this ignored evidence test with a PostgreSQL 18 server that has the
 //! pg_tide extension installed:
@@ -13,28 +13,16 @@
 
 use std::time::Duration;
 
-use pg_tide_relay::coordinator::Coordinator;
-use pg_tide_relay::metrics::{HealthState, RelayMetrics};
+mod common;
+
+use common::process::RelayProcess;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
 use rdkafka::ClientConfig;
-use tokio::sync::{mpsc, watch};
 use tokio_postgres::NoTls;
 
 const E2E_ENV: &str = "PG_TIDE_E2E_DATABASE_URL";
 const TOPIC: &str = "orders-kafka";
-
-fn make_pool(url: &str) -> deadpool_postgres::Pool {
-    let mut config = deadpool_postgres::Config::new();
-    config.url = Some(url.to_string());
-    config.pool = Some(deadpool_postgres::PoolConfig {
-        max_size: 4,
-        ..Default::default()
-    });
-    config
-        .create_pool(Some(deadpool_postgres::Runtime::Tokio1), NoTls)
-        .expect("create PostgreSQL pool")
-}
 
 async fn connect(url: &str) -> tokio_postgres::Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -133,24 +121,7 @@ async fn public_api_outbox_to_kafka_e2e() {
         .await
         .expect("configure Kafka pipeline");
 
-    let metrics = RelayMetrics::new().expect("metrics");
-    let health = std::sync::Arc::new(tokio::sync::RwLock::new(HealthState::default()));
-    let mut coordinator = Coordinator::new(make_pool(&database_url), "e2e-kafka", metrics, health);
-    coordinator.set_max_owned_pipelines(10);
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let (_notif_tx, notif_rx) = mpsc::channel(8);
-    let coordinator_database_url = database_url.clone();
-    let coordinator_task = tokio::spawn(async move {
-        coordinator
-            .run(
-                coordinator_database_url,
-                50,
-                Duration::from_millis(200),
-                shutdown_rx,
-                notif_rx,
-            )
-            .await
-    });
+    let relay = RelayProcess::start(&database_url, "e2e-kafka");
 
     let writer = connect(&database_url).await;
     writer
@@ -188,13 +159,5 @@ async fn public_api_outbox_to_kafka_e2e() {
     );
     wait_for_offset(&client).await;
 
-    let _ = shutdown_tx.send(true);
-    let coordinator_result = tokio::time::timeout(Duration::from_secs(5), coordinator_task)
-        .await
-        .expect("coordinator shutdown timeout")
-        .expect("coordinator task join");
-    assert!(
-        coordinator_result.is_ok(),
-        "coordinator must shut down cleanly"
-    );
+    relay.stop().await;
 }

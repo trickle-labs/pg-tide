@@ -33,7 +33,7 @@ pg_tide's roadmap is organized around a focused, dependable, production-grade pr
 |---|---|---|---|---|---|
 | **v0.48.0** | Baseline Closure and Deterministic CI | Medium | v0.47.0 | Reconcile evidence baseline, authoritative clean-room extension test environment, required-test inventory, flake policy | Delivered |
 | **v0.49.0** | Focused Product Surface | Large, split | v0.48.0 | Remove/relocate non-core connectors, protocols, features, and dependencies; drop `experimental-full` from release model | Delivered |
-| **v0.50.0** | Delivery Correctness and Failure Semantics | Large | v0.49.0 | Prove no-silent-loss invariant across all supported destinations and crash windows; executable state machine; property tests | Planned |
+| **v0.50.0** | Delivery Correctness and Failure Semantics | Large | v0.49.0 | Prove no-silent-loss invariant across all supported destinations and crash windows; executable state machine; property tests | Delivered |
 | **v0.51.0** | Upgrade, Rollback, and Recovery Integrity | Medium–Large | v0.50.0 | Declare v1 upgrade floor; fresh-install vs upgrade parity; sequential & interrupted migrations; relay/extension rollback; backup/restore | Planned |
 | **v0.52.0** | Security and Supply-Chain Assurance | Medium–Large | v0.51.0 | Reduced-product threat model, privilege review, TLS/SSRF testing, secret canaries, minimal artifacts, SBOM & provenance | Planned |
 | **v0.53.0** | Performance, Capacity, and Long-Run Stability | Medium–Large | v0.52.0 | Versioned operational budgets, reference environment, regression checks, leak detection, 24h qualification soak & 72h candidate soak | Planned |
@@ -48,4 +48,3 @@ pg_tide's roadmap is organized around a focused, dependable, production-grade pr
 
 - [`docs/archive/roadmap-pre-focused.md`](docs/archive/roadmap-pre-focused.md) — Historical roadmap prior to the focused production-grade realignment.
 - [`docs/archive/`](docs/archive/) — Archived plans, assessments, and research documents.
-

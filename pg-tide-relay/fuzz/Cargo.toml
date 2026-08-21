@@ -21,3 +21,15 @@ name = "fuzz_wire_format"
 path = "fuzz_targets/fuzz_wire_format.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_config"
+path = "fuzz_targets/fuzz_config.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_subject"
+path = "fuzz_targets/fuzz_subject.rs"
+test = false
+doc = false

@@ -1,13 +1,10 @@
 //! Integration test: DLQ fault-injection — RELAY-P2-TEST-DLQ.
 //!
-//! v0.26.0: Closes the test gap noted in assessment-3 §6.2 / assessment-5.
-//!
 //! Verifies the DLQ write path under fault conditions:
 //!   1. Normal DLQ write: entries are written when INSERT privilege is granted.
 //!   2. Revoked INSERT: when the relay role loses INSERT on relay_dlq, the DLQ
 //!      insert_batch() returns an error (total write failure).
-//!   3. Partial failure: when only some entries fail, insert_batch() logs a
-//!      warning but returns Ok (partial success path).
+//!   3. Empty batches are a no-op.
 //!   4. ErrorKind classification: all ErrorKind variants round-trip through the
 //!      as_str() representation correctly.
 

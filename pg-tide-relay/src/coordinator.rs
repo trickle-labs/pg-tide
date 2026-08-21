@@ -41,6 +41,103 @@ pub struct Coordinator {
     sweep_interval_hours: u64,
 }
 
+/// Execute one bounded replay through the normal worker without changing the
+/// live pipeline configuration or its durable checkpoint.
+pub async fn run_replay_once(
+    db_url: &str,
+    pipeline_name: &str,
+    from_id: i64,
+    to_id: i64,
+    batch_size: i64,
+) -> Result<(i64, i64), RelayError> {
+    if from_id < 0 || to_id < from_id || !(1..=10_000).contains(&batch_size) {
+        return Err(RelayError::InvalidConfig {
+            name: pipeline_name.to_string(),
+            reason: "replay range must satisfy 0 <= from-id <= to-id and batch-size 1..=10000"
+                .to_string(),
+        });
+    }
+    let (client, connection) = crate::pg_tls::connect(db_url).await?;
+    tokio::spawn(async move {
+        if let Err(error) = connection.await {
+            tracing::warn!(error = %error, "replay database connection closed");
+        }
+    });
+    let db = Arc::new(client);
+
+    let row = db
+        .query_opt(
+            "SELECT name::text, enabled, config, COALESCE(tenant_name, 'default')::text AS tenant_name
+               FROM tide.relay_outbox_config
+              WHERE name = $1",
+            &[&pipeline_name],
+        )
+        .await?
+        .ok_or_else(|| RelayError::PipelineNotFound(pipeline_name.to_string()))?;
+    let pipeline = PipelineConfig {
+        name: row.get("name"),
+        direction: PipelineDirection::Forward,
+        enabled: row.get("enabled"),
+        config: row.get("config"),
+        tenant_name: row.get("tenant_name"),
+    };
+    if !pipeline.enabled {
+        return Err(RelayError::InvalidConfig {
+            name: pipeline.name,
+            reason: "pipeline is disabled".to_string(),
+        });
+    }
+    pipeline.validate()?;
+
+    let outbox_name = pipeline.require_str(&["source", "outbox"])?.to_string();
+    let relay_group_id = format!("replay:{pipeline_name}");
+    let live_checkpoint_before = read_live_checkpoint(&db, pipeline_name, &outbox_name).await?;
+
+    let metrics = RelayMetrics::new()
+        .map_err(|error| RelayError::other(format!("create replay metrics: {error}")))?;
+    let health = Arc::new(RwLock::new(HealthState::default()));
+    let (_stop_tx, mut stop_rx) = watch::channel(false);
+    worker_inner(
+        pipeline,
+        db.clone(),
+        WorkerRuntime {
+            relay_group_id,
+            status_enabled: false,
+            owner_token: "replay".to_string(),
+            replay: Some(ReplayRange { from_id, to_id }),
+        },
+        metrics,
+        health,
+        batch_size,
+        &mut stop_rx,
+    )
+    .await?;
+
+    let live_checkpoint_after = read_live_checkpoint(&db, pipeline_name, &outbox_name).await?;
+    if live_checkpoint_after != live_checkpoint_before {
+        return Err(RelayError::other(format!(
+            "replay changed live checkpoint for pipeline '{pipeline_name}': {live_checkpoint_before} -> {live_checkpoint_after}"
+        )));
+    }
+    Ok((live_checkpoint_before, live_checkpoint_after))
+}
+
+async fn read_live_checkpoint(
+    db: &Client,
+    pipeline_name: &str,
+    outbox_name: &str,
+) -> Result<i64, RelayError> {
+    let row = db
+        .query_one(
+            "SELECT COALESCE(MAX(last_change_id), 0)::bigint
+               FROM tide.relay_consumer_offsets
+              WHERE pipeline_id = $1 AND outbox_name = $2",
+            &[&pipeline_name, &outbox_name],
+        )
+        .await?;
+    Ok(row.get(0))
+}
+
 impl Coordinator {
     pub fn new(
         pool: deadpool_postgres::Pool,
@@ -273,14 +370,13 @@ impl Coordinator {
         let (client, connection) = crate::pg_tls::connect(db_url).await?;
         let client = Arc::new(client);
         let (lost_tx, lost_rx) = watch::channel(false);
-        let pipeline_name = pipeline.name.clone();
+        let _pipeline_name = pipeline.name.clone();
         tokio::spawn(async move {
             match connection.await {
                 Ok(()) => tracing::warn!("ownership PostgreSQL connection closed"),
                 Err(error) => tracing::error!(%error, "ownership PostgreSQL connection failed"),
             }
-            if let Err(error) =
-                crate::failpoints::hit("ownership_connection_lost", &pipeline_name).await
+            if let Err(error) = crate::test_failpoint!("ownership_connection_lost", &_pipeline_name)
             {
                 tracing::error!(%error, "ownership loss failpoint failed");
             }
@@ -778,6 +874,13 @@ struct WorkerRuntime {
     relay_group_id: String,
     status_enabled: bool,
     owner_token: String,
+    replay: Option<ReplayRange>,
+}
+
+#[derive(Clone, Copy)]
+struct ReplayRange {
+    from_id: i64,
+    to_id: i64,
 }
 
 /// Top-level worker task: wraps `worker_inner` and logs the outcome.
@@ -815,6 +918,7 @@ async fn run_pipeline_worker(
             relay_group_id: relay_group_id.clone(),
             status_enabled,
             owner_token: owner_token.clone(),
+            replay: None,
         },
         metrics.clone(),
         health.clone(),
@@ -945,9 +1049,10 @@ async fn worker_inner(
     let rate_limiter = build_rate_limiter(&pipeline.config);
     let mut circuit_breaker = CircuitBreaker::from_pipeline_config(&pipeline.config);
 
-    // v0.7.0: Replay mode — read from_offset/to_offset.
-    let replay_from = pipeline.opt_i64(&["replay", "from_offset"]);
-    let replay_to = pipeline.opt_i64(&["replay", "to_offset"]);
+    // Bounded replay is an explicit invocation mode, not persisted pipeline
+    // configuration. Keep the public pipeline schema strict and checkpoint-neutral.
+    let replay_from = runtime.replay.map(|range| range.from_id);
+    let replay_to = runtime.replay.map(|range| range.to_id);
     let is_replay = replay_from.is_some();
 
     // v0.13.0: Wire-format factory — instantiate the configured wire format.
@@ -1017,7 +1122,7 @@ async fn worker_inner(
             .with_label_values(&[pipeline.name.as_str()])
             .set(0);
         if *stop_rx.borrow() {
-            crate::failpoints::hit("during_shutdown", &pipeline.name).await?;
+            crate::test_failpoint!("during_shutdown", &pipeline.name)?;
             break;
         }
 
@@ -1112,7 +1217,22 @@ async fn worker_inner(
                 }
             }
         };
-        crate::failpoints::hit("after_poll", &pipeline.name).await?;
+        crate::test_failpoint!("after_poll_before_encode", &pipeline.name)?;
+        metrics
+            .delivery_stage_total
+            .with_label_values(&[pipeline.name.as_str(), "polled", "success"])
+            .inc();
+        delivery_transition(
+            &pipeline,
+            &runtime,
+            source.name(),
+            "unresolved",
+            "polled",
+            "success",
+            false,
+            "old",
+            batch.len(),
+        );
 
         // v0.13.0: Increment consumed counter after successful poll.
         metrics
@@ -1125,6 +1245,21 @@ async fn worker_inner(
 
         if batch.is_empty() {
             // All messages filtered out — acknowledge the source and continue.
+            metrics
+                .delivery_stage_total
+                .with_label_values(&[pipeline.name.as_str(), "intentionally_filtered", "success"])
+                .inc();
+            delivery_transition(
+                &pipeline,
+                &runtime,
+                source.name(),
+                "unresolved",
+                "intentionally_filtered",
+                "success",
+                false,
+                "old",
+                0,
+            );
             commit_checkpoint(
                 &mut source,
                 checkpoint.as_deref(),
@@ -1144,10 +1279,44 @@ async fn worker_inner(
             continue;
         }
 
-        crate::failpoints::hit("after_prepare", &pipeline.name).await?;
+        crate::test_failpoint!("after_encode_before_publish", &pipeline.name)?;
+        metrics
+            .delivery_stage_total
+            .with_label_values(&[pipeline.name.as_str(), "encoded", "success"])
+            .inc();
+        delivery_transition(
+            &pipeline,
+            &runtime,
+            source.name(),
+            sink.name(),
+            "encoded",
+            "success",
+            false,
+            "old",
+            batch.len(),
+        );
+
+        if is_replay {
+            crate::test_failpoint!("during_replay", &pipeline.name)?;
+        }
 
         // v0.7.0: Dry-run mode — log what would be published, skip actual publish.
         if dry_run {
+            metrics
+                .delivery_stage_total
+                .with_label_values(&[pipeline.name.as_str(), "dry_run_observed", "success"])
+                .inc();
+            delivery_transition(
+                &pipeline,
+                &runtime,
+                source.name(),
+                sink.name(),
+                "dry_run_observed",
+                "success",
+                false,
+                "old",
+                batch.len(),
+            );
             for msg in &batch {
                 // v0.24.0: Demote per-message dry-run logging to debug to reduce
                 // log volume (at 50 pipelines × 1 poll/s this was ~4.3M lines/day).
@@ -1187,6 +1356,21 @@ async fn worker_inner(
 
         // v0.24.0: Use publish_with_circuit_breaker() helper, then record
         // per-sink publish latency and handle the outcome.
+        metrics
+            .delivery_stage_total
+            .with_label_values(&[pipeline.name.as_str(), "publish_started", "success"])
+            .inc();
+        delivery_transition(
+            &pipeline,
+            &runtime,
+            source.name(),
+            sink.name(),
+            "publish_started",
+            "success",
+            false,
+            "old",
+            batch.len(),
+        );
         let publish_span = tracing::info_span!(
             "relay.sink.publish",
             pipeline = %pipeline.name,
@@ -1201,9 +1385,6 @@ async fn worker_inner(
             }
             Err(error) => PublishOutcome::Failure(error),
         };
-        if matches!(&publish_outcome, PublishOutcome::Success) {
-            crate::failpoints::hit("after_network_publish", &pipeline.name).await?;
-        }
         let publish_duration = publish_start.elapsed().as_secs_f64();
         metrics
             .sink_publish_duration_seconds
@@ -1244,7 +1425,18 @@ async fn worker_inner(
                     .delivery_stage_total
                     .with_label_values(&[pipeline.name.as_str(), "sink_acknowledged", "success"])
                     .inc();
-                crate::failpoints::hit("after_sink_ack", &pipeline.name).await?;
+                delivery_transition(
+                    &pipeline,
+                    &runtime,
+                    source.name(),
+                    sink.name(),
+                    "sink_acknowledged",
+                    "success",
+                    true,
+                    "old",
+                    batch.len(),
+                );
+                crate::test_failpoint!("after_sink_ack", &pipeline.name)?;
                 commit_checkpoint(
                     &mut source,
                     checkpoint.as_deref(),
@@ -1388,7 +1580,7 @@ async fn worker_inner(
                     reason = dlq_reason_label,
                 );
                 let _enter = dlq_span.enter();
-                crate::failpoints::hit("during_dlq_write", &pipeline.name).await?;
+                crate::test_failpoint!("during_dlq_write", &pipeline.name)?;
                 match route_to_dlq(
                     &db,
                     &entries,
@@ -1412,7 +1604,18 @@ async fn worker_inner(
                                 "success",
                             ])
                             .inc();
-                        crate::failpoints::hit("after_dlq_commit", &pipeline.name).await?;
+                        delivery_transition(
+                            &pipeline,
+                            &runtime,
+                            source.name(),
+                            sink.name(),
+                            "dlq_persisted",
+                            "success",
+                            false,
+                            "old",
+                            batch.len(),
+                        );
+                        crate::test_failpoint!("after_dlq_commit", &pipeline.name)?;
                         commit_checkpoint(
                             &mut source,
                             checkpoint.as_deref(),
@@ -1613,6 +1816,7 @@ async fn commit_checkpoint(
     };
 
     let source_name = source.name().to_string();
+    crate::test_failpoint!("before_checkpoint_commit", pipeline_name)?;
     let ack_span = tracing::info_span!(
         "relay.source.acknowledge",
         pipeline = %pipeline_name,
@@ -1628,7 +1832,17 @@ async fn commit_checkpoint(
                 .delivery_stage_total
                 .with_label_values(&[pipeline_name, "checkpoint_committed", "success"])
                 .inc();
-            crate::failpoints::hit("after_checkpoint_commit", pipeline_name).await?;
+            tracing::debug!(
+                event_code = "PGTIDE_DELIVERY_TRANSITION",
+                pipeline = %pipeline_name,
+                source = %source_name,
+                stage = "checkpoint_committed",
+                outcome = "success",
+                duplicate_risk = false,
+                checkpoint_class = "new",
+                "delivery transition"
+            );
+            crate::test_failpoint!("after_checkpoint_commit", pipeline_name)?;
             Ok(())
         }
         Err(error) => {
@@ -1649,6 +1863,35 @@ async fn commit_checkpoint(
             Err(error)
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn delivery_transition(
+    pipeline: &PipelineConfig,
+    runtime: &WorkerRuntime,
+    source: &str,
+    sink: &str,
+    stage: &str,
+    outcome: &str,
+    duplicate_risk: bool,
+    checkpoint_class: &str,
+    batch_size: usize,
+) {
+    tracing::debug!(
+        event_code = "PGTIDE_DELIVERY_TRANSITION",
+        pipeline = %pipeline.name,
+        relay_group = %runtime.relay_group_id,
+        direction = "forward",
+        tenant = %pipeline.tenant_name,
+        source,
+        sink,
+        batch_size,
+        stage,
+        outcome,
+        duplicate_risk,
+        checkpoint_class,
+        "delivery transition"
+    );
 }
 
 /// Outcome of a `poll_and_decode` call.
@@ -1699,7 +1942,11 @@ async fn poll_and_decode(
     };
 
     if msgs.is_empty() {
-        return PollOutcome::Empty;
+        return if is_replay {
+            PollOutcome::ReplayComplete
+        } else {
+            PollOutcome::Empty
+        };
     }
 
     let checkpoint = msgs.last().cloned().map(Box::new);
@@ -1987,7 +2234,9 @@ async fn build_sink(
                     crate::sink::pg_outbox::PgInboxSink::new(postgres_url, inbox).await?,
                 ))
             } else {
-                Ok(Box::new(crate::sink::inbox::InboxSink::new(db, inbox)?))
+                Ok(Box::new(
+                    crate::sink::inbox::InboxSink::new_for_logical_name(db, inbox).await?,
+                ))
             }
         }
         "pg_outbox" => {

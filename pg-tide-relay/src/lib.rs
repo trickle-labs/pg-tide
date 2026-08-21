@@ -10,6 +10,8 @@
 pub mod circuit_breaker;
 pub mod config;
 pub mod coordinator;
+#[cfg(any(test, feature = "test-failpoints"))]
+mod delivery_model;
 pub mod descriptors;
 pub mod dlq;
 pub mod encryption;
