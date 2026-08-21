@@ -29,7 +29,7 @@ The extension image must follow the standard OCI layout:
 ```
 /share/extension/
   - pg_tide.control
-  - pg_tide--0.37.0.sql (and all upgrade scripts)
+  - pg_tide--0.51.0.sql (and all upgrade scripts)
 /lib/
   - pg_tide.so
 ```

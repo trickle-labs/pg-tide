@@ -8,6 +8,7 @@
 // `#[allow(dead_code)]` attributes are used in those modules as needed.
 
 pub mod circuit_breaker;
+pub mod compatibility;
 pub mod config;
 pub mod coordinator;
 #[cfg(any(test, feature = "test-failpoints"))]

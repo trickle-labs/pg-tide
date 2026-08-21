@@ -26,4 +26,5 @@ deleting them.
 
 Global options include `--postgres-url`, `--postgres-url-file`, `--config`,
 `--output`, `--log-level`, and `--log-format`. `run` also supports
-`--self-test` and `--expect-extension-version` for deployment probes.
+`--self-test`; it checks the installed extension against the embedded lifecycle
+compatibility policy before reporting readiness.

@@ -24,7 +24,7 @@ configured with plain SQL.
 - **Multi-Tenant** — row-level security, per-tenant Prometheus labels, per-outbox publisher ACLs, and per-tenant advisory-lock namespacing
 - **Operational storage controls** — bounded participant-aware cleanup, optional ID-range partitions, and explicit maintenance-window conversion
 - **Replay Workbench** — rewind consumer offsets, preview replays, and manage the DLQ from SQL or CLI
-- **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart; `--self-test` and `--expect-extension-version` flags for Kubernetes readiness probes
+- **HA Ready** — advisory-lock coordination with automatic worker crash detection and restart; `--self-test` includes the lifecycle compatibility gate for Kubernetes readiness probes
 - **Observable** — Prometheus metrics, health checks, structured logs, Grafana dashboard, and pre-built alerting rules included
 - **Local key-file encryption** — supported local envelope encryption; unsupported provider or payload variants fail closed
 
@@ -153,8 +153,8 @@ pg-tide status --postgres-url "postgres://..."
 # Include per-inbox fleet summary in status output
 pg-tide status --postgres-url "postgres://..." --inbox-summary
 
-# Verify the installed extension meets a minimum version (useful in initContainers)
-pg-tide --expect-extension-version 0.34.0 --self-test --postgres-url "postgres://..."
+# Verify the installed extension is in the relay's supported lifecycle window
+pg-tide --self-test --postgres-url "postgres://..."
 
 # Replay and DLQ recovery
 pg-tide replay preview --outbox orders --from-id 100 --to-id 200

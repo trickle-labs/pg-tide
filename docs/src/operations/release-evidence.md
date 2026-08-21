@@ -16,12 +16,10 @@ without publishing sensitive details.
 
 ## Pending versus ready
 
-The v0.47.0 records are structurally valid but remain `pending`. The index
-records the exact tag commit as historical provenance; its `candidate.commit`
-and artifact digest fields remain empty because no pilot, review, approval, or
-artifact proof is recorded for that candidate. The `pending_reason` fields are
-part of the public evidence record and must explain an absent proof without
-turning a local test or a later commit into v0.47.0 evidence.
+Historical release records remain `pending` until their own evidence is
+complete. The v0.51.0 index likewise keeps `candidate.commit` and artifact
+digests empty until the exact staged candidate artifacts have passed the
+lifecycle gates; a local run or later commit cannot substitute for that proof.
 
 `ready` is a separate claim. It requires the exact candidate commit and
 artifact digests, completed pilot and review records with named identities and

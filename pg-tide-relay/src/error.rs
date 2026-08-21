@@ -67,6 +67,9 @@ pub enum RelayError {
     #[error("config error: {0}")]
     Config(String),
 
+    #[error(transparent)]
+    IncompatibleExtensionVersion(Box<IncompatibleExtensionVersion>),
+
     #[error("invalid config for pipeline '{name}': {reason}")]
     InvalidConfig { name: String, reason: String },
 
@@ -164,6 +167,20 @@ pub enum RelayError {
     // v0.35.0: KMS provider not yet implemented
     #[error("provider '{provider}' is not yet implemented: {message}")]
     NotImplemented { provider: String, message: String },
+}
+
+#[derive(Debug, Error)]
+#[error(
+    "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE: installed_version={installed_version}; relay_version={relay_version}; policy_version={policy_version}; compatibility_class={compatibility_class}; supported_range={supported_range}; next_action={next_action}; reason={reason}"
+)]
+pub struct IncompatibleExtensionVersion {
+    pub installed_version: String,
+    pub relay_version: String,
+    pub policy_version: String,
+    pub compatibility_class: String,
+    pub supported_range: String,
+    pub next_action: String,
+    pub reason: String,
 }
 
 impl RelayError {
@@ -317,6 +334,7 @@ impl RelayError {
         match self {
             // Permanent: configuration / auth / schema errors
             Self::Config(_)
+            | Self::IncompatibleExtensionVersion(..)
             | Self::InvalidConfig { .. }
             | Self::PipelineNotFound(_)
             | Self::MissingConfigKey { .. }

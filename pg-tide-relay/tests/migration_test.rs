@@ -1,8 +1,8 @@
-/// Migration upgrade test: install v0.1.0 schema, apply every upgrade script
-/// sequentially, and assert catalog assertions at the final version.
+/// Engineering migration test: install v0.1.0 schema, apply every raw SQL
+/// upgrade script sequentially, and assert catalog assertions at the final version.
 ///
-/// This test verifies that all DDL migrations are self-consistent and that
-/// the schema produced by sequential upgrades matches the expected state.
+/// This intentionally exercises the historical raw SQL chain. Packaged
+/// lifecycle parity is covered by the v0.51.0 artifact tests.
 mod common;
 
 use std::time::Duration;
@@ -61,6 +61,7 @@ const V0_46_0_TO_0_47_0: &str = include_str!("../../sql/pg_tide--0.46.0--0.47.0.
 const V0_47_0_TO_0_48_0: &str = include_str!("../../sql/pg_tide--0.47.0--0.48.0.sql");
 const V0_48_0_TO_0_49_0: &str = include_str!("../../sql/pg_tide--0.48.0--0.49.0.sql");
 const V0_49_0_TO_0_50_0: &str = include_str!("../../sql/pg_tide--0.49.0--0.50.0.sql");
+const V0_50_0_TO_0_51_0: &str = include_str!("../../sql/pg_tide--0.50.0--0.51.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -113,6 +114,7 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.47.0 → 0.48.0", V0_47_0_TO_0_48_0),
     ("0.48.0 → 0.49.0", V0_48_0_TO_0_49_0),
     ("0.49.0 → 0.50.0", V0_49_0_TO_0_50_0),
+    ("0.50.0 → 0.51.0", V0_50_0_TO_0_51_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {

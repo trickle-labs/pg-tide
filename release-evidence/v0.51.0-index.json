@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "release": "v0.51.0",
+  "status": "pending",
+  "policy": "schemas/lifecycle-compatibility-v1.json",
+  "lifecycle": "release-evidence/v0.51.0-lifecycle.json",
+  "required_tests": "tests/required-tests.toml",
+  "inherited_correctness": "release-evidence/v0.50.0-correctness.json",
+  "candidate": {"commit": null, "artifact_digests": [], "image_digests": []},
+  "open_blockers": null,
+  "release_manager": {"status": "required", "approved_by": null, "approved_at": null}
+}

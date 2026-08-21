@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.51.0 — Upgrade, Rollback, and Recovery Integrity](#0510--upgrade-rollback-and-recovery-integrity)
 - [0.50.0 — Delivery Correctness and Failure Semantics](#0500--delivery-correctness-and-failure-semantics)
 - [0.48.0 — Baseline Closure and Deterministic CI](#0480--baseline-closure-and-deterministic-ci)
 - [0.47.0 — Public Beta & API Freeze](#0470--public-beta--api-freeze)
@@ -56,6 +57,17 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.51.0] — 2026-08-21 — Upgrade, Rollback, and Recovery Integrity
+
+- Added the v1 lifecycle compatibility policy and bounded v0.50.0/v0.51.0
+  relay window.
+- Added the PostgreSQL 18 extension migration and deterministic artifact
+  packaging checks.
+- Documented relay rollback, extension restore/PITR boundaries, and full
+  logical backup recovery.
 
 ---
 

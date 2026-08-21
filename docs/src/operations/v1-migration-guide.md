@@ -60,6 +60,30 @@ checkpoint commit may duplicate an event, but cannot silently lose it. Use
 `pg-tide replay execute --pipeline NAME --from-id N --to-id M` for bounded,
 checkpoint-neutral replay of retained outbox rows.
 
+## v0.51.0 upgrade, relay rollback, and recovery
+
+The supported extension floor is v0.47.0. PostgreSQL must apply each packaged
+adjacent migration through v0.51.0; do not invoke migration files directly:
+
+```sql
+ALTER EXTENSION pg_tide UPDATE TO '0.51.0';
+```
+
+The rolling relay window is v0.50.0 and v0.51.0. Older relays must stop before
+the extension update. The v0.51.0 relay checks the installed extension before
+creating a coordinator and rejects unsupported, malformed, or future versions
+with `PGTIDE_EXTENSION_VERSION_INCOMPATIBLE`.
+
+Relay rollback means running the v0.50.0 relay against the v0.51.0 extension;
+it does not downgrade the extension. The v0.50.0 → v0.51.0 extension boundary
+is data-preserving but not downgrade-reversible because it registers backup
+metadata. Restore or PITR is the supported extension rollback boundary.
+
+Use the [backup and restore runbook](runbook-backup-restore.md) for logical,
+physical, and PITR recovery. A restore may redeliver an event accepted by an
+external destination; stable event identity and destination deduplication are
+required, while external effects are not rolled back by PostgreSQL.
+
 ---
 
 ## Breaking Changes
@@ -138,10 +162,10 @@ are available at startup.
 
 The safest upgrade path is:
 
-1. **Extension first, relay binary second.**  The v0.33.0 relay binary is compatible
-   with the v1.0.0 extension schema.
-2. **Multiple relay instances:** upgrade one instance at a time, verifying pipeline
-   delivery continues before upgrading the next.
+1. Upgrade v0.50.0 relay processes to v0.51.0 within the declared rolling window.
+2. Apply the packaged extension update after all pre-v0.50.0 relays are stopped.
+3. **Multiple relay instances:** replace one supported relay at a time, verifying
+   ownership and delivery before upgrading the next.
 
 ### Step 1: Update your application code
 
@@ -189,10 +213,11 @@ chmod +x /usr/local/bin/pg-tide
 ### Step 5: Verify with `--self-test`
 
 ```bash
-pg-tide --postgres-url "$PG_URL" --self-test --expect-extension-version 1.0.0
+pg-tide --postgres-url "$PG_URL" --self-test
 ```
 
-Exit code 0 = pass.  Exit code 1 = schema incompatibility; see output for details.
+Exit code 0 = pass. Exit code 1 = schema or lifecycle incompatibility; see output
+for details.
 
 ### Step 6: Restart the relay
 
@@ -211,7 +236,8 @@ docker compose up -d --no-deps pg-tide
 
 ## Rollback Procedure
 
-PostgreSQL extension downgrades are not natively supported.
+Only exact reverse scripts listed by the lifecycle policy are supported;
+restore or PITR is required for the v0.51.0 extension boundary.
 
 **Unencrypted deployments (no `outbox_encryption_config` rows):**
 
@@ -308,7 +334,8 @@ The self-test will exit 0 on success or report any schema incompatibilities.
 
 ## Rollback Procedure
 
-PostgreSQL extension downgrades are not natively supported.
+Only exact reverse scripts listed by the lifecycle policy are supported;
+restore or PITR is required for the v0.51.0 extension boundary.
 To roll back to a v0.x version:
 
 1. Restore from a pre-upgrade database backup.

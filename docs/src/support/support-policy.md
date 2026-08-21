@@ -18,10 +18,12 @@ and its source of truth, [`connectors.toml`](../../../connectors.toml).
 Maturity is direction-aware. A supported outbound connector does not make its
 inbound path supported.
 
-## v0.47.0 baseline
+## v0.51.0 baseline
 
 - PostgreSQL 18 is the supported PostgreSQL version.
-- Use matching extension and relay minor versions.
+- The v1 extension upgrade floor is v0.47.0 through the packaged adjacent
+  migration chain.
+- The supported rolling relay window is v0.50.0 and v0.51.0.
 - `core` is the normal production profile; `core-kafka` is an explicit
   opt-in profile for Apache Kafka.
 - Production-supported destinations are PostgreSQL inbox, NATS JetStream
@@ -30,8 +32,8 @@ inbound path supported.
   only as diagnostics.
 - Linux amd64 and arm64 Docker images are the runtime-tested container targets.
   Other archives are build artifacts unless the release matrix says otherwise.
-- Helm and CloudNativePG remain preview deployment modes until their install
-  and upgrade gates are maintained in CI.
+- Helm and CloudNativePG support is limited to the exact profile tested by the
+  lifecycle workflow; other Kubernetes distributions remain preview.
 
 Unlisted service versions and compiling feature combinations are not covered.
 See the [version compatibility](../reference/version-compatibility.md) guide.

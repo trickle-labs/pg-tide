@@ -156,3 +156,4 @@ branches through `PublishFailed -> DlqPersisted`. The pure executable model in
 
 - [Architecture](../evaluate/architecture.md) — System design overview
 - [Version Compatibility](version-compatibility.md) — Version support matrix
+- [ADR-014: Upgrade, rollback, and recovery contract](../../adr/adr-014-upgrade-rollback-and-recovery-contract.md)

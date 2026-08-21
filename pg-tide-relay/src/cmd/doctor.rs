@@ -1,6 +1,6 @@
 /// `pg-tide doctor` — PostgreSQL connectivity and catalog health check.
 use crate::cli::OutputFormat;
-use pg_tide_relay::pg_tls;
+use pg_tide_relay::{compatibility, pg_tls};
 
 /// Validate PostgreSQL connectivity, schema presence, and catalog health.
 pub async fn run_doctor(
@@ -12,7 +12,7 @@ pub async fn run_doctor(
         if let Err(error) = &result {
             crate::cmd::output::failure(
                 "doctor",
-                crate::cmd::diagnostic::from_error("postgres.catalog", error),
+                crate::cmd::diagnostic::from_boxed_error("postgres.catalog", error.as_ref()),
                 output_format,
             )?;
         }
@@ -30,14 +30,8 @@ async fn run_doctor_json(url: &str) -> Result<(), Box<dyn std::error::Error>> {
         let _ = conn.await;
     });
 
-    let extension_version = client
-        .query_opt(
-            "SELECT extversion::text FROM pg_extension WHERE extname = 'pg_tide'",
-            &[],
-        )
-        .await?
-        .map(|row| row.try_get::<_, String>(0))
-        .transpose()?;
+    let compatibility = compatibility::check_client(&client, env!("CARGO_PKG_VERSION")).await?;
+    let extension_version = Some(compatibility.extension_version.clone());
     let schema_exists: bool = client
         .query_one(
             "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'tide')",
@@ -55,7 +49,7 @@ async fn run_doctor_json(url: &str) -> Result<(), Box<dyn std::error::Error>> {
         "relay_runtime_status",
     ];
     let mut table_checks = Vec::with_capacity(required_tables.len());
-    let mut checks_ok = extension_version.is_some() && schema_exists;
+    let mut checks_ok = schema_exists;
     for table in required_tables {
         let exists: bool = client
             .query_one(
@@ -104,6 +98,7 @@ async fn run_doctor_json(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     checks_ok &= preflight.is_valid();
     let data = serde_json::json!({
         "extension_version": extension_version,
+        "compatibility": compatibility,
         "schema": {"status": if schema_exists { "pass" } else { "fail" }},
         "tables": table_checks,
         "pipelines": {
@@ -142,21 +137,21 @@ pub async fn run_doctor_with_threshold(
 
     println!("  [OK] Connected to PostgreSQL");
 
-    let extension_version = client
-        .query_opt(
-            "SELECT extversion::text FROM pg_extension WHERE extname = 'pg_tide'",
-            &[],
-        )
-        .await
-        .map_err(|_| "extension version check failed")?
-        .and_then(|row| row.try_get::<_, String>(0).ok());
-    match extension_version {
-        Some(version) => println!("  [OK] pg_tide extension {version} installed"),
-        None => {
-            println!("  [FAIL] pg_tide extension is not installed");
-            return Err("doctor found one or more failed checks".into());
+    let compatibility = match compatibility::check_client(&client, env!("CARGO_PKG_VERSION")).await
+    {
+        Ok(decision) => decision,
+        Err(error) => {
+            println!("  [FAIL] {error}");
+            return Err(error);
         }
-    }
+    };
+    println!(
+        "  [OK] Compatibility: relay={} extension={} policy={} class={}",
+        compatibility.relay_version,
+        compatibility.extension_version,
+        compatibility.policy_version,
+        compatibility.compatibility_class
+    );
 
     // v0.25.0: TLS version check — query pg_ssl for negotiated TLS version.
     let tls_row = client
