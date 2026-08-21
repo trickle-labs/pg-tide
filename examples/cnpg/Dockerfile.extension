@@ -7,7 +7,7 @@
 # The extension image follows the standard layout:
 #   /share/extension/
 #     - pg_tide.control
-#     - pg_tide--0.37.0.sql (and all upgrade migration scripts)
+#     - pg_tide--0.51.0.sql (and all upgrade migration scripts)
 #   /lib/
 #     - pg_tide.so (compiled extension binary)
 #

@@ -40,6 +40,46 @@ fn require_postgres_url(url: &str, for_cmd: &str) {
     }
 }
 
+fn emit_compatibility_success(
+    decision: &pg_tide_relay::compatibility::CompatibilityDecision,
+    output_format: OutputFormat,
+) -> Result<(), serde_json::Error> {
+    if matches!(output_format, OutputFormat::Json) {
+        cmd::output::success("run", decision, output_format)
+    } else {
+        tracing::info!(
+            event = "extension_compatibility",
+            relay_version = %decision.relay_version,
+            extension_version = %decision.extension_version,
+            policy_version = %decision.policy_version,
+            compatibility_class = %decision.compatibility_class,
+            "extension compatibility check passed"
+        );
+        Ok(())
+    }
+}
+
+fn emit_compatibility_failure(
+    error: &pg_tide_relay::error::RelayError,
+    output_format: OutputFormat,
+) -> Result<(), serde_json::Error> {
+    if matches!(output_format, OutputFormat::Json) {
+        cmd::output::failure(
+            "run",
+            cmd::diagnostic::from_relay_error("postgres.extension", error),
+            output_format,
+        )
+    } else {
+        tracing::error!(
+            event = "extension_compatibility",
+            error_code = pg_tide_relay::compatibility::COMPATIBILITY_ERROR_CODE,
+            error = %error,
+            "extension compatibility check failed"
+        );
+        Ok(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -206,7 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if matches!(cli.output_format, OutputFormat::Json) {
                     cmd::output::failure(
                         "status",
-                        cmd::diagnostic::from_error("postgres.status", &error),
+                        cmd::diagnostic::from_boxed_error("postgres.status", error.as_ref()),
                         cli.output_format,
                     )?;
                 }
@@ -235,18 +275,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // v0.25.0: Handle --self-test flag: verify connectivity, schema, and
     // advisory lock, then exit 0 on success or 1 on failure.
-    // v0.33.0: Pass --expect-extension-version if provided.
     if cli.self_test {
         require_postgres_url(&cfg.postgres_url, "--self-test");
-        return cmd::self_test::run_self_test(
-            &cfg.postgres_url,
-            cli.expect_extension_version.as_deref(),
-        )
-        .await;
+        return cmd::self_test::run_self_test(&cfg.postgres_url, cli.output_format).await;
     }
 
     require_postgres_url(&cfg.postgres_url, "relay daemon");
     cfg.validate()?;
+
+    // Compatibility is checked before coordinator, LISTEN, metrics, or
+    // advisory-lock startup. Unsupported extension versions fail closed.
+    let (compatibility_client, compatibility_connection) =
+        pg_tls::connect(&cfg.postgres_url).await?;
+    tokio::spawn(async move {
+        let _ = compatibility_connection.await;
+    });
+    let compatibility = match pg_tide_relay::compatibility::check_client(
+        &compatibility_client,
+        env!("CARGO_PKG_VERSION"),
+    )
+    .await
+    {
+        Ok(decision) => decision,
+        Err(error) => {
+            emit_compatibility_failure(error.as_ref(), cli.output_format)?;
+            return Err(error.into());
+        }
+    };
+    emit_compatibility_success(&compatibility, cli.output_format)?;
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),

@@ -1,7 +1,7 @@
 # Runbook: Schema Migration
 
 **Applies to:** pg_tide PostgreSQL extension  
-**Scope:** How to upgrade the pg_tide extension schema without relay downtime.
+**Scope:** How to upgrade the pg_tide extension schema through v0.51.0.
 
 ---
 
@@ -10,12 +10,12 @@
 pg_tide uses the standard PostgreSQL extension upgrade mechanism:
 
 ```sql
-ALTER EXTENSION pg_tide UPDATE;
+ALTER EXTENSION pg_tide UPDATE TO '0.51.0';
 ```
 
 This command applies the appropriate `pg_tide--<from>--<to>.sql` upgrade
-script atomically within a transaction.  The relay can continue running
-during the upgrade with at most a brief window of elevated latency.
+script atomically within a transaction. Stop relays older than v0.50.0 before
+a floor-to-target upgrade; only the v0.50.0/v0.51.0 rolling window is supported.
 
 ---
 
@@ -50,11 +50,11 @@ PostgreSQL `$libdir` and share directory.  For package-based installs:
 
 ```bash
 # Debian/Ubuntu:
-apt-get install pg-tide=0.19.0
+apt-get install pg-tide=0.51.0
 
 # CNPG (CloudNativePG) — update the cluster manifest image tag:
 kubectl patch cluster my-pg --type=merge \
-  -p '{"spec":{"imageName":"ghcr.io/my-org/pg-tide-cnpg:0.19.0"}}'
+  -p '{"spec":{"imageName":"ghcr.io/my-org/pg-tide-cnpg:0.51.0"}}'
 ```
 
 ### 2. Apply the Migration
@@ -67,8 +67,9 @@ ALTER EXTENSION pg_tide UPDATE;
 SELECT extversion FROM pg_extension WHERE extname = 'pg_tide';
 ```
 
-The relay does **not** need to be stopped.  The upgrade script is
-transactional and takes only a brief `AccessShareLock` on affected tables.
+Stop pre-v0.50.0 relays before the update. The upgrade is transactional, but
+the v0.48.0 → v0.49.0 migration can remove unsupported objects after its
+fail-closed preflight, so do not treat every step as a brief metadata change.
 
 ### 3. Verify Catalog Integrity
 
@@ -100,21 +101,23 @@ below.
 If the migration must be rolled back:
 
 ```sql
--- Extensions cannot be downgraded via ALTER EXTENSION.
+-- The v0.50.0 -> v0.51.0 boundary is restore/PITR-only after commit.
 -- Restore from backup or use PITR to the pre-upgrade snapshot.
 ```
 
-PostgreSQL does not support extension downgrade scripts.  Always take a
-database snapshot before applying an extension upgrade in production.
+Only migrations explicitly marked reversible in the v0.51.0 lifecycle policy
+have a supported reverse script. Always take a full backup before upgrading;
+the v0.50.0 → v0.51.0 boundary uses restore or PITR after commit.
 
 ---
 
 ## Relay Behaviour During Migration
 
-- The relay continues to poll and deliver messages during the upgrade.
-- The `ALTER EXTENSION` command takes a brief metadata lock.  In-flight
-  batches will complete normally; new polls may be delayed by a few
-  milliseconds.
+- Stop pre-v0.50.0 relays before the floor-to-target update. Only the bounded
+  v0.50.0/v0.51.0 relay window is supported.
+- The `ALTER EXTENSION` command is transactional, but lock duration and
+  affected objects depend on the adjacent step. Pause publishing and keep the
+  relay stopped whenever the migration procedure requires it.
 - If the relay encounters a schema error mid-migration (extremely unlikely
   with the standard upgrade path), it will classify it as a permanent error
   and pause the affected pipeline.  Resume with `SELECT tide.relay_enable('...')`.
@@ -123,24 +126,24 @@ database snapshot before applying an extension upgrade in production.
 
 ## Multi-Step Upgrade
 
-If you are upgrading across multiple versions (e.g. 0.15.0 → 0.19.0),
-PostgreSQL applies each intermediate script automatically:
+For the supported v0.47.0 floor, PostgreSQL applies each packaged adjacent
+script automatically:
 
 ```sql
 ALTER EXTENSION pg_tide UPDATE TO '0.19.0';
 ```
 
-pg_tide ships upgrade scripts for every consecutive version pair, so this
-always works without manual intermediate steps.
+Do not infer support for releases older than v0.47.0 from the presence of
+historical SQL files; use the documented restore-and-upgrade procedure.
 
 ---
 
 ## CNPG (CloudNativePG) Notes
 
-When using CloudNativePG, the extension upgrade happens automatically when
-you update the cluster image to a version that includes the new `.so` and
-SQL files.  The bootstrap `initdb` / `postInitSQL` section runs
-`ALTER EXTENSION pg_tide UPDATE` after the image update.  See
+When using CloudNativePG, updating the cluster image only makes the target
+extension artifact available. Run an explicit migration Job on the primary
+after the target files are available; bootstrap hooks do not update an existing
+cluster. See
 [`examples/cnpg/cluster.yaml`](../../../examples/cnpg/cluster.yaml) for a
 reference manifest.
 

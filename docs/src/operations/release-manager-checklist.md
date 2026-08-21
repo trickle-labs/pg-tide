@@ -1,6 +1,6 @@
 # Release-manager checklist
 
-Use this checklist for the v0.47.0 candidate and future contract-freeze
+Use this checklist for the v0.51.0 candidate and future contract-freeze
 releases. Record links to the exact commit, artifact digests, and evidence.
 
 ## Contract and support
@@ -27,6 +27,8 @@ releases. Record links to the exact commit, artifact digests, and evidence.
 
 - [ ] Fresh install, sequential upgrade, mixed-version window, and rollback
       checks pass.
+- [ ] The lifecycle policy, compatibility matrix, and recovery runbook match
+      the exact candidate artifacts.
 - [ ] Security, dependency, connector, schema, observability, and runbook
       checks pass.
 - [ ] Artifact contents match the support matrix.

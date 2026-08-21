@@ -41,7 +41,7 @@ The relay runs as a sidecar in the same pod as PostgreSQL. It connects to
 spec:
   sidecars:
     - name: pg-tide-relay
-      image: ghcr.io/trickle-labs/pg-tide:0.47.0
+      image: ghcr.io/trickle-labs/pg-tide:0.51.0
       env:
         - name: PG_TIDE_POSTGRES_URL
           valueFrom:
@@ -69,7 +69,8 @@ with the same stable event ID; it does not silently skip the event.
 
 ## Initialisation SQL
 
-Bootstrap pg_tide when CNPG creates the cluster:
+Bootstrap pg_tide only when CNPG creates the cluster. Existing clusters need
+an explicit migration Job after the extension image is available:
 
 ```yaml
 spec:

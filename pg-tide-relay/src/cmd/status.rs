@@ -1,5 +1,6 @@
 use crate::cli::OutputFormat;
 /// `pg-tide status` — print a human-readable status table for all configured relay pipelines.
+use pg_tide_relay::compatibility;
 use pg_tide_relay::pg_tls;
 use std::fmt;
 
@@ -69,6 +70,8 @@ pub async fn run_status(
         let _ = conn.await;
     });
 
+    let compatibility = compatibility::check_client(&client, env!("CARGO_PKG_VERSION")).await?;
+
     let status_view_exists: bool = client
         .query_one(
             "SELECT to_regclass('tide.relay_pipeline_status') IS NOT NULL",
@@ -100,10 +103,20 @@ pub async fn run_status(
             .collect::<Result<Vec<_>, _>>()?;
         crate::cmd::output::success(
             "status",
-            serde_json::json!({ "pipelines": pipelines }),
+            serde_json::json!({
+                "compatibility": compatibility,
+                "pipelines": pipelines
+            }),
             output_format,
         )?;
     } else {
+        println!(
+            "Compatibility: relay={} extension={} policy={} class={}",
+            compatibility.relay_version,
+            compatibility.extension_version,
+            compatibility.policy_version,
+            compatibility.compatibility_class
+        );
         render_rows(&all_rows)?;
     }
 

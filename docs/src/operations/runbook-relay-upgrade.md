@@ -9,9 +9,10 @@ multiple relay instances.
 ## Overview
 
 The pg-tide relay keeps durable source offsets in PostgreSQL. Pipeline ownership
-is coordinated via worker-held PostgreSQL advisory-lock sessions. For v0.47.0,
-mixed relay ownership with v0.44.0 is unsupported because the canonical lock
-identity and delivery contract changed.
+is coordinated via worker-held PostgreSQL advisory-lock sessions. The v0.51.0
+rolling runtime window is explicitly bounded: v0.50.0 and v0.51.0 relays may
+mix, while v0.49.0 and earlier relays must stop before the extension crosses
+the supported floor-to-target migration chain.
 
 ---
 
@@ -25,13 +26,30 @@ identity and delivery contract changed.
    pg-tide status --postgres-url "$PG_TIDE_POSTGRES_URL"
    pg-tide doctor --postgres-url "$PG_TIDE_POSTGRES_URL"
    ```
-4. **Stop all old relays before upgrading the v0.47.0 extension and binary.**
+4. **Stop all pre-v0.50.0 relays before upgrading the extension.**
    Back up the database, then run:
    ```sql
    ALTER EXTENSION pg_tide UPDATE;
    ```
-   Do not start a v0.46.0 relay after the migration. Start only v0.47.0
-   relays after verifying offsets and pipeline ownership.
+   Do not start an older relay after the migration. Start only a relay covered
+   by the v0.50.0/v0.51.0 compatibility window after verification.
+
+## v0.51.0 relay and extension window
+
+Upgrade v0.50.0 relays to v0.51.0 first, then update the extension through
+PostgreSQL's packaged adjacent migration:
+
+```sql
+ALTER EXTENSION pg_tide UPDATE TO '0.51.0';
+```
+
+The v0.51.0 relay checks `pg_extension.extversion` before it creates a
+coordinator or polls. It rejects versions outside its declared window with
+`PGTIDE_EXTENSION_VERSION_INCOMPATIBLE`. There is no bypass flag.
+
+If the relay must be rolled back, run the released v0.50.0 relay while leaving
+the v0.51.0 extension installed. Do not downgrade the extension for this
+procedure; use the backup/PITR runbook for the irreversible extension boundary.
 
 ---
 

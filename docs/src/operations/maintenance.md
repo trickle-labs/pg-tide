@@ -1,20 +1,19 @@
 # Maintenance
 
-pg_tide state is in PostgreSQL. Back up the `tide` schema together with the
+pg_tide state is in PostgreSQL. Back up the complete database together with the
 application tables whose transactions publish outbox rows.
 
 ## Backup and upgrade
 
 ```bash
-pg_dump --schema=tide --no-owner --no-privileges --format=custom \
-  --file=pg_tide_backup.dump "$DATABASE_URL"
-pg_restore --schema=tide --no-owner --clean --if-exists \
-  --dbname="$DATABASE_URL" pg_tide_backup.dump
+pg_dump --format=custom --file=pg_tide_backup.dump "$DATABASE_URL"
+pg_restore --clean --if-exists --dbname="$DATABASE_URL" pg_tide_backup.dump
 ```
 
 Before an extension upgrade, take a backup and stop old relay binaries. Apply
 the versioned migration, deploy the matching relay, then verify offsets and
-delivery. PostgreSQL extension downgrades are not supported; use PITR or the
+delivery. Relay rollback to v0.50.0 is supported while the v0.51.0 extension
+remains installed; extension rollback uses PITR or the
 pre-upgrade backup.
 
 ## Bounded outbox cleanup

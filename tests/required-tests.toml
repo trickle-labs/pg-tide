@@ -1,5 +1,5 @@
 schema_version = 1
-inventory_version = "0.50.0"
+inventory_version = "0.51.0"
 
 [[test]]
 id = "connector-registry-pr"
@@ -474,6 +474,54 @@ ci_job = "public-api-nats-e2e"
 command = "cargo test --package pg-tide-relay --test public_api_outbox_to_webhook_e2e -- --ignored --test-threads=1 --nocapture"
 targets = ["pg-tide-relay/tests/common/process.rs", "pg-tide-relay/tests/public_api_outbox_to_webhook_e2e.rs"]
 dependencies = ["docker", "postgresql-18", "cargo-pgrx-0.18.0"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "lifecycle-contract-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/lifecycle.yml"
+ci_job = "lifecycle-contract"
+command = "just check-lifecycle-contract"
+targets = ["schemas/lifecycle-compatibility-v1.json", "scripts/check_lifecycle_contract.py", "sql"]
+dependencies = ["python3", "just"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "lifecycle-compatibility-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/lifecycle.yml"
+ci_job = "lifecycle-compatibility"
+command = "just test-lifecycle-compatibility"
+targets = ["pg-tide-relay/src/compatibility.rs", "pg-tide-relay/src/cmd/self_test.rs"]
+dependencies = ["rust-1.97.1"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "lifecycle-adjacent-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/lifecycle.yml"
+ci_job = "lifecycle-adjacent"
+command = "just test-lifecycle-adjacent"
+targets = ["scripts/package_extension.sh", "scripts/catalog_snapshot.py", "sql", "pg-tide-relay/tests/migration_test.rs"]
+dependencies = ["docker", "postgresql-18", "rust-1.97.1", "cargo-pgrx-0.18.0"]
 owner = "@grove"
 blocking = true
 max_retries = 0

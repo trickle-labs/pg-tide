@@ -6,17 +6,31 @@
 
 pub mod process;
 
-/// Strip `COMMENT ON EXTENSION` statements from migration SQL.
+/// Strip extension-only statements from migration SQL.
 ///
 /// When migration scripts are executed as standalone SQL (outside the
 /// PostgreSQL extension infrastructure), `COMMENT ON EXTENSION pg_tide IS …`
-/// fails with "extension does not exist".  This helper removes those
-/// statements so the remaining DDL can be applied to a plain test database.
+/// and `pg_extension_config_dump()` fail outside an extension update. This
+/// helper removes those statements so the remaining DDL can be applied to a
+/// plain test database. Packaged lifecycle tests execute the unmodified SQL.
 pub fn strip_extension_comments(sql: &str) -> String {
     let mut result = String::with_capacity(sql.len());
     let mut skipping = false;
+    let mut skipping_config_dump = false;
     for line in sql.lines() {
         let trimmed = line.trim_start();
+        if trimmed.starts_with("DO $config_dump$")
+            || trimmed.starts_with("SELECT pg_catalog.pg_extension_config_dump(")
+        {
+            skipping_config_dump = true;
+        }
+        if skipping_config_dump {
+            if trimmed == "$config_dump$;" || trimmed.ends_with(");") {
+                skipping_config_dump = false;
+            }
+            result.push('\n');
+            continue;
+        }
         if trimmed.starts_with("COMMENT ON EXTENSION") {
             skipping = true;
         }
@@ -254,6 +268,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0.49.0 -> 0.50.0",
         include_str!("../../../sql/pg_tide--0.49.0--0.50.0.sql"),
+    ),
+    (
+        "0.50.0 -> 0.51.0",
+        include_str!("../../../sql/pg_tide--0.50.0--0.51.0.sql"),
     ),
 ];
 

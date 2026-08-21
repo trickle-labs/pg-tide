@@ -130,7 +130,7 @@ in the **Resolved in** column.
 | Positional SQL APIs deprecated | `relay_set_outbox` / `relay_set_inbox` 6/8-param forms emit SQL `NOTICE` | v0.30.0 |
 | v0.x → v1.0.0 migration guide | Comprehensive rolling-upgrade guide with rollback procedure | v0.33.0 |
 | supply-chain hardening | `cargo audit` suppress list re-evaluated; all 9 entries confirmed optional-dep only | v0.33.0 |
-| `--expect-extension-version` flag | Relay pre-flight can gate on minimum SQL extension version | v0.33.0 |
+| Lifecycle compatibility gate | Relay pre-flight rejects extensions outside its supported window | v0.51.0 |
 
 ### Should-do (P1 polish)
 

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "release": "v0.51.0",
+  "status": "pending",
+  "policy": "schemas/lifecycle-compatibility-v1.json",
+  "candidate": {"commit": null, "artifact_digests": []},
+  "results": [],
+  "note": "Lifecycle evidence is populated only from the exact candidate artifacts used by the release jobs."
+}

@@ -577,6 +577,29 @@ check-docs-positional:
 check-migrations:
     bash scripts/check_upgrade_completeness.sh
 
+# v0.51.0 lifecycle contract and bounded pull-request checks.
+check-lifecycle-contract:
+    python3 scripts/check_lifecycle_contract.py
+
+test-lifecycle-adjacent:
+    just check-lifecycle-contract
+    bash -n scripts/package_extension.sh
+    python3 -m py_compile scripts/catalog_snapshot.py
+    cargo test --package pg-tide-relay --test migration_test -- --test-threads=1
+
+test-lifecycle-compatibility:
+    cargo test --package pg-tide-relay --lib --no-default-features --features core compatibility
+
+test-lifecycle-floor:
+    just check-lifecycle-contract
+    bash scripts/check_upgrade_completeness.sh
+
+test-lifecycle-dr:
+    just check-lifecycle-contract
+
+test-lifecycle-platform:
+    just check-lifecycle-contract
+
 # v0.40.0: Execute the marked Quick Start SQL blocks against an installed
 # pg_tide extension. Set PGURL or standard libpq env vars for the connection.
 quickstart-sql:
