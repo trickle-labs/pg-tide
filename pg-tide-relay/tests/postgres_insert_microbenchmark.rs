@@ -62,7 +62,7 @@ async fn postgres_insert_microbenchmark_50k_messages() {
         .expect("create schema");
     let schema_sql = include_str!("../../sql/pg_tide--0.1.0.sql");
     setup_client
-        .batch_execute(schema_sql)
+        .batch_execute(&common::strip_extension_comments(schema_sql))
         .await
         .expect("install schema");
 
