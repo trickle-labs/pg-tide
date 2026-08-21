@@ -231,6 +231,10 @@ check-required-tests:
 check-baseline:
     python3 scripts/check_pre_v1_baseline.py --check
 
+# Verify production relay artifacts compile without test crash controls.
+check-production-test-controls:
+    bash scripts/check_production_test_controls.sh
+
 # Explicitly refresh generated contract inputs; CI only runs check-v1-contracts.
 update-v1-contracts:
     python3 scripts/generate_connector_surface.py

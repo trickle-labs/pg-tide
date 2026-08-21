@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "release": "v0.50.0",
+  "status": "pending",
+  "candidate": {"commit": null, "artifact_digests": []},
+  "correctness": "release-evidence/v0.50.0-correctness.json",
+  "required_tests": "tests/required-tests.toml",
+  "baseline": "release-evidence/pre-v1-baseline/baseline.json",
+  "note": "Ready status requires the tagged delivery-correctness job."
+}

@@ -362,6 +362,29 @@ pub enum MaintenanceCommands {
 /// Replay and DLQ recovery subcommands.
 #[derive(Debug, Subcommand)]
 pub enum ReplayCommands {
+    /// Execute a bounded replay through the configured pipeline.
+    Execute {
+        /// Pipeline name to run.
+        #[arg(long)]
+        pipeline: String,
+
+        /// Start of the outbox ID range (inclusive).
+        #[arg(long, value_parser = clap::value_parser!(i64).range(0..))]
+        from_id: i64,
+
+        /// End of the outbox ID range (inclusive).
+        #[arg(long, value_parser = clap::value_parser!(i64).range(0..))]
+        to_id: i64,
+
+        /// Maximum messages per replay batch.
+        #[arg(long, default_value = "100", value_parser = clap::value_parser!(i64).range(1..=10000))]
+        batch_size: i64,
+
+        /// PostgreSQL URL. Overrides --postgres-url.
+        #[arg(long, env = "PG_TIDE_POSTGRES_URL")]
+        postgres_url: Option<String>,
+    },
+
     /// Preview messages in an outbox ID range without consuming them.
     ///
     /// Prints the matching outbox messages as JSONL to stdout.
@@ -454,5 +477,49 @@ mod tests {
     fn output_selector_is_global() {
         let cli = Cli::try_parse_from(["pg-tide", "--output", "json", "status"]).unwrap();
         assert!(matches!(cli.output_format, OutputFormat::Json));
+    }
+
+    #[test]
+    fn bounded_replay_arguments_are_validated() {
+        assert!(Cli::try_parse_from([
+            "pg-tide",
+            "replay",
+            "execute",
+            "--pipeline",
+            "orders",
+            "--from-id",
+            "0",
+            "--to-id",
+            "10",
+            "--batch-size",
+            "10000",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "pg-tide",
+            "replay",
+            "execute",
+            "--pipeline",
+            "orders",
+            "--from-id",
+            "-1",
+            "--to-id",
+            "10",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "pg-tide",
+            "replay",
+            "execute",
+            "--pipeline",
+            "orders",
+            "--from-id",
+            "0",
+            "--to-id",
+            "10",
+            "--batch-size",
+            "10001",
+        ])
+        .is_err());
     }
 }

@@ -21,4 +21,6 @@ default.
 
 HTTPS is required unless `allow_http` is explicitly enabled for local
 development. Retries are bounded and successful 2xx responses acknowledge the
-batch. Configure HMAC signing when the receiver needs request authentication.
+batch. Retries carry the same `Idempotency-Key`; one effect requires receiver-
+side deduplication. Configure HMAC signing when the receiver needs request
+authentication.

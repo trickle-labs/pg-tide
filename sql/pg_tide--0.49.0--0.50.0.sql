@@ -1,0 +1,3 @@
+-- pg_tide 0.49.0 -> 0.50.0
+-- No catalog changes in this release.  The migration keeps the adjacent
+-- upgrade chain explicit while delivery correctness remains relay-owned.

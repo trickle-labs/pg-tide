@@ -56,6 +56,7 @@ docs = ["docs/src/sinks/pg-inbox.md", "docs/src/sinks/pg-outbox.md"]
 evidence = [
     { scenario = "postgresql-inbox-round-trip", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/pg_inbox_sink_test.rs", test_name = "test_pg_inbox_sink_round_trip", ci_job = "test-integration-relay" },
     { scenario = "postgresql-inbox-deduplication", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/inbox_sink_test.rs", test_name = "test_inbox_deduplication", ci_job = "test-integration-relay" },
+    { scenario = "postgresql-inbox-public-api", level = "e2e", direction = "sink", test_path = "pg-tide-relay/tests/public_api_outbox_to_pg_inbox_e2e.rs", test_name = "public_api_outbox_to_pg_inbox_e2e", ci_job = "public-api-nats-e2e" },
 ]
 
 [[connector]]
@@ -100,6 +101,7 @@ config_fields = ["url", "timeout_secs", "allow_http", "ssrf_protection", "signin
 docs = ["docs/src/sinks/webhook.md"]
 evidence = [
     { scenario = "webhook-http-post", level = "integration", direction = "sink", test_path = "pg-tide-relay/tests/webhook_test.rs", test_name = "test_webhook_sink_posts_messages", ci_job = "test-integration" },
+    { scenario = "webhook-public-api", level = "e2e", direction = "sink", test_path = "pg-tide-relay/tests/public_api_outbox_to_webhook_e2e.rs", test_name = "public_api_outbox_to_webhook_e2e", ci_job = "public-api-nats-e2e" },
 ]
 
 [[connector]]

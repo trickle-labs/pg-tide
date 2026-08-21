@@ -19,4 +19,5 @@ PostgreSQL outbox. It is outbound only and uses Kafka producer acknowledgments.
 Use `topic_template` instead of `topic` when the topic is derived from message
 metadata. Configure TLS and SASL through the Kafka client connection settings.
 The sink preserves at-least-once delivery; consumers should use the stable
-outbox identity for deduplication.
+outbox identity for deduplication. Producer idempotence is session-bounded, so
+a restart after broker acknowledgment can produce a consumer-visible duplicate.

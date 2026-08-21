@@ -5,7 +5,7 @@
 //!   * a real packaged `pg_tide` extension (`CREATE EXTENSION pg_tide`),
 //!   * only public SQL functions (`outbox_create_if_not_exists`,
 //!     `relay_set_outbox_v2`, `outbox_publish`),
-//!   * the real `Coordinator`,
+//!   * the compiled `pg-tide` process,
 //!   * NATS with JetStream enabled.
 //!
 //! No test-only table, direct relay-catalog insert, direct outbox-message
@@ -29,76 +29,17 @@
 
 #![allow(clippy::needless_range_loop)]
 
+mod common;
+
+use common::process::RelayProcess;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use pg_tide_relay::coordinator::Coordinator;
-use pg_tide_relay::metrics::RelayMetrics;
-use tokio::sync::{mpsc, watch};
 use tokio_postgres::NoTls;
 
 const E2E_ENV: &str = "PG_TIDE_E2E_DATABASE_URL";
 const STREAM: &str = "orders";
 const SUBJECT: &str = "orders.created";
-
-/// Handle bundling a running coordinator so the test can stop/restart it.
-struct RunningCoordinator {
-    shutdown_tx: watch::Sender<bool>,
-    notif_tx: mpsc::Sender<()>,
-    handle: tokio::task::JoinHandle<Result<(), pg_tide_relay::error::RelayError>>,
-}
-
-impl RunningCoordinator {
-    async fn stop(self) {
-        let _ = self.shutdown_tx.send(true);
-        let _ = tokio::time::timeout(Duration::from_secs(5), self.handle).await;
-    }
-
-    async fn nudge(&self) {
-        let _ = self.notif_tx.send(()).await;
-    }
-}
-
-fn make_pool(url: &str) -> deadpool_postgres::Pool {
-    let mut cfg = deadpool_postgres::Config::new();
-    cfg.url = Some(url.to_string());
-    cfg.pool = Some(deadpool_postgres::PoolConfig {
-        max_size: 4,
-        ..Default::default()
-    });
-    cfg.create_pool(Some(deadpool_postgres::Runtime::Tokio1), NoTls)
-        .expect("create pool")
-}
-
-fn start_coordinator(db_url: &str, relay_group: &str) -> RunningCoordinator {
-    let pool = make_pool(db_url);
-    let metrics = RelayMetrics::new().expect("metrics");
-    let health = std::sync::Arc::new(tokio::sync::RwLock::new(
-        pg_tide_relay::metrics::HealthState::default(),
-    ));
-    let mut coordinator = Coordinator::new(pool, relay_group, metrics, health);
-    coordinator.set_max_owned_pipelines(10);
-
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let (notif_tx, notif_rx) = mpsc::channel::<()>(8);
-    let db_url = db_url.to_string();
-    let handle = tokio::spawn(async move {
-        coordinator
-            .run(
-                db_url,
-                50,
-                Duration::from_millis(300),
-                shutdown_rx,
-                notif_rx,
-            )
-            .await
-    });
-    RunningCoordinator {
-        shutdown_tx,
-        notif_tx,
-        handle,
-    }
-}
 
 async fn connect(url: &str) -> tokio_postgres::Client {
     let (client, conn) = tokio_postgres::connect(url, NoTls)
@@ -267,7 +208,7 @@ async fn public_api_outbox_to_nats_e2e() {
         .expect("relay_set_outbox_v2");
 
     // ── Coordinator A ─────────────────────────────────────────────────────
-    let coord_a = start_coordinator(&admin_url, "e2e-a");
+    let coord_a = RelayProcess::start(&admin_url, "e2e-a");
     tokio::time::sleep(Duration::from_millis(1_000)).await;
 
     // ── Transaction visibility: uncommitted publish is invisible ─────────
@@ -300,7 +241,6 @@ async fn public_api_outbox_to_nats_e2e() {
 
         tx.commit().await.expect("commit T1");
     }
-    coord_a.nudge().await;
 
     // ── Receive first event from NATS ─────────────────────────────────────
     let msgs = receive(&js, "e2e-consumer", 1, Duration::from_secs(15)).await;
@@ -336,9 +276,8 @@ async fn public_api_outbox_to_nats_e2e() {
     coord_a.stop().await;
     publish_business_event(&admin_url, "A-2", "order.created").await;
 
-    let coord_a2 = start_coordinator(&admin_url, "e2e-a");
+    let coord_a2 = RelayProcess::start(&admin_url, "e2e-a");
     tokio::time::sleep(Duration::from_millis(800)).await;
-    coord_a2.nudge().await;
 
     let msgs2 = receive(&js, "e2e-consumer", 1, Duration::from_secs(15)).await;
     assert!(
@@ -353,9 +292,8 @@ async fn public_api_outbox_to_nats_e2e() {
 
     // ── Coordinator B replays from offset 0; JetStream dedup by Nats-Msg-Id ─
     coord_a2.stop().await;
-    let coord_b = start_coordinator(&admin_url, "e2e-b");
+    let coord_b = RelayProcess::start(&admin_url, "e2e-b");
     tokio::time::sleep(Duration::from_millis(1_000)).await;
-    coord_b.nudge().await;
 
     // Give B time to re-publish the same rows with identical Nats-Msg-Ids.
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -437,7 +375,7 @@ async fn public_api_orders_only_ignores_other_outbox() {
         .await
         .expect("relay_set_outbox_v2");
 
-    let coord = start_coordinator(&admin_url, "e2e-gap");
+    let coord = RelayProcess::start(&admin_url, "e2e-gap");
     tokio::time::sleep(Duration::from_millis(800)).await;
 
     // Interleave publishes to both outboxes; only `orders` has a pipeline.
@@ -453,7 +391,6 @@ async fn public_api_orders_only_ignores_other_outbox() {
             .await
             .expect("publish payments");
     }
-    coord.nudge().await;
 
     let msgs = receive(&js, "gap-consumer", 3, Duration::from_secs(15)).await;
     assert_eq!(msgs.len(), 3, "exactly the three orders events must arrive");

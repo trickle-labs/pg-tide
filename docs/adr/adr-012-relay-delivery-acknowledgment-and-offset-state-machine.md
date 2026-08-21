@@ -25,21 +25,42 @@ with the same stable identities.
 The normative delivery states are:
 
 ```text
-Polled -> Prepared -> PublishInFlight -> SinkAcknowledged
-        -> CheckpointCommitted -> EligibleForCleanup
+Polled -> Encoded -> PublishStarted -> SinkAccepted
+        -> SinkAcknowledged -> CheckpointCommitted -> CleanupEligible
 ```
 
 Alternative terminal paths are:
 
 ```text
-Prepared -> DryRunObserved -> CheckpointCommitted
-Prepared -> IntentionallyFiltered -> CheckpointCommitted
+Encoded -> DryRunObserved -> CheckpointCommitted
+Encoded -> IntentionallyFiltered -> CheckpointCommitted
 PublishFailed -> DlqPersisted -> CheckpointCommitted
 ```
 
+The pure executable model in `pg-tide-relay/src/delivery_model.rs` tracks the
+state, sink acknowledgment frontier, original source checkpoint, source
+visibility, duplicate risk, cleanup permission, and failure class. It is
+compiled only for unit tests and the opt-in `test-failpoints` test profile; the
+coordinator remains the runtime state machine.
+
+The v0.50 vocabulary replaces the previous terms as follows:
+
+| v0.50 term | Previous term | Runtime boundary |
+|---|---|---|
+| `Polled` | `Polled` | Source returned a batch and its original checkpoint |
+| `Encoded` | `Prepared` | `poll_and_decode()` produced a sink-ready batch with stable identities |
+| `PublishStarted` | Start of `PublishInFlight` | `Sink::publish()` started downstream I/O |
+| `SinkAccepted` | Ambiguous part of `PublishInFlight` | Destination may have accepted some or all of the batch; acceptance is not durably acknowledged |
+| `SinkAcknowledged` | `SinkAcknowledged` | Connector reached its declared acknowledgment boundary |
+| `CheckpointCommitted` | `CheckpointCommitted` | Source checkpoint was persisted |
+| `CleanupEligible` | `EligibleForCleanup` | All participant frontiers and retention rules permit deletion |
+| `DryRunObserved` | `DryRunObserved` | Bounded consuming observation was emitted |
+| `IntentionallyFiltered` | `IntentionallyFiltered` | The complete batch was intentionally removed |
+| `DlqPersisted` | `DlqPersisted` | The failed batch was durably stored in the DLQ |
+
 Errors that do not produce a terminal disposition—decode, transform, schema
 policy, unresolved sink, or DLQ write errors—leave the source checkpoint
-uncommitted. `EligibleForCleanup` requires every configured retention
+uncommitted. `CleanupEligible` requires every configured retention
 participant to have passed the row and the outbox retention cutoff to have
 elapsed; it is never inferred from one pipeline or `consumed_at`.
 
@@ -70,15 +91,15 @@ again. The original batch remains uncommitted and is retried.
 | Transition / state | Durable fact | Retry after crash | Duplicate risk | Silent-loss risk if implemented correctly | Evidence |
 |---|---|---|---|---|---|
 | Start -> `Polled` | None beyond source state | Poll/redeliver | None yet | None | Pre-encode crash test |
-| `Polled` -> `Prepared` | None | Poll/redeliver | None yet | None | Post-prepare crash test |
-| `Prepared` -> `PublishInFlight` | Sink-dependent and possibly ambiguous | Retry original batch | Possible prefix duplicate | None; checkpoint unchanged | During-publish test |
-| `PublishInFlight` -> `SinkAcknowledged` | Destination confirmed by connector contract | Retry if checkpoint absent | Yes | None | Post-sink-ack crash test |
+| `Polled` -> `Encoded` | None | Poll/redeliver | None yet | None | Post-encode crash test |
+| `Encoded` -> `PublishStarted` | Sink-dependent and possibly ambiguous | Retry original batch | Possible prefix duplicate | None; checkpoint unchanged | During-publish test |
+| `PublishStarted`/`SinkAccepted` -> `SinkAcknowledged` | Destination confirmed by connector contract | Retry if checkpoint absent | Yes | None | Post-sink-ack crash test |
 | `SinkAcknowledged` -> `CheckpointCommitted` | Source checkpoint advanced | Resume after batch | No automatic replay | None | Post-checkpoint crash test |
 | `PublishFailed` -> `DlqPersisted` | Every DLQ row durable or already present by idempotency key | Retry DLQ insert if uncertain | Duplicate DLQ insert suppressed | None | DLQ crash/failure tests |
 | `DlqPersisted` -> `CheckpointCommitted` | Source checkpoint advanced past DLQ batch | Resume after batch | No message redelivery | None | DLQ acknowledgment test |
-| `Prepared` -> `DryRunObserved` | Bounded structured observation emitted | Continue after checkpoint | Not applicable | Operator explicitly chose no sink delivery | Real coordinator dry-run test |
-| `Prepared` -> `IntentionallyFiltered` | Whole input batch was intentionally filtered | Continue after checkpoint | None | None if original checkpoint retained | All-filtered test |
-| `CheckpointCommitted` -> `EligibleForCleanup` | Every configured participant passes the row and retention age has elapsed | No relay retry | None | `tide.outbox_sweep()` | Bounded, lock-safe cleanup |
+| `Encoded` -> `DryRunObserved` | Bounded structured observation emitted | Continue after checkpoint | Not applicable | Operator explicitly chose no sink delivery | Real coordinator dry-run test |
+| `Encoded` -> `IntentionallyFiltered` | Whole input batch was intentionally filtered | Continue after checkpoint | None | None if original checkpoint retained | All-filtered test |
+| `CheckpointCommitted` -> `CleanupEligible` | Every configured participant passes the row and retention age has elapsed | No relay retry | None | `tide.outbox_sweep()` | Bounded, lock-safe cleanup |
 
 ### Filtering, dry-run, DLQ, and replay
 
@@ -87,7 +108,7 @@ an empty sink publish. It commits the original polled checkpoint. A transform,
 decode, or schema-policy error is not intentional filtering and does not commit.
 
 Live dry-run is an explicit consuming mode. It logs bounded metadata about the
-prepared batch, skips the sink, records `DryRunObserved`, and commits the source
+encoded batch, skips the sink, records `DryRunObserved`, and commits the source
 checkpoint. A checkpoint error remains unhealthy and is retried or stops the
 worker; it is never discarded.
 
@@ -146,7 +167,8 @@ The relay emits bounded stage metrics, including:
 pg_tide_relay_delivery_stage_total{pipeline,stage,outcome}
 ```
 
-Stages include `prepared`, `sink_acknowledged`, `checkpoint_committed`,
+Stages include `polled`, `encoded`, `publish_started`, `sink_acknowledged`,
+`checkpoint_committed`,
 `checkpoint_failed`, `dlq_persisted`, `dlq_failed`, `filtered`, and
 `dry_run_observed`. It also reports checkpoint errors, DLQ errors, ownership
 acquisition/loss/transfer, and forced shutdown with in-flight work.
@@ -172,5 +194,5 @@ outbox-scoped offsets remain authoritative, while delivery receipts are
 auxiliary evidence.
 
 Pipeline-aware retention cannot safely infer completion from one pipeline's
-offset. `EligibleForCleanup` therefore uses the minimum safe checkpoint across
+offset. `CleanupEligible` therefore uses the minimum safe checkpoint across
 all configured participants plus the retention cutoff, as specified in ADR-013.

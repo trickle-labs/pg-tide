@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "release": "v0.50.0",
+  "status": "pending",
+  "candidate": {"commit": null, "artifact_digests": []},
+  "required_tests": "tests/required-tests.toml",
+  "claims": [],
+  "baseline": "release-evidence/pre-v1-baseline/baseline.json",
+  "note": "Generated evidence is populated by the v0.50.0 delivery-correctness job."
+}

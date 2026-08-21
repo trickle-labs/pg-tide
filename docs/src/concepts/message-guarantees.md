@@ -29,3 +29,8 @@ fixed. Checkpoints are not advanced for a batch that has not been acknowledged.
 
 These guarantees are intentionally at-least-once. pg_tide does not claim
 exactly-once transport.
+
+Destination boundaries are explicit: PostgreSQL inboxes deduplicate stable
+`event_id` values durably, NATS deduplication ends at the stream window, Kafka
+producer idempotence ends at the producer session, and webhooks require the
+receiver to deduplicate the stable `Idempotency-Key`.

@@ -1,14 +1,13 @@
-//! Integration tests: exactly-once delivery guarantees.
+//! Database integration tests for inbox idempotency and offset bookkeeping.
 //!
-//! Covers dedup_key tracking across relay restarts, idempotent inbox rejection
-//! of duplicate events, and offset-commit ordering.
+//! These tests exercise database contracts directly; they do not run the relay
+//! process or prove end-to-end exactly-once delivery.
 
 mod common;
 
 use common::PgTideTestDb;
 
-/// After a relay "restart" (simulated by re-inserting the same event_id),
-/// the inbox must contain exactly one row — the duplicate is silently ignored.
+/// Re-inserting the same event_id must remain idempotent.
 #[tokio::test]
 async fn test_inbox_rejects_duplicate_event_id() {
     let db = PgTideTestDb::start().await;
@@ -21,16 +20,15 @@ async fn test_inbox_rejects_duplicate_event_id() {
     db.deliver_to_inbox("eo-inbox", event_id, &payload).await;
     db.assert_inbox_received("eo-inbox", 1).await;
 
-    // Second delivery of the same event (relay restart / retry).
+    // A retry of the same event.
     db.deliver_to_inbox("eo-inbox", event_id, &payload).await;
     db.assert_inbox_received("eo-inbox", 1).await;
 }
 
-/// Offset must NOT advance when the sink delivery fails.
+/// An offset remains unchanged when a sink delivery has not completed.
 ///
-/// This test simulates the scenario where a relay crash occurs mid-batch.
-/// The outbox messages remain unconsumed and the offset stays at its
-/// last committed value, ensuring no message is ever silently dropped.
+/// This checks the durable database state expected after an interrupted batch;
+/// it is not a process-level crash test.
 #[tokio::test]
 async fn test_offset_not_committed_on_partial_batch_failure() {
     let db = PgTideTestDb::start().await;

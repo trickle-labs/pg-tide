@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.50.0 — Delivery Correctness and Failure Semantics](#0500--delivery-correctness-and-failure-semantics)
 - [0.48.0 — Baseline Closure and Deterministic CI](#0480--baseline-closure-and-deterministic-ci)
 - [0.47.0 — Public Beta & API Freeze](#0470--public-beta--api-freeze)
 - [0.46.0 — Connector Contract & Supported Destinations](#0460--connector-contract--supported-destinations)
@@ -55,6 +56,15 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.50.0] — 2026-08-21 — Delivery Correctness and Failure Semantics
+
+- Added an executable delivery state model and truthful transition vocabulary.
+- Added bounded replay execution and atomic DLQ requeue semantics.
+- Hardened checkpoints, replay cleanup, failpoint boundaries, and delivery
+  transition observability for at-least-once recovery.
 
 ---
 

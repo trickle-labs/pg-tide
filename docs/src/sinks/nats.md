@@ -18,4 +18,5 @@ outbox to a JetStream subject. It is outbound only.
 
 Use `subject_template` when the subject should include outbox metadata.
 JetStream acknowledgments and the stable outbox identity provide at-least-once
-delivery with broker-side duplicate suppression where configured.
+delivery. `Nats-Msg-Id` suppresses a retry only while the stream's configured
+duplicate window is active; a retry after that window may appear twice.

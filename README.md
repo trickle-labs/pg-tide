@@ -121,9 +121,9 @@ Diagnostics are labeled separately and are not production integrations.
 |---|---|---|---:|---|---|---|
 | [PostgreSQL native outbox](docs/src/support/connector-compatibility.md#postgresql-outbox) | source | supported | yes | PostgreSQL 18 | @grove | [outbox_source_test.rs](pg-tide-relay/tests/outbox_source_test.rs) |
 | [stdout and file diagnostics](docs/src/support/connector-compatibility.md#diagnostics) | sink | supported | yes | local process | @grove | [postgres_insert_microbenchmark.rs](pg-tide-relay/tests/postgres_insert_microbenchmark.rs) |
-| [PostgreSQL inbox](docs/src/support/connector-compatibility.md#postgresql-inbox) | sink | supported | yes | PostgreSQL 18 | @grove | [pg_inbox_sink_test.rs](pg-tide-relay/tests/pg_inbox_sink_test.rs), [inbox_sink_test.rs](pg-tide-relay/tests/inbox_sink_test.rs) |
+| [PostgreSQL inbox](docs/src/support/connector-compatibility.md#postgresql-inbox) | sink | supported | yes | PostgreSQL 18 | @grove | [pg_inbox_sink_test.rs](pg-tide-relay/tests/pg_inbox_sink_test.rs), [inbox_sink_test.rs](pg-tide-relay/tests/inbox_sink_test.rs), [public_api_outbox_to_pg_inbox_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_pg_inbox_e2e.rs) |
 | [NATS JetStream outbound](docs/src/support/connector-compatibility.md#nats-jetstream-sink) | sink | supported | yes | NATS Server 2.11.0 with JetStream | @grove | [public_api_outbox_to_nats_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs) |
-| [HTTPS webhook outbound](docs/src/support/connector-compatibility.md#webhook-sink) | sink | supported | yes | HTTP/1.1 with TLS 1.3 | @grove | [webhook_test.rs](pg-tide-relay/tests/webhook_test.rs) |
+| [HTTPS webhook outbound](docs/src/support/connector-compatibility.md#webhook-sink) | sink | supported | yes | HTTP/1.1 with TLS 1.3 | @grove | [webhook_test.rs](pg-tide-relay/tests/webhook_test.rs), [public_api_outbox_to_webhook_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_webhook_e2e.rs) |
 | [Apache Kafka outbound](docs/src/support/connector-compatibility.md#kafka-sink) | sink | supported | no | Apache Kafka 3.8.0 KRaft | @grove | [public_api_outbox_to_kafka_e2e.rs](pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs) |
 <!-- END GENERATED CONNECTORS -->
 
