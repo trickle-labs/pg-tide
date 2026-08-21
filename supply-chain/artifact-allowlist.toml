@@ -1,0 +1,31 @@
+[artifact.core]
+[artifact.core.files]
+allowed_paths = ["pg-tide", "pg-tide.exe"]
+expected_executables = ["pg-tide", "pg-tide.exe"]
+max_file_count = 4
+max_unpacked_bytes = 100000000
+
+[artifact.extension]
+[artifact.extension.files]
+allowed_paths = ["**/*.so", "**/*.control", "**/*.sql", "manifest.sha256"]
+expected_executables = []
+max_file_count = 100
+max_unpacked_bytes = 100000000
+
+[artifact.core-kafka]
+[artifact.core-kafka.files]
+allowed_paths = ["pg-tide", "pg-tide.exe"]
+expected_executables = ["pg-tide", "pg-tide.exe"]
+max_file_count = 4
+max_unpacked_bytes = 100000000
+
+[artifact.chart]
+[artifact.chart.files]
+allowed_paths = ["pg-tide/**"]
+expected_executables = []
+max_file_count = 200
+max_unpacked_bytes = 10000000
+
+[forbidden]
+filenames = ['(^|/)(\.git|target|\.cargo|Cargo\.toml|Cargo\.lock)(/|$)', '(id_rsa|private.*key|\.env)$']
+content = ['BEGIN (RSA|OPENSSH|EC) PRIVATE KEY', '(AWS_SECRET_ACCESS_KEY|PG_TIDE_POSTGRES_URL)\s*=']

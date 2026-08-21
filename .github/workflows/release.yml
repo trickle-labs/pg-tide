@@ -11,6 +11,22 @@ permissions:
   id-token: write
 
 jobs:
+  release-verification:
+    name: Read-only release verification hook
+    runs-on: ubuntu-latest
+    needs: release-gates
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check locked supply-chain policy without network
+        run: python3 scripts/check_supply_chain.py --static
+      - name: Check artifact policy without asserting pending evidence
+        run: |
+          python3 scripts/check_release_artifacts.py --static --profile core
+          echo "Producer checksums, SBOMs, provenance, and signatures are not ready evidence in this hook."
+
   release-gates:
     name: release evidence and blocker gate
     runs-on: ubuntu-latest
@@ -404,7 +420,7 @@ jobs:
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build, cosign-docker, trivy-scan]
+    needs: [build, cosign-docker, trivy-scan, release-verification]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 

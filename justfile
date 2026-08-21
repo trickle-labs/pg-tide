@@ -263,71 +263,17 @@ audit:
     )
 
 audit-production:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    FEATURES=$(cargo tree --package {{PG_TIDE_RELAY}} --no-default-features --features core --locked --edges normal)
-    for forbidden in kms-aws kms-gcp kms-vault; do
-        if grep -q "$forbidden" <<< "$FEATURES"; then
-            echo "ERROR: production profile enables ${forbidden}" >&2
-            exit 1
-        fi
-    done
-    python3 - <<'PY'
-    import json
-    import subprocess
-    import tomllib
+    python3 scripts/check_supply_chain.py --report target/supply-chain/report.json
 
-    tree = subprocess.check_output(
-        [
-            "cargo",
-            "tree",
-            "--package",
-            "pg-tide-relay",
-            "--no-default-features",
-            "--features",
-            "core",
-            "--locked",
-            "--edges",
-            "normal",
-        ],
-        text=True,
-    )
-    policy = tomllib.loads(
-        open("supply-chain/advisory-exceptions.toml", encoding="utf-8").read()
-    )
-    exceptions = {
-        item["advisory"]: item
-        for item in policy.get("exception", [])
-    }
-    report = subprocess.run(
-        ["cargo", "audit", "--json", "--no-fetch"],
-        capture_output=True,
-        text=True,
-    )
-    findings = json.loads(report.stdout).get("vulnerabilities", {}).get("list", [])
-    ignore = set()
-    failures = []
-    for finding in findings:
-        advisory = finding["advisory"]["id"]
-        package = finding["package"]
-        exact = f'{package["name"]} v{package["version"]}'
-        exception = exceptions.get(advisory)
-        if exact in tree:
-            failures.append(f"{advisory}: {exact} is reachable from core")
-        elif exception is None:
-            failures.append(f"{advisory}: no reviewed exception")
-        elif exception.get("production_reachable", True):
-            failures.append(f"{advisory}: production_reachable=true")
-        else:
-            ignore.add(advisory)
-    if failures:
-        raise SystemExit("\n".join(failures))
-    subprocess.run(
-        ["cargo", "audit", "--no-fetch"]
-        + sum((["--ignore", advisory] for advisory in sorted(ignore)), []),
-        check=True,
-    )
-    PY
+# Locked graph checks that remain useful without network access.
+audit-production-offline:
+    python3 scripts/check_supply_chain.py --offline --report target/supply-chain/report.json
+
+check-supply-chain-static:
+    python3 scripts/check_supply_chain.py --static
+
+check-release-artifacts *ARGS:
+    python3 scripts/check_release_artifacts.py {{ARGS}}
 
 # Verify that advisory exceptions are documented, owned, and not expired.
 validate-advisory-exceptions:

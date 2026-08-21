@@ -1,8 +1,8 @@
 # Multi-stage build for the pg-tide relay binary.
-# Final image: Alpine-based, ~20 MB. Supports linux/amd64 and linux/arm64.
+# Final image: scratch-based static runtime. Supports linux/amd64 and linux/arm64.
 
 # ── Build stage ────────────────────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM rust:1.91.1-alpine AS builder
+FROM --platform=$BUILDPLATFORM rust:1.97.1-alpine AS builder
 
 ARG TARGETARCH
 ARG CARGO_FEATURES=core
@@ -35,22 +35,23 @@ RUN CC_x86_64_unknown_linux_musl=gcc \
     && cp "target/$(cat /rust_target)/release/pg-tide" /pg-tide
 
 # ── Runtime stage ──────────────────────────────────────────────────────────
-FROM alpine:3.21
-
-RUN apk add --no-cache ca-certificates
+FROM scratch
 
 COPY --from=builder /pg-tide /usr/local/bin/pg-tide
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 # v0.19.0: Bake example TOML into the image so operators can
 # `docker cp` a working starting config without consulting external docs.
-RUN mkdir -p /etc/pg-tide
 COPY pg-tide.example.toml /etc/pg-tide/pg-tide.example.toml
+
+# Keep numeric identity available to libc-aware tooling without adding a shell.
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
 
 # Metrics + health endpoint.
 EXPOSE 9090
 
 # Non-root user for security.
-RUN adduser -D -u 1000 pgtide
-USER pgtide
+USER 1000:1000
 
 ENTRYPOINT ["pg-tide"]
