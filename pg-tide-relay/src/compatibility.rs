@@ -2,7 +2,7 @@ use crate::error::{IncompatibleExtensionVersion, RelayError};
 use serde::{Deserialize, Serialize};
 
 pub const COMPATIBILITY_ERROR_CODE: &str = "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE";
-const EMBEDDED_POLICY: &str = include_str!("../../schemas/lifecycle-compatibility-v1.json");
+const EMBEDDED_POLICY: &str = include_str!("../schemas/lifecycle-compatibility-v1.json");
 
 #[derive(Debug, Deserialize)]
 struct EmbeddedPolicy {
