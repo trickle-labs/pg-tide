@@ -162,7 +162,7 @@ async fn test_sequential_migration_upgrade() {
         .await
         .expect("create schema");
     client
-        .batch_execute(V0_1_0)
+        .batch_execute(&common::strip_extension_comments(V0_1_0))
         .await
         .expect("install v0.1.0 schema");
 
