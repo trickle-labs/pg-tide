@@ -504,6 +504,7 @@ jobs:
       - name: Run public API outbox → NATS JetStream E2E
         env:
           PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e"
+          PG_TIDE_RELAY_BIN: "${{ github.workspace }}/target/debug/pg-tide"
         run: |
           cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core
           PG_TIDE_E2E_DATABASE_URL="${PG_TIDE_E2E_DATABASE_URL}?sslmode=disable" \
@@ -513,13 +514,13 @@ jobs:
       - name: Run public API outbox → PostgreSQL inbox E2E
         env:
           PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e?sslmode=disable"
-          PG_TIDE_RELAY_BIN: "target/debug/pg-tide"
+          PG_TIDE_RELAY_BIN: "${{ github.workspace }}/target/debug/pg-tide"
         run: cargo test --package pg-tide-relay --test public_api_outbox_to_pg_inbox_e2e -- --ignored --test-threads=1 --nocapture
 
       - name: Run public API outbox → webhook E2E
         env:
           PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e?sslmode=disable"
-          PG_TIDE_RELAY_BIN: "target/debug/pg-tide"
+          PG_TIDE_RELAY_BIN: "${{ github.workspace }}/target/debug/pg-tide"
         run: cargo test --package pg-tide-relay --test public_api_outbox_to_webhook_e2e -- --ignored --test-threads=1 --nocapture
 
   public-api-kafka-e2e:
@@ -588,7 +589,7 @@ jobs:
           PG_TIDE_E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/pgtide_e2e?sslmode=disable"
         run: |
           cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core-kafka
-          PG_TIDE_RELAY_BIN=target/debug/pg-tide \
+          PG_TIDE_RELAY_BIN="${{ github.workspace }}/target/debug/pg-tide" \
             cargo test --package pg-tide-relay --test public_api_outbox_to_kafka_e2e \
             --no-default-features --features core-kafka -- --ignored --test-threads=1 --nocapture
 
@@ -645,8 +646,8 @@ jobs:
           python3 scripts/run_quickstart_sql.py \
             README.md docs/src/getting-started/first-pipeline.md
 
-  # v0.49.0: Real packaged fresh-install vs upgrade parity.
-  # CREATE EXTENSION '0.49.0' vs CREATE EXTENSION '0.48.0' + ALTER EXTENSION UPDATE.
+  # v0.50.0: Real packaged fresh-install vs upgrade parity.
+  # CREATE EXTENSION '0.50.0' vs CREATE EXTENSION '0.49.0' + ALTER EXTENSION UPDATE.
   real-extension-parity:
     name: Real Fresh Install vs Upgrade Parity
     runs-on: ubuntu-latest
@@ -680,15 +681,15 @@ jobs:
           cargo install cargo-pgrx --version "=0.18.0" --locked
           cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
 
-      - name: Install packaged v0.48.0 extension
+      - name: Install packaged v0.49.0 extension
         run: |
           sudo chown -R "$(id -u):$(id -g)" \
             /usr/share/postgresql/18/extension \
             /usr/lib/postgresql/18/lib
-          git clone --depth 1 --branch v0.48.0 \
-            https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v048-source"
+          git clone --depth 1 --branch v0.49.0 \
+            https://github.com/trickle-labs/pg-tide.git "$GITHUB_WORKSPACE/v049-source"
           (
-            cd "$GITHUB_WORKSPACE/v048-source"
+            cd "$GITHUB_WORKSPACE/v049-source"
             sed -i 's/members = \["pg-tide-ext", "pg-tide-relay"\]/members = ["pg-tide-ext"]/' Cargo.toml
             cargo pgrx install --package pg-tide-ext \
               --pg-config /usr/lib/postgresql/18/bin/pg_config
@@ -700,8 +701,8 @@ jobs:
             /usr/share/postgresql/18/extension \
             /usr/lib/postgresql/18/lib
           cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
-          sudo cp sql/pg_tide--0.48.0--0.49.0.sql \
-            /usr/share/postgresql/18/extension/pg_tide--0.48.0--0.49.0.sql
+          sudo cp sql/pg_tide--0.49.0--0.50.0.sql \
+            /usr/share/postgresql/18/extension/pg_tide--0.49.0--0.50.0.sql
 
       - name: Verify upgrade path exists (chain completeness through workspace version)
         run: bash scripts/check_upgrade_completeness.sh
@@ -716,25 +717,24 @@ jobs:
           sudo pg_createcluster 18 main --start --port=5432
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
           export PGPASSWORD=postgres
-          # Create the v0.48 database while its shared library is installed.
-          # The v0.49 library intentionally removes retired v0.48 symbols.
+          # Create the v0.49 database while its shared library is installed.
           (
-            cd "$GITHUB_WORKSPACE/v048-source"
+            cd "$GITHUB_WORKSPACE/v049-source"
             cargo pgrx install --package pg-tide-ext \
               --pg-config /usr/lib/postgresql/18/bin/pg_config
           )
-          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade49;"
-          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade49;"
-          psql -h 127.0.0.1 -U postgres -d upgrade49 -c "CREATE EXTENSION pg_tide VERSION '0.48.0';"
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS upgrade50;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE upgrade50;"
+          psql -h 127.0.0.1 -U postgres -d upgrade50 -c "CREATE EXTENSION pg_tide VERSION '0.49.0';"
           cargo pgrx install --package pg-tide-ext --pg-config /usr/lib/postgresql/18/bin/pg_config
           # Fresh install directly at the current version.
-          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS fresh49;"
-          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh49;"
-          psql -h 127.0.0.1 -U postgres -d fresh49 -c "CREATE EXTENSION pg_tide VERSION '0.49.0';"
-          # Upgrade from the last pre-v0.49.0 surface.
-          psql -h 127.0.0.1 -U postgres -d upgrade49 -c "ALTER EXTENSION pg_tide UPDATE TO '0.49.0';"
+          psql -h 127.0.0.1 -U postgres -c "DROP DATABASE IF EXISTS fresh50;"
+          psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE fresh50;"
+          psql -h 127.0.0.1 -U postgres -d fresh50 -c "CREATE EXTENSION pg_tide VERSION '0.50.0';"
+          # Upgrade from the last pre-v0.50.0 surface.
+          psql -h 127.0.0.1 -U postgres -d upgrade50 -c "ALTER EXTENSION pg_tide UPDATE TO '0.50.0';"
           # Normalized schema comparison.
-          for db in fresh49 upgrade49; do
+          for db in fresh50 upgrade50; do
             pg_dump -h 127.0.0.1 -U postgres -d "$db" --schema-only --schema=tide \
               --no-owner --no-privileges \
               | grep -v '^--' \
@@ -743,10 +743,10 @@ jobs:
               | grep -v '^\\unrestrict ' \
               | sort > "/dev/shm/${db}.sql"
           done
-          if diff --ignore-space-change /dev/shm/fresh49.sql /dev/shm/upgrade49.sql; then
-            echo "OK: real fresh install and 0.48.0 -> 0.49.0 upgrade produce identical tide schemas."
+          if diff --ignore-space-change /dev/shm/fresh50.sql /dev/shm/upgrade50.sql; then
+            echo "OK: real fresh install and 0.49.0 -> 0.50.0 upgrade produce identical tide schemas."
           else
-            echo "FAIL: fresh vs upgrade schema drift for v0.49.0."
+            echo "FAIL: fresh vs upgrade schema drift for v0.50.0."
             exit 1
           fi
 
