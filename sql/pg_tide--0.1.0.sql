@@ -254,55 +254,6 @@ COMMENT ON POLICY tide_outbox_owner  ON tide.tide_outbox_config IS
 COMMENT ON POLICY relay_outbox_owner ON tide.relay_outbox_config IS
     'TIDE-SEC-1 (v0.1.0): Owners can only access their own relay outbox configs.';
 
--- ── Security: GRANT / REVOKE Helpers ────────────────────────────────────--
-
---- Grant a role the ability to publish to a named outbox.
-CREATE OR REPLACE FUNCTION tide.grant_publish(p_role TEXT, p_outbox TEXT)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = tide, pg_catalog
-AS $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM tide.tide_outbox_config WHERE outbox_name = p_outbox
-    ) THEN
-        RAISE EXCEPTION 'outbox "%" does not exist', p_outbox;
-    END IF;
-
-    EXECUTE format(
-        'GRANT INSERT ON tide.tide_outbox_messages TO %I',
-        p_role
-    );
-    -- Record the grant in the audit log.
-    INSERT INTO tide.tide_security_audit (action, target_role, target_object, performed_by)
-    VALUES ('GRANT_PUBLISH', p_role, p_outbox, current_user);
-END;
-$$;
-
-COMMENT ON FUNCTION tide.grant_publish(TEXT, TEXT) IS
-    'TIDE-SEC-2 (v0.1.0): Grant a role publish access to an outbox.';
-
---- Revoke publish access from a role for a named outbox.
-CREATE OR REPLACE FUNCTION tide.revoke_publish(p_role TEXT, p_outbox TEXT)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = tide, pg_catalog
-AS $$
-BEGIN
-    EXECUTE format(
-        'REVOKE INSERT ON tide.tide_outbox_messages FROM %I',
-        p_role
-    );
-    INSERT INTO tide.tide_security_audit (action, target_role, target_object, performed_by)
-    VALUES ('REVOKE_PUBLISH', p_role, p_outbox, current_user);
-END;
-$$;
-
-COMMENT ON FUNCTION tide.revoke_publish(TEXT, TEXT) IS
-    'TIDE-SEC-2 (v0.1.0): Revoke publish access from a role.';
-
 -- ── Security: Audit Log ──────────────────────────────────────────────────--
 
 CREATE TABLE IF NOT EXISTS tide.tide_security_audit (
@@ -436,3 +387,13 @@ CREATE TABLE IF NOT EXISTS tide.relay_limits (
 
 COMMENT ON TABLE tide.relay_limits IS
     'TIDE-PERF-1 (v0.13.0): Per-relay-group connection and pipeline limits.';
+
+-- Publishing is guarded by the Rust function's session_user and ACL checks;
+-- callers must not receive a direct table or sequence bypass.
+ALTER FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB)
+    SECURITY DEFINER
+    SET search_path = pg_catalog, tide;
+REVOKE ALL ON FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB) FROM PUBLIC;
+
+COMMENT ON EXTENSION pg_tide IS
+    'pg_tide: transactional outbox, idempotent inbox, relay catalog — v0.52.0';

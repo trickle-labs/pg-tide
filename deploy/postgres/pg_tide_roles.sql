@@ -57,10 +57,9 @@ BEGIN
  END LOOP;
 
  GRANT SELECT ON tide.tide_outbox_config, tide.outbox_publishers TO tide_publisher;
- GRANT INSERT ON tide.tide_outbox_messages TO tide_publisher;
+ REVOKE INSERT ON tide.tide_outbox_messages FROM tide_publisher;
  IF to_regclass('tide.tide_outbox_messages_id_seq') IS NOT NULL THEN
-   GRANT USAGE, SELECT ON SEQUENCE tide.tide_outbox_messages_id_seq
-     TO tide_publisher;
+   REVOKE ALL ON SEQUENCE tide.tide_outbox_messages_id_seq FROM tide_publisher;
  END IF;
 
  GRANT SELECT ON tide.tide_outbox_config, tide.tide_outbox_messages,
