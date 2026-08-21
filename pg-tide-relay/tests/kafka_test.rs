@@ -59,7 +59,19 @@ async fn test_kafka_forward_sink_delivers_and_flushes() {
         .expect("Kafka topic creation result")
         .expect("Kafka topic creation");
 
-    let mut sink = KafkaSink::new(&brokers, topic).expect("create Kafka sink");
+    let mut sink = KafkaSink::new_with_options(pg_tide_relay::sink::kafka::KafkaOptions {
+        brokers: &brokers,
+        topic_template: topic.to_string(),
+        security_protocol: "plaintext",
+        allow_insecure: true,
+        ssl_ca_location: None,
+        ssl_certificate_location: None,
+        ssl_key_location: None,
+        sasl_mechanism: None,
+        sasl_username: None,
+        sasl_password: None,
+    })
+    .expect("create Kafka sink");
     let messages: Vec<RelayMessage> = (1..=10)
         .map(|i| {
             RelayMessage::new_reverse(

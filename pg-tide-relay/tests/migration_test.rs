@@ -62,6 +62,7 @@ const V0_47_0_TO_0_48_0: &str = include_str!("../../sql/pg_tide--0.47.0--0.48.0.
 const V0_48_0_TO_0_49_0: &str = include_str!("../../sql/pg_tide--0.48.0--0.49.0.sql");
 const V0_49_0_TO_0_50_0: &str = include_str!("../../sql/pg_tide--0.49.0--0.50.0.sql");
 const V0_50_0_TO_0_51_0: &str = include_str!("../../sql/pg_tide--0.50.0--0.51.0.sql");
+const V0_51_0_TO_0_52_0: &str = include_str!("../../sql/pg_tide--0.51.0--0.52.0.sql");
 
 /// All upgrade scripts in order.
 const UPGRADES: &[(&str, &str)] = &[
@@ -115,6 +116,7 @@ const UPGRADES: &[(&str, &str)] = &[
     ("0.48.0 → 0.49.0", V0_48_0_TO_0_49_0),
     ("0.49.0 → 0.50.0", V0_49_0_TO_0_50_0),
     ("0.50.0 → 0.51.0", V0_50_0_TO_0_51_0),
+    ("0.51.0 → 0.52.0", V0_51_0_TO_0_52_0),
 ];
 
 async fn connect_with_retry(url: &str) -> tokio_postgres::Client {
