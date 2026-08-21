@@ -69,7 +69,9 @@ def main() -> int:
     build = subprocess.run(
         [
             docker,
+            "buildx",
             "build",
+            "--load",
             "--pull",
             "--file",
             str(HARNESS / "Dockerfile"),

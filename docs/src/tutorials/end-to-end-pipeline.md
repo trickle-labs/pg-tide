@@ -179,7 +179,7 @@ SELECT tide.relay_set_inbox_v2(
     'inbox', 'payments',
     'source', 'nats',
     'config', jsonb_build_object(
-      'url', 'nats://localhost:4222',
+      'url', 'tls://nats.example:4222',
       'subject', 'payments.confirmed',
       'queue_group', 'pg-tide-payments'
     ),

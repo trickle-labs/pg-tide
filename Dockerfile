@@ -7,7 +7,7 @@ FROM --platform=$BUILDPLATFORM rust:1.97.1-alpine AS builder
 ARG TARGETARCH
 ARG CARGO_FEATURES=core
 
-RUN apk add --no-cache bash g++ make musl-dev pkgconfig openssl-dev openssl-libs-static git
+RUN apk add --no-cache bash ca-certificates g++ make musl-dev pkgconfig openssl-dev openssl-libs-static git
 
 # Map Docker's TARGETARCH to the Rust musl target triple.
 RUN case "$TARGETARCH" in \

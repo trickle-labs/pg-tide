@@ -173,6 +173,12 @@ fn is_forbidden_hostname(host: &str) -> bool {
                     | "ip6-localhost"
                     | "ip6-loopback"
                     | "metadata.google.internal"
+                    | "metadata.google.internal."
+                    | "metadata.azure.com"
+                    | "metadata.azure.com."
+                    | "instance-data.ec2.internal"
+                    | "instance-data.ec2.internal."
+                    | "metadata"
             )
         })
 }
@@ -290,6 +296,17 @@ mod tests {
                 validate_url(&format!("https://{host}/"), "test", false, true).is_err(),
                 "{host} should be blocked"
             );
+        }
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_private_and_metadata_addresses() {
+        for host in [
+            "[::ffff:10.0.0.1]",
+            "[::ffff:169.254.169.254]",
+            "metadata.azure.com",
+        ] {
+            assert!(validate_url(&format!("https://{host}/"), "test", false, true).is_err());
         }
     }
 

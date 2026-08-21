@@ -237,7 +237,32 @@ fn validate_connector_fields(
     if let Some(descriptor) = descriptors::source_type_to_descriptor(connector)
         .or_else(|| descriptors::sink_type_to_descriptor(connector))
     {
-        return reject_keys(name, field, values, descriptor.config_fields);
+        let extra = match connector {
+            "nats" => &[
+                "allow_insecure",
+                "token",
+                "username",
+                "password",
+                "credentials_file",
+                "tls_ca_file",
+                "tls_client_cert",
+                "tls_client_key",
+            ][..],
+            "kafka" => &[
+                "security_protocol",
+                "allow_insecure",
+                "ssl_ca_location",
+                "ssl_certificate_location",
+                "ssl_key_location",
+                "sasl_mechanism",
+                "sasl_username",
+                "sasl_password",
+            ][..],
+            _ => &[][..],
+        };
+        let mut allowed = descriptor.config_fields.to_vec();
+        allowed.extend_from_slice(extra);
+        return reject_keys(name, field, values, &allowed);
     }
     Err(invalid(
         name,
@@ -264,6 +289,58 @@ fn validate_supported_sink(
         }
         "nats" => {
             require_string_field(name, "sink.url", values, true)?;
+            optional_bool_field(name, "sink.allow_insecure", values)?;
+            let allow_insecure = values
+                .get("allow_insecure")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let scheme = values
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .split(':')
+                .next()
+                .unwrap_or_default();
+            if scheme != "tls" && !(allow_insecure && scheme == "nats") {
+                return Err(invalid(
+                    name,
+                    "sink.url must use tls:// unless sink.allow_insecure is true",
+                ));
+            }
+            for field in ["token", "password"] {
+                optional_secret_reference_field(name, &format!("sink.{field}"), values)?;
+            }
+            for field in [
+                "username",
+                "credentials_file",
+                "tls_ca_file",
+                "tls_client_cert",
+                "tls_client_key",
+            ] {
+                optional_non_empty_string_field(name, &format!("sink.{field}"), values)?;
+            }
+            if values.contains_key("token")
+                && (values.contains_key("username")
+                    || values.contains_key("password")
+                    || values.contains_key("credentials_file"))
+            {
+                return Err(invalid(
+                    name,
+                    "NATS authentication methods are mutually exclusive",
+                ));
+            }
+            if values.contains_key("username") != values.contains_key("password") {
+                return Err(invalid(
+                    name,
+                    "NATS username and password must be supplied together",
+                ));
+            }
+            if values.contains_key("tls_client_cert") != values.contains_key("tls_client_key") {
+                return Err(invalid(
+                    name,
+                    "NATS TLS client certificate and key must be supplied together",
+                ));
+            }
             optional_string_field(name, "sink.subject", values)?;
             optional_string_field(name, "sink.subject_template", values)?;
             if values.contains_key("subject") && values.contains_key("subject_template") {
@@ -285,6 +362,45 @@ fn validate_supported_sink(
         }
         "kafka" => {
             require_string_field(name, "sink.brokers", values, true)?;
+            optional_bool_field(name, "sink.allow_insecure", values)?;
+            let protocol = values
+                .get("security_protocol")
+                .and_then(Value::as_str)
+                .unwrap_or("ssl");
+            if !matches!(
+                protocol,
+                "ssl" | "sasl_ssl" | "plaintext" | "sasl_plaintext"
+            ) {
+                return Err(invalid(name, "sink.security_protocol is invalid"));
+            }
+            if matches!(protocol, "plaintext" | "sasl_plaintext")
+                && !values
+                    .get("allow_insecure")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            {
+                return Err(invalid(
+                    name,
+                    "plaintext Kafka requires sink.allow_insecure=true",
+                ));
+            }
+            for field in [
+                "ssl_ca_location",
+                "ssl_certificate_location",
+                "ssl_key_location",
+                "sasl_username",
+            ] {
+                optional_non_empty_string_field(name, &format!("sink.{field}"), values)?;
+            }
+            optional_secret_reference_field(name, "sink.sasl_password", values)?;
+            if let Some(mechanism) = values.get("sasl_mechanism") {
+                if !matches!(
+                    mechanism.as_str(),
+                    Some("PLAIN" | "SCRAM-SHA-256" | "SCRAM-SHA-512")
+                ) {
+                    return Err(invalid(name, "unsupported Kafka sasl_mechanism"));
+                }
+            }
             if values.contains_key("topic") && values.contains_key("topic_template") {
                 return Err(invalid(
                     name,
@@ -665,6 +781,14 @@ pub fn pipeline_schema() -> Value {
                 "required": ["url"],
                 "properties": {
                     "url": {"type": "string", "minLength": 1},
+                    "allow_insecure": {"type": "boolean", "default": false},
+                    "token": {"type": "string", "pattern": "^\\$\\{(?:env|file):[^}]+\\}$"},
+                    "username": {"type": "string", "minLength": 1},
+                    "password": {"type": "string", "pattern": "^\\$\\{(?:env|file):[^}]+\\}$"},
+                    "credentials_file": {"type": "string", "minLength": 1},
+                    "tls_ca_file": {"type": "string", "minLength": 1},
+                    "tls_client_cert": {"type": "string", "minLength": 1},
+                    "tls_client_key": {"type": "string", "minLength": 1},
                     "subject": {"type": "string", "minLength": 1},
                     "subject_template": {
                         "type": "string",
@@ -681,6 +805,14 @@ pub fn pipeline_schema() -> Value {
                 "required": ["brokers"],
                 "properties": {
                     "brokers": {"type": "string", "minLength": 1},
+                    "security_protocol": {"type": "string", "enum": ["ssl", "sasl_ssl", "plaintext", "sasl_plaintext"], "default": "ssl"},
+                    "allow_insecure": {"type": "boolean", "default": false},
+                    "ssl_ca_location": {"type": "string", "minLength": 1},
+                    "ssl_certificate_location": {"type": "string", "minLength": 1},
+                    "ssl_key_location": {"type": "string", "minLength": 1},
+                    "sasl_mechanism": {"type": "string", "enum": ["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"]},
+                    "sasl_username": {"type": "string", "minLength": 1},
+                    "sasl_password": {"type": "string", "pattern": "^\\$\\{(?:env|file):[^}]+\\}$"},
                     "topic": {"type": "string", "minLength": 1},
                     "topic_template": {
                         "type": "string",
@@ -819,7 +951,7 @@ mod tests {
                 "source_type": "outbox",
                 "source": {"outbox": "orders"},
                 "sink_type": "nats",
-                "sink": {"url": "nats://localhost"},
+                "sink": {"url": "tls://localhost"},
                 "batch_size": 101
             }),
         )
@@ -861,14 +993,17 @@ mod tests {
                 "source_type": "outbox",
                 "source": {"outbox": "orders"},
                 "sink_type": "nats",
-                "sink": {"url": "${env:NATS_URL}"}
+                "sink": {
+                    "url": "tls://localhost",
+                    "token": "${env:NATS_TOKEN}"
+                }
             }),
         )
         .unwrap();
         assert_eq!(doc.schema_version, 1);
         assert_eq!(
             doc.canonical_json().unwrap()["sink"]["url"],
-            "${env:NATS_URL}"
+            "tls://localhost"
         );
     }
 

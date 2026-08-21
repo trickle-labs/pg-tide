@@ -47,7 +47,7 @@ SELECT tide.relay_set_outbox_v2(
     'outbox', 'order_events',
     'sink_type', 'nats',
     'config', '{
-        "url": "nats://nats-us:4222",
+        "url": "tls://nats-us:4222",
         "subject_template": "orders.{op}.us-east",
         "stream": "ORDERS"
     }'::jsonb
@@ -64,7 +64,7 @@ SELECT tide.relay_set_inbox_v2(
     'inbox', 'replicated_orders',
     'source', 'nats',
     'config', '{
-        "url": "nats://nats-us:4222",
+        "url": "tls://nats-us:4222",
         "subject": "orders.*.eu-west",
         "stream": "ORDERS",
         "consumer_group": "us-east-replica",
@@ -92,7 +92,7 @@ SELECT tide.relay_set_outbox_v2(
     'outbox', 'order_events',
     'sink_type', 'nats',
     'config', '{
-        "url": "nats://nats-eu:4222",
+        "url": "tls://nats-eu:4222",
         "subject_template": "orders.{op}.eu-west",
         "stream": "ORDERS"
     }'::jsonb
@@ -109,7 +109,7 @@ SELECT tide.relay_set_inbox_v2(
     'inbox', 'replicated_orders',
     'source', 'nats',
     'config', '{
-        "url": "nats://nats-eu:4222",
+        "url": "tls://nats-eu:4222",
         "subject": "orders.*.us-east",
         "stream": "ORDERS",
         "consumer_group": "eu-west-replica",
@@ -129,7 +129,7 @@ gateway {
   name: "us-east"
   listen: "0.0.0.0:7222"
   gateways: [
-    { name: "eu-west", urls: ["nats://nats-eu:7222"] }
+    { name: "eu-west", urls: ["tls://nats-eu:7222"] }
   ]
 }
 
@@ -138,7 +138,7 @@ gateway {
   name: "eu-west"
   listen: "0.0.0.0:7222"
   gateways: [
-    { name: "us-east", urls: ["nats://nats-us:7222"] }
+    { name: "us-east", urls: ["tls://nats-us:7222"] }
   ]
 }
 ```

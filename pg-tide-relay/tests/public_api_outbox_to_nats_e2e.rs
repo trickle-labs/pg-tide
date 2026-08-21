@@ -196,7 +196,7 @@ async fn public_api_outbox_to_nats_e2e() {
         "name": "orders-nats",
         "outbox": "orders",
         "sink_type": "nats",
-        "config": { "url": nats_url, "subject": SUBJECT },
+        "config": { "url": nats_url, "allow_insecure": true, "subject": SUBJECT },
         "batch_size": 50
     });
     client
@@ -367,7 +367,7 @@ async fn public_api_orders_only_ignores_other_outbox() {
         "name": "orders-nats",
         "outbox": "orders",
         "sink_type": "nats",
-        "config": { "url": nats_url, "subject": SUBJECT },
+        "config": { "url": nats_url, "allow_insecure": true, "subject": SUBJECT },
         "batch_size": 50
     });
     client

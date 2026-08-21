@@ -71,10 +71,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_SHA: ${{ github.sha }}
         run: |
-          if [[ "$GITHUB_REF_NAME" != "v0.47.0" ]]; then
-            echo "v0.47.0 evidence gate is not applicable to ${GITHUB_REF_NAME}"
-            exit 0
-          fi
+          git fetch --force --tags origin
+          git verify-tag "$GITHUB_REF_NAME"
+          test "$(git rev-list -n1 "$GITHUB_REF_NAME")" = "$TAG_SHA"
           python3 - <<'PY'
           import json
           import os
@@ -82,29 +81,29 @@ jobs:
           from pathlib import Path
 
           root = Path("release-evidence")
+          tag = os.environ["GITHUB_REF_NAME"]
+          release_name = f"{tag}-index.json"
+          if not (root / release_name).is_file():
+              raise SystemExit(f"missing release evidence: {release_name}")
 
           def load(name):
               value = json.loads((root / name).read_text(encoding="utf-8"))
               assert value["schema_version"] == 1
-              assert value["release"] == "v0.47.0"
+              assert value["release"] == tag
               return value
 
-          release = load("v0.47.0-index.json")
-          pilots = load("v0.47.0-pilots.json")
-          reviews = load("v0.47.0-reviews.json")
-          if release["status"] == "pending":
-              print("release evidence is pending; continuing without the readiness gate")
-              raise SystemExit(0)
+          release = load(release_name)
           assert release["status"] == "ready", "release evidence is not ready"
           assert release["candidate"]["commit"] == os.environ["TAG_SHA"]
           assert release["open_blockers"] == 0
           assert release["release_manager"]["status"] == "approved"
-          assert all(p["status"] == "complete" for p in pilots["required_profiles"])
-          assert all(p["operator_signoff"]["status"] == "approved" for p in pilots["required_profiles"])
-          assert all(r["status"] == "approved" for r in reviews["required_disciplines"])
-          assert all(r["approval"]["status"] == "approved" for r in reviews["required_disciplines"])
-          assert all(p["candidate_commit"] == os.environ["TAG_SHA"] for p in pilots["required_profiles"])
-          assert all(r["candidate_commit"] == os.environ["TAG_SHA"] for r in reviews["required_disciplines"])
+          if tag == "v0.52.0":
+              security = load("v0.52.0-security.json")
+              review = load("v0.52.0-security-review.json")
+              response = load("v0.52.0-vulnerability-response.json")
+              assert security["status"] == "ready"
+              assert review["status"] == "approved"
+              assert response["status"] == "complete"
 
           issues = json.loads(subprocess.check_output([
               "gh", "issue", "list", "--state", "open", "--search", "is:issue",

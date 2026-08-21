@@ -57,7 +57,7 @@ SELECT tide.relay_set_outbox_v2(
     'name', 'forward-orders',
     'outbox', 'orders',
     'sink_type', 'nats',
-    'config', '{"url":"nats://broker:4222","subject":"orders.events"}'::jsonb
+    'config', '{"url":"tls://nats.example:4222","subject":"orders.events"}'::jsonb
   )
 );
 
@@ -67,7 +67,7 @@ SELECT tide.relay_set_inbox_v2(
     'name', 'reverse-fulfilments',
     'inbox', 'nats',
     'source', 'fulfilments',
-    'config', '{"url":"nats://broker:4222","subject":"fulfilments.events"}'::jsonb
+    'config', '{"url":"tls://nats.example:4222","subject":"fulfilments.events"}'::jsonb
   )
 );
 ```

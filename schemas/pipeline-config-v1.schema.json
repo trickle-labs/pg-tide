@@ -79,7 +79,49 @@
         ]
       },
       "properties": {
+        "allow_insecure": {
+          "default": false,
+          "type": "boolean"
+        },
         "brokers": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sasl_mechanism": {
+          "enum": [
+            "PLAIN",
+            "SCRAM-SHA-256",
+            "SCRAM-SHA-512"
+          ],
+          "type": "string"
+        },
+        "sasl_password": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
+        "sasl_username": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "security_protocol": {
+          "default": "ssl",
+          "enum": [
+            "ssl",
+            "sasl_ssl",
+            "plaintext",
+            "sasl_plaintext"
+          ],
+          "type": "string"
+        },
+        "ssl_ca_location": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "ssl_certificate_location": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "ssl_key_location": {
           "minLength": 1,
           "type": "string"
         },
@@ -108,6 +150,18 @@
         ]
       },
       "properties": {
+        "allow_insecure": {
+          "default": false,
+          "type": "boolean"
+        },
+        "credentials_file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "password": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
         "subject": {
           "minLength": 1,
           "type": "string"
@@ -117,7 +171,27 @@
           "minLength": 1,
           "type": "string"
         },
+        "tls_ca_file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "tls_client_cert": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "tls_client_key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "token": {
+          "pattern": "^\\$\\{(?:env|file):[^}]+\\}$",
+          "type": "string"
+        },
         "url": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "username": {
           "minLength": 1,
           "type": "string"
         }

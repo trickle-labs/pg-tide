@@ -388,12 +388,5 @@ CREATE TABLE IF NOT EXISTS tide.relay_limits (
 COMMENT ON TABLE tide.relay_limits IS
     'TIDE-PERF-1 (v0.13.0): Per-relay-group connection and pipeline limits.';
 
--- Publishing is guarded by the Rust function's session_user and ACL checks;
--- callers must not receive a direct table or sequence bypass.
-ALTER FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB)
-    SECURITY DEFINER
-    SET search_path = pg_catalog, tide;
-REVOKE ALL ON FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB) FROM PUBLIC;
-
 COMMENT ON EXTENSION pg_tide IS
     'pg_tide: transactional outbox, idempotent inbox, relay catalog — v0.52.0';

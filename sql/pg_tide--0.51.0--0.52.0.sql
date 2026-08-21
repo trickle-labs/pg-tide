@@ -27,10 +27,24 @@ END $security$;
 
 -- The Rust implementation remains the only publish implementation. Its
 -- SECURITY DEFINER owner supplies table-write privilege after its guards pass.
-ALTER FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB)
-    SECURITY DEFINER
-    SET search_path = pg_catalog, tide;
-REVOKE ALL ON FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB) FROM PUBLIC;
+DO $publish_security$
+BEGIN
+    IF to_regprocedure('tide.outbox_publish(text,jsonb,jsonb)') IS NOT NULL THEN
+        ALTER FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB)
+            SECURITY DEFINER
+            SET search_path = pg_catalog, tide;
+        REVOKE ALL ON FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB) FROM PUBLIC;
+    END IF;
+END $publish_security$;
+
+DO $publisher_grant$
+BEGIN
+    IF to_regrole('tide_publisher') IS NOT NULL
+       AND to_regprocedure('tide.outbox_publish(text,jsonb,jsonb)') IS NOT NULL THEN
+        GRANT EXECUTE ON FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB)
+            TO tide_publisher;
+    END IF;
+END $publisher_grant$;
 
 DO $legacy_grants$
 DECLARE

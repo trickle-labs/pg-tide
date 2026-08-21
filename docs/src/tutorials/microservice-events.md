@@ -69,7 +69,7 @@ SELECT tide.relay_set_outbox_v2(
     'outbox', 'order_events',
     'sink_type', 'nats',
     'config', '{
-        "url": "nats://nats:4222",
+        "url": "tls://nats:4222",
         "subject_template": "events.orders.{op}"
     }'::jsonb
   )
@@ -93,7 +93,7 @@ SELECT tide.relay_set_inbox_v2(
     'inbox', 'payment_triggers',
     'source', 'nats',
     'config', '{
-        "url": "nats://nats:4222",
+        "url": "tls://nats:4222",
         "subject": "events.orders.>",
         "consumer_group": "payment-service",
         "durable_name": "payment-service"
@@ -127,7 +127,7 @@ SELECT tide.relay_set_inbox_v2(
     'inbox', 'shipping_triggers',
     'source', 'nats',
     'config', '{
-        "url": "nats://nats:4222",
+        "url": "tls://nats:4222",
         "subject": "events.orders.>",
         "consumer_group": "shipping-service",
         "durable_name": "shipping-service",

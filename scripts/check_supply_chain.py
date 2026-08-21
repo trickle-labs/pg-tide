@@ -27,10 +27,18 @@ def run(command: list[str], *, offline: bool) -> str:
         raise SystemExit(f"command failed: {' '.join(command)}{hint}\n{exc.output}") from exc
 
 
-def profiles() -> list[tuple[str, list[str]]]:
+def profiles() -> list[tuple[str, str, list[str]]]:
     registry = tomllib.loads((ROOT / "connectors.toml").read_text(encoding="utf-8"))
     names = {profile for row in registry["connector"] for profile in row.get("profiles", [])}
-    return [("core", ["core"]), ("core-kafka", ["core-kafka"]), ("pg18", [])] if names else []
+    result = []
+    if "core" in names:
+        result.append(("core", "pg-tide-relay", ["--no-default-features", "--features", "core"]))
+    if "core-kafka" in names:
+        result.append(
+            ("core-kafka", "pg-tide-relay", ["--no-default-features", "--features", "core-kafka"])
+        )
+    result.append(("pg18", "pg-tide-ext", ["--features", "pg18"]))
+    return result
 
 
 def validate_exceptions() -> None:
@@ -59,17 +67,48 @@ def main() -> int:
     args = parser.parse_args()
     validate_exceptions()
     report = {"schema_version": 1, "locked": True, "offline": args.offline, "profiles": []}
-    for name, features in profiles():
-        item = {"profile": name, "features": features}
-        if args.static or name == "pg18":
+    for name, package, feature_args in profiles():
+        features = [name]
+        item = {
+            "profile": name,
+            "package": package,
+            "features": features,
+            "feature_args": feature_args,
+        }
+        if args.static:
             item["status"] = "static-only"
         else:
-            tree = run(["cargo", "tree", "--package", "pg-tide-relay", "--no-default-features", "--features", features[0], "--locked", "--edges", "normal"], offline=args.offline)
+            tree = run(
+                [
+                    "cargo",
+                    "tree",
+                    "--package",
+                    package,
+                    *feature_args,
+                    "--locked",
+                    "--edges",
+                    "normal",
+                ],
+                offline=args.offline,
+            )
             digest = hashlib.sha256(tree.encode()).hexdigest()
-            forbidden = [name for name in ("kms-aws", "kms-gcp", "kms-vault") if name in tree]
+            forbidden = [
+                package
+                for package in ("kms-aws", "kms-gcp", "kms-vault")
+                if package in tree
+            ]
             if forbidden:
                 raise SystemExit(f"{name}: forbidden production dependencies: {', '.join(forbidden)}")
-            item.update(status="checked", graph_sha256=digest, graph_lines=len(tree.splitlines()))
+            report_path = args.report or ROOT / "target/supply-chain/report.json"
+            graph_path = report_path.parent / f"{name}.cargo-tree.txt"
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+            graph_path.write_text(tree, encoding="utf-8")
+            item.update(
+                status="checked",
+                graph_report=graph_path.as_posix(),
+                graph_sha256=digest,
+                graph_lines=len(tree.splitlines()),
+            )
         report["profiles"].append(item)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)

@@ -164,6 +164,7 @@ test-unit:
 # Security-focused tests, including the no-PostgreSQL v0.44 contract checks.
 # Service-backed privilege and migration tests remain in test-integration.
 test-security:
+    python3 scripts/check_security_contract.py
     cargo test --package {{PG_TIDE_RELAY}} --lib --no-default-features --features core -- --test-threads=4
     cargo test --package {{PG_TIDE_RELAY}} --bins -- --test-threads=4
     cargo test --package {{PG_TIDE_RELAY}} --test v044_validation_test -- --test-threads=1

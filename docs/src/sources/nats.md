@@ -11,7 +11,7 @@ SELECT tide.relay_set_inbox_v2(
     'inbox', 'incoming_events',
     'source', 'nats',
     'config', '{
-        "url": "nats://localhost:4222",
+        "url": "tls://nats.example:4222",
         "subject": "events.>",
         "durable_name": "pg-tide-consumer",
         "stream": "EVENTS",

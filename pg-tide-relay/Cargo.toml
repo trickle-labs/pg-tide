@@ -16,7 +16,7 @@ path = "src/main.rs"
 [features]
 # BEGIN GENERATED CONNECTOR PROFILES
 default = ["core"]
-core = ["nats", "stdout", "webhook"]
+core = ["native-tls", "nats", "stdout", "webhook"]
 core-kafka = ["core", "kafka"]
 # END GENERATED CONNECTOR PROFILES
 

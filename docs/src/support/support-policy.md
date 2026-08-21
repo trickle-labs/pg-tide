@@ -18,12 +18,12 @@ and its source of truth, [`connectors.toml`](../../../connectors.toml).
 Maturity is direction-aware. A supported outbound connector does not make its
 inbound path supported.
 
-## v0.51.0 baseline
+## v0.52.0 baseline
 
 - PostgreSQL 18 is the supported PostgreSQL version.
 - The v1 extension upgrade floor is v0.47.0 through the packaged adjacent
   migration chain.
-- The supported rolling relay window is v0.50.0 and v0.51.0.
+- The supported rolling relay window is v0.51.0 and v0.52.0.
 - `core` is the normal production profile; `core-kafka` is an explicit
   opt-in profile for Apache Kafka.
 - Production-supported destinations are PostgreSQL inbox, NATS JetStream

@@ -83,15 +83,9 @@ BEGIN
  LOOP
    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO tide_admin', table_name);
  END LOOP;
- FOR table_name IN
-   SELECT p.oid::regprocedure::text
-   FROM pg_catalog.pg_proc p
-   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'tide'
-     AND p.proname IN ('outbox_publish', 'outbox_publish_large')
- LOOP
-   EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO tide_publisher', table_name);
- END LOOP;
+ IF to_regprocedure('tide.outbox_publish(text,jsonb,jsonb)') IS NOT NULL THEN
+   GRANT EXECUTE ON FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB) TO tide_publisher;
+ END IF;
  FOR table_name IN
    SELECT p.oid::regprocedure::text
    FROM pg_catalog.pg_proc p

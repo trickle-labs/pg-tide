@@ -76,11 +76,21 @@ def archive_entries(path: Path) -> list[tuple[str, int, bool, bytes | None]]:
             return rows
     if path.suffix == ".zip":
         with zipfile.ZipFile(path) as archive:
-            return [
-                (item.filename, item.external_attr >> 16 or (0o755 if item.filename.endswith(".exe") else 0o644), False, archive.read(item))
-                for item in archive.infolist()
-                if not item.is_dir()
-            ]
+            rows = []
+            for item in archive.infolist():
+                if item.is_dir():
+                    continue
+                mode = item.external_attr >> 16
+                is_link = stat.S_ISLNK(mode)
+                rows.append(
+                    (
+                        item.filename,
+                        mode or (0o755 if item.filename.endswith(".exe") else 0o644),
+                        is_link,
+                        archive.read(item),
+                    )
+                )
+            return rows
     fail(f"unsupported artifact type: {path}")
 
 
