@@ -68,7 +68,7 @@ mod tests {
         assert_eq!(value["relay_version"], "0.51.0");
         assert_eq!(value["policy_version"], "v1");
         assert_eq!(value["compatibility_class"], "incompatible");
-        assert_eq!(value["supported_range"], "0.50.0..=0.51.0");
+        assert_eq!(value["supported_range"], "0.51.0..=0.52.0");
         assert!(value["next_action"].as_str().is_some());
     }
 }

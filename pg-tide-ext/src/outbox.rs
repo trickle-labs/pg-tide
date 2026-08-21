@@ -235,10 +235,20 @@ fn outbox_create_if_not_exists_impl(
 /// This is the core outbox write function. It runs in the caller's current
 /// transaction, providing the same atomicity as a direct INSERT.
 /// `pg_notify('tide_outbox_new', name)` fires after the INSERT.
-#[pg_extern(schema = "tide")]
+#[pg_extern(schema = "tide", security_definer)]
 pub fn outbox_publish(p_name: &str, p_payload: pgrx::JsonB, p_headers: pgrx::JsonB) {
     outbox_publish_impl(p_name, p_payload, p_headers).unwrap_or_else(|e| pgrx::error!("{}", e))
 }
+
+pgrx::extension_sql!(
+    r#"
+ALTER FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB)
+    SET search_path = pg_catalog, tide;
+REVOKE ALL ON FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB) FROM PUBLIC;
+"#,
+    name = "outbox_publish_security",
+    requires = [outbox_publish]
+);
 
 fn outbox_publish_impl(
     name: &str,

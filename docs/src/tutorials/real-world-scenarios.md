@@ -45,7 +45,7 @@ SELECT tide.relay_set_outbox_v2(
     'outbox', 'orders',
     'sink_type', 'nats',
     'config', jsonb_build_object(
-      'url', 'nats://nats:4222',
+      'url', 'tls://nats:4222',
       'subject', 'warehouse.orders.{event_type}'
     ),
     'batch_size', 50
@@ -328,7 +328,7 @@ SELECT tide.relay_set_outbox_v2(
     'outbox', 'orders',
     'sink_type', 'nats',
     'config', jsonb_build_object(
-      'url', 'nats://nats:4222',
+      'url', 'tls://nats:4222',
       'subject', 'orders.{event_type}'
     )
   )
@@ -345,7 +345,7 @@ SELECT tide.relay_set_inbox_v2(
     'inbox', 'order-results',
     'source', 'nats',
     'config', jsonb_build_object(
-      'url', 'nats://nats:4222',
+      'url', 'tls://nats:4222',
       'subject', 'orders.*.completed',
       'queue_group', 'order-svc'
     )
@@ -364,7 +364,7 @@ SELECT tide.relay_set_inbox_v2(
     'inbox', 'inventory-requests',
     'source', 'nats',
     'config', jsonb_build_object(
-      'url', 'nats://nats:4222',
+      'url', 'tls://nats:4222',
       'subject', 'orders.order.confirmed',
       'queue_group', 'inventory-svc'
     )
@@ -380,7 +380,7 @@ SELECT tide.relay_set_outbox_v2(
     'outbox', 'inventory-results',
     'sink_type', 'nats',
     'config', jsonb_build_object(
-      'url', 'nats://nats:4222',
+      'url', 'tls://nats:4222',
       'subject', 'orders.inventory.completed'
     )
   )

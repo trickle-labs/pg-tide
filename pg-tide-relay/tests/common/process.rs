@@ -28,7 +28,7 @@ impl RelayProcess {
                 "run",
             ])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap_or_else(|error| panic!("start relay binary {binary}: {error}"));
         Self { child: Some(child) }

@@ -47,7 +47,7 @@ pub fn parse_reference(value: &str) -> Result<SecretRef, RelayError> {
         .strip_prefix("${file:")
         .and_then(|s| s.strip_suffix('}'))
     {
-        if !path.is_empty() && !path.contains('\0') {
+        if Path::new(path).is_absolute() && !path.contains('\0') {
             return Ok(SecretRef::File(path.to_string()));
         }
     }
@@ -78,11 +78,7 @@ pub fn load_file(path: &Path) -> Result<SecretString, RelayError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(if cfg!(target_os = "macos") {
-            0x100
-        } else {
-            0x400
-        });
+        opts.custom_flags(libc::O_NOFOLLOW);
     }
     let file = opts.open(path).map_err(|e| read_err(path, e.to_string()))?;
     let meta = file.metadata().map_err(|e| read_err(path, e.to_string()))?;
@@ -135,6 +131,7 @@ mod tests {
         );
         assert!(parse_reference("${env:bad-name}").is_err());
         assert!(parse_reference("${file:}").is_err());
+        assert!(parse_reference("${file:relative-secret}").is_err());
         assert!(parse_reference("plain").is_err());
     }
     #[test]
@@ -142,5 +139,21 @@ mod tests {
         let s = SecretString::new("canary");
         assert_eq!(s.to_string(), "[REDACTED]");
         assert!(!format!("{:?}", s).contains("canary"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_loader_uses_an_absolute_nofollow_path() {
+        use std::os::unix::fs::symlink;
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let secret_path = directory.path().join("secret");
+        let link_path = directory.path().join("link");
+        std::fs::write(&secret_path, "canary\n").unwrap();
+        std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&secret_path, &link_path).unwrap();
+        assert_eq!(load_file(&secret_path).unwrap().expose(), "canary");
+        assert!(load_file(&link_path).is_err());
     }
 }

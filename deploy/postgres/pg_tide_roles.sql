@@ -57,10 +57,9 @@ BEGIN
  END LOOP;
 
  GRANT SELECT ON tide.tide_outbox_config, tide.outbox_publishers TO tide_publisher;
- GRANT INSERT ON tide.tide_outbox_messages TO tide_publisher;
+ REVOKE INSERT ON tide.tide_outbox_messages FROM tide_publisher;
  IF to_regclass('tide.tide_outbox_messages_id_seq') IS NOT NULL THEN
-   GRANT USAGE, SELECT ON SEQUENCE tide.tide_outbox_messages_id_seq
-     TO tide_publisher;
+   REVOKE ALL ON SEQUENCE tide.tide_outbox_messages_id_seq FROM tide_publisher;
  END IF;
 
  GRANT SELECT ON tide.tide_outbox_config, tide.tide_outbox_messages,
@@ -84,15 +83,9 @@ BEGIN
  LOOP
    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO tide_admin', table_name);
  END LOOP;
- FOR table_name IN
-   SELECT p.oid::regprocedure::text
-   FROM pg_catalog.pg_proc p
-   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'tide'
-     AND p.proname IN ('outbox_publish', 'outbox_publish_large')
- LOOP
-   EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO tide_publisher', table_name);
- END LOOP;
+ IF to_regprocedure('tide.outbox_publish(text,jsonb,jsonb)') IS NOT NULL THEN
+   GRANT EXECUTE ON FUNCTION tide.outbox_publish(TEXT, JSONB, JSONB) TO tide_publisher;
+ END IF;
  FOR table_name IN
    SELECT p.oid::regprocedure::text
    FROM pg_catalog.pg_proc p

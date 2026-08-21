@@ -331,6 +331,8 @@ def profile_lines(rows: list[dict], features: set[str]) -> str:
             feature = row.get("cargo_feature")
             if feature and feature not in core:
                 core.append(feature)
+    if "native-tls" in features:
+        core.append("native-tls")
     core.sort()
     return "\n".join(
         [

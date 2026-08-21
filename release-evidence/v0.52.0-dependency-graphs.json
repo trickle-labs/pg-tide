@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "release": "v0.52.0",
+  "status": "pending",
+  "candidate": {"commit": null},
+  "profiles": [
+    {
+      "profile": "core",
+      "command": "cargo tree --package pg-tide-relay --no-default-features --features core --locked --edges normal",
+      "report": null,
+      "sha256": null
+    },
+    {
+      "profile": "core-kafka",
+      "command": "cargo tree --package pg-tide-relay --no-default-features --features core-kafka --locked --edges normal",
+      "report": null,
+      "sha256": null
+    },
+    {
+      "profile": "pg18",
+      "command": "cargo tree --package pg-tide-ext --features pg18 --locked --edges normal",
+      "report": null,
+      "sha256": null
+    }
+  ]
+}

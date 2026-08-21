@@ -37,7 +37,7 @@ SELECT tide.relay_set_outbox_v2(
     'outbox', 'orders',
     'sink_type', 'nats',
     'config', jsonb_build_object(
-      'url', 'nats://localhost:4222',
+      'url', 'tls://nats.example:4222',
       'subject_template', 'orders.{event_type}'
     ),
     'batch_size', 200

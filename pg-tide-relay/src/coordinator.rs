@@ -2252,7 +2252,22 @@ async fn build_sink(
             let subject = pipeline.opt_str(&["sink", "subject"]);
             let subject_template = pipeline.opt_str(&["sink", "subject_template"]);
             Ok(Box::new(
-                crate::sink::nats::NatsSink::new(url, subject, subject_template).await?,
+                crate::sink::nats::NatsSink::new_with_options(crate::sink::nats::NatsOptions {
+                    url,
+                    subject,
+                    subject_template,
+                    allow_insecure: pipeline
+                        .opt_bool(&["sink", "allow_insecure"])
+                        .unwrap_or(false),
+                    token: pipeline.opt_str(&["sink", "token"]),
+                    username: pipeline.opt_str(&["sink", "username"]),
+                    password: pipeline.opt_str(&["sink", "password"]),
+                    credentials_file: pipeline.opt_str(&["sink", "credentials_file"]),
+                    tls_ca_file: pipeline.opt_str(&["sink", "tls_ca_file"]),
+                    tls_client_cert: pipeline.opt_str(&["sink", "tls_client_cert"]),
+                    tls_client_key: pipeline.opt_str(&["sink", "tls_client_key"]),
+                })
+                .await?,
             ))
         }
         #[cfg(feature = "kafka")]
@@ -2262,9 +2277,24 @@ async fn build_sink(
                 .opt_str(&["sink", "topic_template"])
                 .or_else(|| pipeline.opt_str(&["sink", "topic"]))
                 .unwrap_or("{stream_table}");
-            Ok(Box::new(crate::sink::kafka::KafkaSink::new(
-                brokers,
-                topic_template,
+            Ok(Box::new(crate::sink::kafka::KafkaSink::new_with_options(
+                crate::sink::kafka::KafkaOptions {
+                    brokers,
+                    topic_template: topic_template.to_string(),
+                    security_protocol: pipeline
+                        .opt_str(&["sink", "security_protocol"])
+                        .unwrap_or("ssl"),
+                    allow_insecure: pipeline
+                        .opt_bool(&["sink", "allow_insecure"])
+                        .unwrap_or(false),
+                    ssl_ca_location: pipeline.opt_str(&["sink", "ssl_ca_location"]),
+                    ssl_certificate_location: pipeline
+                        .opt_str(&["sink", "ssl_certificate_location"]),
+                    ssl_key_location: pipeline.opt_str(&["sink", "ssl_key_location"]),
+                    sasl_mechanism: pipeline.opt_str(&["sink", "sasl_mechanism"]),
+                    sasl_username: pipeline.opt_str(&["sink", "sasl_username"]),
+                    sasl_password: pipeline.opt_str(&["sink", "sasl_password"]),
+                },
             )?))
         }
         #[cfg(feature = "webhook")]
@@ -2465,7 +2495,7 @@ mod tests {
             enabled: true,
             config: serde_json::json!({
                 "sink_type": "nats",
-                "sink": {"url": "nats://localhost", "subject": "orders.created"}
+                "sink": {"url": "nats://localhost", "allow_insecure": true, "subject": "orders.created"}
             }),
             tenant_name: "default".to_string(),
         }

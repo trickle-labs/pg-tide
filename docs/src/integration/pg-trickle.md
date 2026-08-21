@@ -101,7 +101,7 @@ SELECT tide.relay_set_outbox_v2(
     'name', 'my-pipeline',
     'outbox', 'orders',
     'sink_type', 'nats',
-    'config', '{"url":"nats://broker:4222"}'::jsonb
+    'config', '{"url":"tls://nats.example:4222"}'::jsonb
   )
 );
 ```

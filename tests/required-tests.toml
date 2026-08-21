@@ -1,5 +1,5 @@
 schema_version = 1
-inventory_version = "0.51.0"
+inventory_version = "0.52.0"
 
 [[test]]
 id = "connector-registry-pr"
@@ -522,6 +522,150 @@ ci_job = "lifecycle-adjacent"
 command = "just test-lifecycle-adjacent"
 targets = ["scripts/package_extension.sh", "scripts/catalog_snapshot.py", "sql", "pg-tide-relay/tests/migration_test.rs"]
 dependencies = ["docker", "postgresql-18", "rust-1.97.1", "cargo-pgrx-0.18.0"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "security-contract-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/security.yml"
+ci_job = "security-contract"
+command = "python3 scripts/check_security_contract.py"
+targets = ["docs/src/reference/threat-model.md", "docs/src/reference/security-evidence.md", "release-evidence/v0.52.0-security.json"]
+dependencies = ["python3", "just"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "privilege-model-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/security.yml"
+ci_job = "privilege-model"
+command = "just test-security"
+targets = ["pg-tide-relay/tests", "sql", "deploy/postgres/pg_tide_roles.sql"]
+dependencies = ["docker", "postgresql-18"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "secret-canary-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/security.yml"
+ci_job = "secret-canary"
+command = "just test-security"
+targets = ["pg-tide-relay/src/secret.rs", "pg-tide-relay/tests", "release-evidence"]
+dependencies = ["rust-1.97.1"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "network-security-core-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/security.yml"
+ci_job = "network-security-core"
+command = "just test-security"
+targets = ["pg-tide-relay/src/pg_tls.rs", "pg-tide-relay/src/http_util.rs", "pg-tide-relay/tests"]
+dependencies = ["docker", "postgresql-18", "nats"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "network-security-kafka-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/security.yml"
+ci_job = "network-security-kafka"
+command = "just test-security"
+targets = ["pg-tide-relay/src/sink/kafka.rs", "pg-tide-relay/tests/kafka_test.rs"]
+dependencies = ["docker", "kafka"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "artifact-policy-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/security.yml"
+ci_job = "artifact-policy"
+command = "python3 scripts/check_release_artifacts.py --static --profile core"
+targets = ["scripts/check_release_artifacts.py", "supply-chain/artifact-allowlist.toml"]
+dependencies = ["python3"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "artifact-verification-release"
+level = "release"
+triggers = ["release"]
+workflow = ".github/workflows/release.yml"
+ci_job = "release-gates"
+command = "python3 scripts/check_v1_artifacts.py"
+targets = ["release-evidence/v0.52.0-index.json", "release-evidence/v0.52.0-security-review.json"]
+dependencies = ["python3", "gh"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "vulnerability-response-release"
+level = "release"
+triggers = ["release"]
+workflow = ".github/workflows/release.yml"
+ci_job = "release-gates"
+command = "python3 scripts/check_v1_artifacts.py"
+targets = ["docs/src/operations/vulnerability-response.md", "release-evidence/v0.52.0-vulnerability-response.json"]
+dependencies = ["python3"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "security-approval-release"
+level = "release"
+triggers = ["release"]
+workflow = ".github/workflows/release.yml"
+ci_job = "release-gates"
+command = "python3 scripts/check_v1_artifacts.py"
+targets = ["release-evidence/v0.52.0-security-review.json", "release-evidence/v0.52.0-index.json"]
+dependencies = ["python3", "gh"]
 owner = "@grove"
 blocking = true
 max_retries = 0

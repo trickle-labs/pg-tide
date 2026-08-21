@@ -23,7 +23,9 @@ async fn install_through_v0_39(client: &tokio_postgres::Client) {
         .await
         .expect("create schema");
     client
-        .batch_execute(include_str!("../../sql/pg_tide--0.1.0.sql"))
+        .batch_execute(&common::strip_extension_comments(include_str!(
+            "../../sql/pg_tide--0.1.0.sql"
+        )))
         .await
         .expect("base schema");
     for (label, sql) in common::MIGRATIONS {

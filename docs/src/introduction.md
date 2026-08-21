@@ -85,7 +85,7 @@ SELECT tide.relay_set_outbox_v2(
     'name', 'orders-nats',
     'outbox', 'orders',
     'sink_type', 'nats',
-    'config', '{"url": "nats://localhost:4222", "subject": "orders.events"}'::jsonb
+    'config', '{"url": "tls://nats.example:4222", "subject": "orders.events"}'::jsonb
   )
 );
 

@@ -9,12 +9,16 @@ outbox to a JetStream subject. It is outbound only.
   "source": {"outbox": "orders"},
   "sink_type": "nats",
   "sink": {
-    "url": "nats://nats:4222",
+    "url": "tls://nats:4222",
     "subject": "orders.events"
   },
   "wire_format": "native"
 }
 ```
+
+Production NATS connections use `tls://` and verify the server certificate.
+For a local plaintext broker only, set `allow_insecure: true`; the relay logs
+that development override explicitly.
 
 Use `subject_template` when the subject should include outbox metadata.
 JetStream acknowledgments and the stable outbox identity provide at-least-once

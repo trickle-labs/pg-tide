@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "release": "v0.52.0",
+  "status": "pending",
+  "candidate": {"commit": null, "artifact_digests": []},
+  "reviewer": {"identity": null, "independent": null},
+  "review": {"started_at": null, "completed_at": null, "evidence": [], "findings": [], "approval": null, "signature_or_review": null}
+}

@@ -70,7 +70,7 @@ sweep_interval_hours = 24
 #     "outbox":    "orders",
 #     "sink_type": "nats",
 #     "config": {
-#       "url":     "nats://nats.default.svc.cluster.local:4222",
+#       "url":     "tls://nats.default.svc.cluster.local:4222",
 #       "subject": "orders.{event_type}"
 #     },
 #     "batch_size": 50,

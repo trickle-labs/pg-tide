@@ -8,6 +8,18 @@ on:
   workflow_dispatch:
 
 jobs:
+  security-static:
+    name: Static supply-chain and artifact policy checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check locked production policy (static mode)
+        run: python3 scripts/check_supply_chain.py --static
+      - name: Check release allowlists (static mode)
+        run: python3 scripts/check_release_artifacts.py --static --profile core
+
   connector-registry:
     name: Connector registry and generated output
     runs-on: ubuntu-latest

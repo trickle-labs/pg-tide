@@ -1,0 +1,69 @@
+name: Security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  security-contract:
+    name: Security contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - run: python3 scripts/check_lifecycle_contract.py
+      - run: python3 scripts/check_security_contract.py
+      - run: python3 scripts/check_required_tests.py --check-manifest
+
+  privilege-model:
+    name: PostgreSQL privilege model
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: extractions/setup-just@v3
+      - run: just test-security
+
+  secret-canary:
+    name: Secret containment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: extractions/setup-just@v3
+      - run: just test-security
+
+  network-security-core:
+    name: Core network security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: extractions/setup-just@v3
+      - run: just test-security
+
+  network-security-kafka:
+    name: Kafka network security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: extractions/setup-just@v3
+      - run: cargo test --package pg-tide-relay --test kafka_test --no-default-features --features core-kafka -- --test-threads=1
+
+  supply-chain:
+    name: Production supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - run: python3 scripts/check_supply_chain.py --static
+
+  artifact-policy:
+    name: Artifact policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - run: python3 scripts/check_release_artifacts.py --static --profile core

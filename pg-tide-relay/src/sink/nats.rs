@@ -195,6 +195,21 @@ pub struct NatsSink {
 }
 
 #[cfg(feature = "nats")]
+pub struct NatsOptions<'a> {
+    pub url: &'a str,
+    pub subject: Option<&'a str>,
+    pub subject_template: Option<&'a str>,
+    pub allow_insecure: bool,
+    pub token: Option<&'a str>,
+    pub username: Option<&'a str>,
+    pub password: Option<&'a str>,
+    pub credentials_file: Option<&'a str>,
+    pub tls_ca_file: Option<&'a str>,
+    pub tls_client_cert: Option<&'a str>,
+    pub tls_client_key: Option<&'a str>,
+}
+
+#[cfg(feature = "nats")]
 impl NatsSink {
     /// Create a NATS JetStream sink.
     ///
@@ -206,7 +221,86 @@ impl NatsSink {
         subject: Option<&str>,
         subject_template: Option<&str>,
     ) -> Result<Self, RelayError> {
-        let client = async_nats::connect(url).await.map_err(connect_error)?;
+        Self::new_with_options(NatsOptions {
+            url,
+            subject,
+            subject_template,
+            allow_insecure: false,
+            token: None,
+            username: None,
+            password: None,
+            credentials_file: None,
+            tls_ca_file: None,
+            tls_client_cert: None,
+            tls_client_key: None,
+        })
+        .await
+    }
+
+    pub async fn new_with_options(options: NatsOptions<'_>) -> Result<Self, RelayError> {
+        let NatsOptions {
+            url,
+            subject,
+            subject_template,
+            allow_insecure,
+            token,
+            username,
+            password,
+            credentials_file,
+            tls_ca_file,
+            tls_client_cert,
+            tls_client_key,
+        } = options;
+        let scheme = url.split(':').next().unwrap_or_default();
+        if scheme != "tls" && !(allow_insecure && scheme == "nats") {
+            return Err(RelayError::config(
+                "nats requires tls:// unless allow_insecure is true",
+            ));
+        }
+        if token.is_some()
+            && (username.is_some() || password.is_some() || credentials_file.is_some())
+        {
+            return Err(RelayError::config(
+                "nats authentication methods are mutually exclusive",
+            ));
+        }
+        if username.is_some() != password.is_some() {
+            return Err(RelayError::config(
+                "nats username and password must be supplied together",
+            ));
+        }
+        if tls_client_cert.is_some() != tls_client_key.is_some() {
+            return Err(RelayError::config(
+                "nats TLS client certificate and key must be supplied together",
+            ));
+        }
+        if allow_insecure && scheme == "nats" {
+            tracing::warn!(
+                connector = "nats",
+                security_override = true,
+                "NATS plaintext transport explicitly enabled"
+            );
+        }
+        let mut options = async_nats::ConnectOptions::new();
+        if let Some(token) = token {
+            options = options.token(token.to_owned());
+        }
+        if let (Some(username), Some(password)) = (username, password) {
+            options = options.user_and_password(username.to_owned(), password.to_owned());
+        }
+        if let Some(path) = credentials_file {
+            options = options
+                .credentials_file(path)
+                .await
+                .map_err(|_| RelayError::config("nats credentials file could not be read"))?;
+        }
+        if let Some(path) = tls_ca_file {
+            options = options.add_root_certificates(path.into());
+        }
+        if let (Some(cert), Some(key)) = (tls_client_cert, tls_client_key) {
+            options = options.add_client_certificate(cert.into(), key.into());
+        }
+        let client = options.connect(url).await.map_err(connect_error)?;
         let js = jetstream::new(client);
         let subject = SubjectSpec::from_config(subject, subject_template);
         subject.validate()?;

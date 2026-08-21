@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the v0.51 lifecycle policy against repository artifacts."""
+"""Check the v0.52 lifecycle policy against repository artifacts."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def check_migrations(policy: dict) -> None:
             fail(f"invalid migration target: {row.get('to')!r}")
         expected = row["to"]
         path = ROOT / row.get("file", "")
-        if not path.is_file():
+        if not path.is_file() and row.get("status") != "pending":
             fail(f"missing forward migration: {path.relative_to(ROOT)}")
         if row.get("reversible"):
             reverse = row.get("reverse_file")
@@ -137,8 +137,8 @@ def check_alignment(policy: dict) -> None:
 def check_policy(policy: dict) -> None:
     if policy.get("schema_version") != 1:
         fail("schema_version must be 1")
-    if policy.get("target_version") != "0.51.0" or policy.get("floor_version") != "0.47.0":
-        fail("policy must cover v0.47.0 through v0.51.0")
+    if policy.get("target_version") != "0.52.0" or policy.get("floor_version") != "0.47.0":
+        fail("policy must cover v0.47.0 through v0.52.0")
     if policy.get("compatibility_error_code") != "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE":
         fail("unexpected compatibility error code")
     check_migrations(policy)

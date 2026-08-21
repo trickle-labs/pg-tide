@@ -113,7 +113,12 @@ async fn public_api_outbox_to_kafka_e2e() {
         "name": "orders-kafka",
         "outbox": "orders",
         "sink_type": "kafka",
-        "config": {"brokers": brokers, "topic": TOPIC},
+        "config": {
+            "brokers": brokers,
+            "topic": TOPIC,
+            "security_protocol": "plaintext",
+            "allow_insecure": true
+        },
         "batch_size": 50
     });
     client

@@ -283,8 +283,9 @@ pub async fn install_full_schema(client: &tokio_postgres::Client) {
         .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
         .await
         .expect("create tide schema");
+    let schema = strip_extension_comments(SCHEMA_SQL);
     client
-        .batch_execute(SCHEMA_SQL)
+        .batch_execute(&schema)
         .await
         .expect("install v0.1.0 base schema");
     for (label, sql) in MIGRATIONS {
@@ -314,8 +315,9 @@ pub async fn install_base_v0_1(client: &tokio_postgres::Client) {
         .batch_execute("CREATE SCHEMA IF NOT EXISTS tide;")
         .await
         .expect("create tide schema");
+    let schema = strip_extension_comments(SCHEMA_SQL);
     client
-        .batch_execute(SCHEMA_SQL)
+        .batch_execute(&schema)
         .await
         .expect("install v0.1.0 base schema");
 }

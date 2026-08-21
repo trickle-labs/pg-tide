@@ -89,6 +89,16 @@ pub enum PgSslMode {
     Require,
 }
 
+/// Checked policy used by connection setup. The older `PgSslMode` shape is
+/// retained for callers that only need the pool's TLS/no-TLS split.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckedSslMode {
+    Disable,
+    Require,
+    VerifyCa,
+    VerifyFull,
+}
+
 impl PgSslMode {
     /// Parse from a `sslmode=...` value string.
     pub fn from_str_mode(s: &str) -> Self {
@@ -96,7 +106,7 @@ impl PgSslMode {
             "disable" => Self::Disable,
             "require" | "verify-ca" | "verify-full" => Self::Require,
             "prefer" | "allow" => Self::Prefer,
-            _ => Self::Disable,
+            _ => Self::Prefer,
         }
     }
 
@@ -120,6 +130,23 @@ pub fn parse_ssl_mode(url: &str) -> PgSslMode {
     // tokio-postgres defaults to `prefer`, which can silently fall back to
     // plaintext. Missing sslmode therefore fails closed.
     PgSslMode::Require
+}
+
+pub fn parse_ssl_mode_checked(url: &str) -> Result<CheckedSslMode, RelayError> {
+    let mode = extract_sslmode_str(url)
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_else(|| "verify-full".to_string());
+    match mode.as_str() {
+        "disable" => Ok(CheckedSslMode::Disable),
+        "require" => Ok(CheckedSslMode::Require),
+        "verify-ca" => Ok(CheckedSslMode::VerifyCa),
+        "verify-full" => Ok(CheckedSslMode::VerifyFull),
+        "allow" | "prefer" => Err(RelayError::InsecureTransport {
+            mode,
+            url: sanitize_connection_url(url),
+        }),
+        _ => Err(RelayError::config("unsupported PostgreSQL sslmode")),
+    }
 }
 
 /// Extract the `sslmode=<value>` from a connection URL or DSN string.
@@ -154,14 +181,10 @@ fn extract_sslmode_str(url: &str) -> Option<String> {
 /// downgrading to plaintext.  This prevents accidental credential exposure on
 /// networks that do not enforce encryption at the infrastructure layer.
 pub async fn connect(url: &str) -> Result<(Client, PgConnection), RelayError> {
-    let ssl_mode = parse_ssl_mode(url);
-    match ssl_mode {
-        PgSslMode::Require => connect_require(url).await,
-        PgSslMode::Prefer => Err(RelayError::InsecureTransport {
-            mode: "prefer".to_string(),
-            url: sanitize_connection_url(url),
-        }),
-        PgSslMode::Disable => connect_notls(url).await,
+    let mode = parse_ssl_mode_checked(url)?;
+    match mode {
+        CheckedSslMode::Disable => connect_notls(url).await,
+        _ => connect_tls(url, mode).await,
     }
 }
 
@@ -171,31 +194,93 @@ pub async fn connect(url: &str) -> Result<(Client, PgConnection), RelayError> {
 /// Without it: fail closed with `RelayError::TlsRequired`.
 #[cfg(feature = "native-tls")]
 pub fn make_tls_connector() -> Result<postgres_openssl::MakeTlsConnector, RelayError> {
-    use postgres_openssl::MakeTlsConnector;
-
-    let connector = openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
-        .map_err(|e| RelayError::TlsSetup(e.to_string()))?
-        .build();
-    Ok(MakeTlsConnector::new(connector))
+    make_tls_connector_for_mode(CheckedSslMode::VerifyFull, None)
 }
 
 #[cfg(feature = "native-tls")]
-async fn connect_require(url: &str) -> Result<(Client, PgConnection), RelayError> {
-    let (client, conn) = tokio_postgres::connect(url, make_tls_connector()?)
-        .await
-        .map_err(|e| RelayError::ConnectionFailed {
+pub fn make_tls_connector_for_url(
+    url: &str,
+) -> Result<postgres_openssl::MakeTlsConnector, RelayError> {
+    let mode = parse_ssl_mode_checked(url)?;
+    if mode == CheckedSslMode::Disable {
+        return Err(RelayError::config(
+            "cannot create a TLS connector for sslmode=disable",
+        ));
+    }
+    make_tls_connector_for_mode(mode, extract_parameter(url, "sslrootcert").as_deref())
+}
+
+#[cfg(feature = "native-tls")]
+fn make_tls_connector_for_mode(
+    mode: CheckedSslMode,
+    root_cert: Option<&str>,
+) -> Result<postgres_openssl::MakeTlsConnector, RelayError> {
+    use openssl::ssl::SslVerifyMode;
+    use postgres_openssl::MakeTlsConnector;
+
+    let mut builder = openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
+        .map_err(|e| RelayError::TlsSetup(e.to_string()))?;
+    match mode {
+        CheckedSslMode::Require => builder.set_verify(SslVerifyMode::NONE),
+        CheckedSslMode::VerifyCa | CheckedSslMode::VerifyFull => {
+            builder.set_verify(SslVerifyMode::PEER);
+            builder
+                .set_default_verify_paths()
+                .map_err(|_| RelayError::TlsSetup("system trust roots unavailable".into()))?;
+            if let Some(path) = root_cert {
+                builder.set_ca_file(path).map_err(|_| {
+                    RelayError::TlsSetup("configured sslrootcert is invalid".into())
+                })?;
+            }
+        }
+        CheckedSslMode::Disable => {
+            return Err(RelayError::config(
+                "cannot create a TLS connector for sslmode=disable",
+            ));
+        }
+    }
+    let mut connector = MakeTlsConnector::new(builder.build());
+    if mode != CheckedSslMode::VerifyFull {
+        connector.set_callback(|configuration, _| {
+            configuration.set_verify_hostname(false);
+            Ok(())
+        });
+    }
+    Ok(connector)
+}
+
+#[cfg(feature = "native-tls")]
+async fn connect_tls(
+    url: &str,
+    mode: CheckedSslMode,
+) -> Result<(Client, PgConnection), RelayError> {
+    let connector =
+        make_tls_connector_for_mode(mode, extract_parameter(url, "sslrootcert").as_deref())?;
+    let (client, conn) = tokio_postgres::connect(url, connector).await.map_err(|e| {
+        RelayError::ConnectionFailed {
             url: sanitize_connection_url(url),
             err: e,
-        })?;
+        }
+    })?;
     Ok((client, PgConnection::Tls(conn)))
 }
 
 /// Fail closed when `sslmode=require` but `native-tls` is not compiled in.
 #[cfg(not(feature = "native-tls"))]
-async fn connect_require(url: &str) -> Result<(Client, PgConnection), RelayError> {
+async fn connect_tls(
+    url: &str,
+    _mode: CheckedSslMode,
+) -> Result<(Client, PgConnection), RelayError> {
     Err(RelayError::TlsRequired {
         url: sanitize_connection_url(url),
     })
+}
+
+fn extract_parameter(url: &str, name: &str) -> Option<String> {
+    url.split(['?', '&', ' ', '\t'])
+        .find_map(|part| part.strip_prefix(&format!("{name}=")))
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 /// Connect using `NoTls` (plain TCP).
@@ -276,15 +361,29 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_ssl_mode_missing_fails_closed() {
-        let mode = parse_ssl_mode("host=localhost user=postgres");
-        assert_eq!(mode, PgSslMode::Require);
+    fn test_parse_ssl_mode_missing_defaults_to_verify_full() {
+        assert_eq!(
+            parse_ssl_mode_checked("host=localhost user=postgres").unwrap(),
+            CheckedSslMode::VerifyFull
+        );
     }
 
     #[test]
-    fn test_parse_ssl_mode_verify_full_is_require() {
-        let mode = parse_ssl_mode("host=localhost sslmode=verify-full");
-        assert_eq!(mode, PgSslMode::Require);
+    fn test_ssl_modes_are_distinct_and_unknown_rejected() {
+        assert_eq!(
+            parse_ssl_mode_checked("sslmode=require").unwrap(),
+            CheckedSslMode::Require
+        );
+        assert_eq!(
+            parse_ssl_mode_checked("sslmode=verify-ca").unwrap(),
+            CheckedSslMode::VerifyCa
+        );
+        assert_eq!(
+            parse_ssl_mode_checked("sslmode=verify-full").unwrap(),
+            CheckedSslMode::VerifyFull
+        );
+        assert!(parse_ssl_mode_checked("sslmode=unknown").is_err());
+        assert!(parse_ssl_mode_checked("sslmode=prefer").is_err());
     }
 
     #[test]

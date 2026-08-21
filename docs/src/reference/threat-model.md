@@ -1,22 +1,31 @@
-# pg_tide Threat Model
+# pg_tide threat model
 
-v0.44.0 treats the database, relay host, connector endpoints, message data,
-and build inputs as separate trust boundaries. The extension protects its
-catalog and API boundary; it does not replace database superuser controls,
-network firewalls, destination credential management, or application payload
-validation.
+This model covers the v0.52.0 production profiles: `core` and `core-kafka`.
+It covers the PostgreSQL 18 extension, PostgreSQL inbox, NATS JetStream,
+Apache Kafka, and HTTPS webhook destinations. `stdout` and `file` are
+diagnostic sinks only.
 
-| Threat | Prevention | Detection | Recovery | Evidence | Owner |
-|---|---|---|---|---|---|
-| Unauthorized SQL mutation | Canonical roles, ACLs, `session_user`, revoked PUBLIC execute | Authorization errors and audit rows | Revoke membership/ACL; preserve offsets | Privilege matrix and migration validation | Database owner |
-| Cross-tenant access | Tenant checks fail closed and run in the same transaction as mutations | Tenant-filter errors and audit rows | Reconcile tenant grants; do not restore PUBLIC access | Tenant fault tests | Database owner |
-| Secret disclosure | Typed references, strict files, redacted output, sanitized status/history | Canary scans and leakage metrics | Rotate credential; protect pre-upgrade backup | Secret/redaction tests | Relay owner |
-| SSRF or unsafe outbound endpoint | Parsed URL policy, DNS answer checks, redirect revalidation, proxy opt-in | Policy refusal and bounded security metric | Remove endpoint; retain delivery state | SSRF and proxy tests | Relay owner |
-| Plaintext or unverified transport | Verified TLS defaults and explicit noisy development overrides | Startup warning and status | Install correct CA/certificate; do not globally disable verification | TLS tests | Platform owner |
-| Delivery loss or duplicate | Transactional outbox, monotonic offsets, deferred acknowledgments | Checkpoint/DLQ metrics and audit history | Replay from retained outbox; never mutate offsets directly | Crash and end-to-end tests | Relay owner |
-| Resource exhaustion | Batch, payload, retry, retention, and file-size bounds | Operational budgets and saturation metrics | Pause source, drain or replay bounded work | Budget and regression tests | Operations |
-| Dependency/build compromise | Pinned toolchain/actions, graph audits, signatures, SBOM, provenance | CI and release verification failures | Withdraw artifact and rebuild from reviewed commit | Supply-chain gates | Release owner |
-| Malicious connector or payload content | Connector maturity gates, schema validation, redaction, bounded templates | Sanitized errors and connector health | Disable connector; preserve source messages | Connector evidence index | Connector owner |
+| ID | Asset and trust boundary | Attacker capability | Prevention | Detection | Recovery | Residual limit | Owner and contact | Evidence | Code or runbook |
+|---|---|---|---|---|---|---|---|---|---|
+| T01 | Publisher identity at application to extension | Borrow an application login or role membership | `session_user`, canonical roles, outbox ACL | Bounded authorization error | Revoke role and ACL | A superuser can bypass database ACLs | Database owner; @grove | `privilege-model-pr` | `pg-tide-ext/src/outbox.rs` |
+| T02 | Pipeline catalog at operator to relay | Modify JSON config or enable an unauthorized pipeline | Exact role grants and bounded admin API | Audit/config failure | Restore reviewed config and disable pipeline | Database owner compromise is outside scope | Relay owner; @grove | `privilege-model-pr` | `docs/src/sql-reference/relay-api.md` |
+| T03 | Relay credentials at secret reference to runtime | Read a reference, file, process, or error path | Reference-only fields, strict files, `SecretString` | Canary scan and secret-file failures | Rotate credential and quarantine evidence | Host root can read process memory | Relay owner; @grove | `secret-canary-pr` | `pg-tide-relay/src/secret.rs` |
+| T04 | Event payload at source to relay | Submit oversized, malformed, or malicious JSON | Schema, size bounds, typed envelopes, redaction | Validation and bounded decode errors | Preserve source event and replay after correction | Payload semantics remain application-owned | Relay owner; @grove | `relay-unit-pr`, `relay-integration-pr` | `pg-tide-relay/src/envelope.rs` |
+| T05 | Webhook request at relay to destination | Target private, metadata, or loopback address | URL, DNS, address, redirect, and proxy policy | SSRF refusal and zero-request assertion | Remove endpoint; retain checkpoint | A trusted DNS or firewall compromise is outside scope | Relay owner; @grove | `network-security-core-pr` | `pg-tide-relay/src/http_util.rs`, webhook runbook |
+| T06 | DNS and redirect answers at relay to destination | Return mixed, rebinding, or private answers | Validate every answer, pin answers, disable redirects | Policy refusal and request receipt check | Remove endpoint and inspect DNS control | DNS authority compromise can still deny service | Platform owner; @grove | `network-security-core-pr` | `pg-tide-relay/src/http_util.rs` |
+| T07 | Destination identity at relay to network | Present an untrusted, expired, or wrong-host certificate | Verified TLS defaults and explicit noisy overrides | TLS refusal code and warning | Install the expected CA/certificate | `require` intentionally gives encryption-only development behavior | Platform owner; @grove | `network-security-core-pr`, `network-security-kafka-pr` | `pg-tide-relay/src/pg_tls.rs` |
+| T08 | Checkpoint state at relay to catalog | Rewind or advance an offset directly | Monotonic offset API and exact grants | Rewind refusal and state comparison | Restore last trusted state | A superuser can mutate catalog state | Relay owner; @grove | `privilege-model-pr`, `delivery-model-pr` | crash-recovery runbook |
+| T09 | Receipts and DLQ at relay to catalog | Delete, forge, or replay terminal state | Role matrix and transactional terminal state | State and audit checks | Reconcile from source events | Source retention limits recovery | Relay owner; @grove | `privilege-model-pr`, `replay-recovery-pr` | DLQ/replay runbook |
+| T10 | Replay operation at operator to source | Replay arbitrary or unbounded events | Bounded replay authorization and stable IDs | Refusal code and operation log | Revoke operation access | Authorized operators can intentionally replay | Operations owner; @grove | `privilege-model-pr`, `replay-recovery-pr` | `pg-tide-relay/src/cmd/replay.rs` |
+| T11 | Secret-bearing output at relay to operator | Inspect logs, metrics, status, history, or evidence | Masking and sanitized connector errors | Positive-control canary scan | Rotate values and remove exposed evidence | External libraries may still leak unknown text | Relay owner; @grove | `secret-canary-pr` | `pg-tide-relay/src/config/mod.rs` |
+| T12 | Dependency graph at build input to artifact | Add or reach a vulnerable or unlicensed crate | Locked graphs, advisory, source, and license policy | Supply-chain gate | Block and rebuild from reviewed commit | New advisories require refreshed feeds | Release owner; @grove | `supply-chain-pr` | `scripts/check_supply_chain.py` |
+| T13 | CI release inputs at producer to verifier | Replace an artifact, tag, digest, or provenance claim | Immutable subjects and separate read-only verifier | Signature/SBOM/provenance mismatch | Withdraw and rebuild | CI provider compromise is outside scope | Release owner; @grove | `artifact-policy-pr`, `artifact-verification-release` | release-evidence runbook |
+| T14 | Runtime artifact at build input to container | Ship a shell, package manager, key, fixture, or unexpected binary | Path allowlist, modes, content and image policy | Inventory failure | Withdraw and rebuild image | Base-image compromise is outside scope | Release owner; @grove | `artifact-policy-pr` | `scripts/check_release_artifacts.py` |
+| T15 | Extension function privilege at SQL caller to owner | Invoke a definer function through PUBLIC or unsafe grants | Fixed owner, exact execute ACL, locked path | Privilege inventory | Revoke execute and apply migration | Superuser control remains authoritative | Database owner; @grove | `privilege-model-pr` | `sql/pg_tide--0.51.0--0.52.0.sql` |
+| T16 | Function name resolution at caller search path | Shadow catalog or extension objects | `pg_catalog, tide` search path for definers | Clean-room function inventory | Lock settings and retry migration | Non-definer caller search paths are not a security boundary | Database owner; @grove | `privilege-model-pr` | `pg-tide-ext/src/outbox.rs` |
+| T17 | Restore and rollback state at lifecycle boundary | Mix unsupported extension and relay versions | Lifecycle matrix, migration transaction, rollback limits | Compatibility refusal | Restore matching database and relay pair | Physical restore is required after an irreversible upgrade | Release owner; @grove | `lifecycle-contract-pr`, `lifecycle-adjacent-pr` | relay-upgrade runbook |
 
-The relay cannot guarantee confidentiality after compromise of a PostgreSQL
-superuser, relay host, destination credential, or infrastructure firewall.
+The model excludes compromise of a PostgreSQL superuser, relay-host root,
+destination administrator, or infrastructure firewall. Those actors can bypass
+controls outside pg_tide; the controls still reduce the effect of lesser
+compromise.
