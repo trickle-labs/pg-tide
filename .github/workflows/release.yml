@@ -72,7 +72,7 @@ jobs:
           TAG_SHA: ${{ github.sha }}
         run: |
           git fetch --force --tags origin
-          git verify-tag "$GITHUB_REF_NAME"
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
           test "$(git rev-list -n1 "$GITHUB_REF_NAME")" = "$TAG_SHA"
           python3 - <<'PY'
           import json
