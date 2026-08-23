@@ -179,7 +179,7 @@ jobs:
           $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
           if (-not $vcpkgRoot) { $vcpkgRoot = 'C:\vcpkg' }
           $env:VCPKG_ROOT = $vcpkgRoot
-          & "$vcpkgRoot\vcpkg.exe" install openssl:x64-windows
+          & "$vcpkgRoot\vcpkg.exe" install openssl:x64-windows-static-md
           "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
 
       - name: Build release binary (core profile)
