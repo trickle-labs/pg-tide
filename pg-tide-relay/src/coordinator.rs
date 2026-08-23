@@ -198,9 +198,11 @@ impl Coordinator {
         // receipt rows older than `sweep_interval_hours`.  The task exits when
         // `shutdown_rx` fires or when the pool is dropped.
         let sweep_pool = self.pool.clone();
+        let sweep_metrics = Arc::clone(&self.metrics);
         let mut sweep_shutdown = shutdown_rx.clone();
         let sweep_interval_hours: u64 = self.sweep_interval_hours;
         tokio::spawn(async move {
+            let _task = sweep_metrics.track_owned_task("receipt_sweep");
             let sweep_interval = Duration::from_secs(sweep_interval_hours * 3600);
             loop {
                 tokio::select! {
@@ -708,16 +710,24 @@ impl Coordinator {
             };
 
             // v0.15.0: Store JoinHandle for panic detection.
-            let handle = tokio::spawn(run_pipeline_worker(
-                resolved_pipeline,
-                ownership_db,
-                ownership_lost_rx,
-                self.relay_group_id.clone(),
-                Arc::clone(&self.metrics),
-                Arc::clone(&self.health),
-                batch_size,
-                stop_rx,
-            ));
+            let task_metrics = Arc::clone(&self.metrics);
+            let worker_metrics = Arc::clone(&self.metrics);
+            let worker_relay_group = self.relay_group_id.clone();
+            let worker_health = Arc::clone(&self.health);
+            let handle = tokio::spawn(async move {
+                let _task = task_metrics.track_owned_task("pipeline_worker");
+                run_pipeline_worker(
+                    resolved_pipeline,
+                    ownership_db,
+                    ownership_lost_rx,
+                    worker_relay_group,
+                    worker_metrics,
+                    worker_health,
+                    batch_size,
+                    stop_rx,
+                )
+                .await;
+            });
 
             self.owned.insert(pipeline.name, (stop_tx, handle));
         }

@@ -1,0 +1,396 @@
+schema_version = 1
+benchmark_schema_version = 1
+reference_environment_schema_version = "pg18-operational-reference-v1"
+environment_identity = ["schema_version", "postgresql_major", "payload_bytes", "pipeline_count", "batch_size", "poll_interval_ms", "rust_toolchain", "relay_build_profile", "destination_set"]
+
+required_profiles = [
+  "publish-single", "publish-concurrent", "relay-core", "relay-large",
+  "pipeline-density", "outage-recovery", "retention", "ha-interruption",
+  "small-message-high-rate", "large-message-bounded-rate", "slow-destination",
+  "intermittent-destination", "dlq-heavy", "checkpoint-heavy",
+  "sustained-backlog-recovery", "mixed-four-destination",
+  "graceful-shutdown-under-load",
+]
+
+required_metrics = [
+  "publish.overhead_p50_us", "publish.overhead_p95_us", "publish.overhead_p99_us",
+  "relay.end_to_end_latency_p50_ms", "relay.end_to_end_latency_p95_ms", "relay.end_to_end_latency_p99_ms",
+  "relay.acknowledged_throughput_msg_s", "relay.acknowledged_throughput_bytes_s",
+  "recovery.backlog_catchup_msg_s", "postgres.cpu_seconds_per_message", "relay.cpu_seconds_per_message",
+  "relay.memory_high_water_bytes", "relay.memory_growth_slope_bytes_per_hour",
+  "postgres.wal_bytes_per_published_message", "postgres.wal_bytes_per_cleaned_message",
+  "postgres.outbox_heap_bytes_per_retained_message", "postgres.outbox_index_bytes_per_retained_message",
+  "cleanup.rows_per_second", "cleanup.sweep_p95_ms", "cleanup.lock_wait_p95_ms", "cleanup.dead_tuple_ratio",
+  "postgres.active_connections_high_water", "relay.file_descriptors_high_water", "relay.async_tasks_high_water",
+  "shutdown.graceful_duration_ms", "recovery.ha_takeover_ms", "dlq.replay_throughput_msg_s",
+  "postgres.catalog_discovery_queries_per_relay_minute", "postgres.offset_writes_per_ack_batch",
+  "postgres.offset_writes_per_delivered_message", "postgres.active_connections_growth_slope_per_hour",
+  "relay.file_descriptors_growth_slope_per_hour", "relay.async_tasks_growth_slope_per_hour",
+  "postgres.outbox_rows_growth_slope_per_hour", "postgres.outbox_heap_growth_slope_bytes_per_hour",
+  "postgres.outbox_index_growth_slope_bytes_per_hour", "postgres.dlq_rows_growth_slope_per_hour",
+  "postgres.checkpoint_rows_growth_slope_per_hour", "postgres.temp_files_growth_slope_per_hour",
+  "postgres.temp_bytes_growth_slope_bytes_per_hour", "relay.log_rate_bytes_per_second",
+  "relay.metric_series_high_water", "relay.metric_series_growth_slope_per_hour",
+]
+
+[tiers.pr]
+min_samples = 1
+regression_pct = 25
+[tiers.scheduled]
+min_samples = 3
+regression_pct = 10
+[tiers.release]
+min_samples = 3
+regression_pct = 5
+
+[metrics."publish.overhead_p50_us"]
+unit = "microseconds"
+direction = "lower_is_better"
+max = 5000
+noise_floor = 10
+max_regression_pct = 25
+owner = "relay"
+rationale = "Application commit overhead must remain bounded."
+[metrics."publish.overhead_p95_us"]
+unit = "microseconds"
+direction = "lower_is_better"
+max = 10000
+noise_floor = 20
+max_regression_pct = 25
+owner = "relay"
+rationale = "Tail publish overhead protects application latency."
+[metrics."publish.overhead_p99_us"]
+unit = "microseconds"
+direction = "lower_is_better"
+max = 20000
+noise_floor = 50
+max_regression_pct = 25
+owner = "relay"
+rationale = "Extreme publish tail remains bounded."
+
+[metrics."relay.end_to_end_latency_p50_ms"]
+unit = "milliseconds"
+direction = "lower_is_better"
+max = 5000
+noise_floor = 1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Median destination acknowledgment latency."
+[metrics."relay.end_to_end_latency_p95_ms"]
+unit = "milliseconds"
+direction = "lower_is_better"
+max = 10000
+noise_floor = 2
+max_regression_pct = 25
+owner = "relay"
+rationale = "Tail destination acknowledgment latency."
+[metrics."relay.end_to_end_latency_p99_ms"]
+unit = "milliseconds"
+direction = "lower_is_better"
+max = 30000
+noise_floor = 5
+max_regression_pct = 25
+owner = "relay"
+rationale = "Extreme destination acknowledgment latency."
+[metrics."relay.acknowledged_throughput_msg_s"]
+unit = "events/second"
+direction = "higher_is_better"
+min = 1
+noise_floor = 1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Sustainable acknowledged event rate."
+[metrics."relay.acknowledged_throughput_bytes_s"]
+unit = "bytes/second"
+direction = "higher_is_better"
+min = 1024
+noise_floor = 1024
+max_regression_pct = 25
+owner = "relay"
+rationale = "Sustainable encoded destination byte rate."
+
+[metrics."recovery.backlog_catchup_msg_s"]
+unit = "events/second"
+direction = "higher_is_better"
+min = 1
+noise_floor = 1
+max_regression_pct = 25
+owner = "operations"
+rationale = "Recovery must drain backlog faster than it is produced."
+[metrics."postgres.cpu_seconds_per_message"]
+unit = "CPU seconds/event"
+direction = "lower_is_better"
+max = 1
+noise_floor = 0.001
+max_regression_pct = 25
+owner = "postgres"
+rationale = "PostgreSQL work is normalized by published events."
+[metrics."relay.cpu_seconds_per_message"]
+unit = "CPU seconds/event"
+direction = "lower_is_better"
+max = 1
+noise_floor = 0.001
+max_regression_pct = 25
+owner = "relay"
+rationale = "Relay work is normalized by terminal events."
+[metrics."relay.memory_high_water_bytes"]
+unit = "bytes"
+direction = "lower_is_better"
+max = 1073741824
+noise_floor = 4096
+max_regression_pct = 25
+owner = "relay"
+rationale = "RSS and VmHWM must fit the operator memory envelope."
+[metrics."relay.memory_growth_slope_bytes_per_hour"]
+unit = "bytes/hour"
+direction = "lower_is_better"
+max = 10485760
+noise_floor = 1024
+max_regression_pct = 25
+owner = "relay"
+rationale = "Steady-state memory growth indicates leaks."
+
+[metrics."postgres.wal_bytes_per_published_message"]
+unit = "bytes/event"
+direction = "lower_is_better"
+max = 1048576
+noise_floor = 64
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Durability cost is measured at the WAL boundary."
+[metrics."postgres.wal_bytes_per_cleaned_message"]
+unit = "bytes/event"
+direction = "lower_is_better"
+max = 1048576
+noise_floor = 64
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Retention WAL cost remains bounded."
+[metrics."postgres.outbox_heap_bytes_per_retained_message"]
+unit = "bytes/event"
+direction = "lower_is_better"
+max = 1048576
+noise_floor = 64
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Outbox heap cost is measured separately from indexes."
+[metrics."postgres.outbox_index_bytes_per_retained_message"]
+unit = "bytes/event"
+direction = "lower_is_better"
+max = 1048576
+noise_floor = 64
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Outbox index cost is measured separately from heap."
+
+[metrics."cleanup.rows_per_second"]
+unit = "rows/second"
+direction = "higher_is_better"
+min = 1
+noise_floor = 1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Bounded cleanup must make measurable progress."
+[metrics."cleanup.sweep_p95_ms"]
+unit = "milliseconds"
+direction = "lower_is_better"
+max = 30000
+noise_floor = 5
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Cleanup latency must not create unbounded lock pressure."
+[metrics."cleanup.lock_wait_p95_ms"]
+unit = "milliseconds"
+direction = "lower_is_better"
+max = 5000
+noise_floor = 1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Cleanup lock waits remain bounded."
+[metrics."cleanup.dead_tuple_ratio"]
+unit = "ratio"
+direction = "lower_is_better"
+max = 0.5
+noise_floor = 0.001
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Post-recovery dead tuples must remain bounded."
+
+[metrics."postgres.active_connections_high_water"]
+unit = "connections"
+direction = "lower_is_better"
+max = 200
+noise_floor = 1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Connection usage must fit the configured pool."
+[metrics."relay.file_descriptors_high_water"]
+unit = "descriptors"
+direction = "lower_is_better"
+max = 4096
+noise_floor = 1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Descriptor usage must return to the warm-up band."
+[metrics."relay.async_tasks_high_water"]
+unit = "tasks"
+direction = "lower_is_better"
+max = 1000
+noise_floor = 1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Owned task count is fixed-label and bounded."
+[metrics."shutdown.graceful_duration_ms"]
+unit = "milliseconds"
+direction = "lower_is_better"
+max = 60000
+noise_floor = 10
+max_regression_pct = 25
+owner = "relay"
+rationale = "Graceful shutdown must complete before orchestration kills the process."
+[metrics."recovery.ha_takeover_ms"]
+unit = "milliseconds"
+direction = "lower_is_better"
+max = 60000
+noise_floor = 10
+max_regression_pct = 25
+owner = "operations"
+rationale = "Peer ownership transfer must be bounded."
+[metrics."dlq.replay_throughput_msg_s"]
+unit = "events/second"
+direction = "higher_is_better"
+min = 1
+noise_floor = 1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Bounded DLQ replay must make progress after recovery."
+
+[metrics."postgres.catalog_discovery_queries_per_relay_minute"]
+unit = "queries/relay-minute"
+direction = "lower_is_better"
+max = 600
+noise_floor = 1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Catalog discovery cost is measured from PostgreSQL statistics."
+[metrics."postgres.offset_writes_per_ack_batch"]
+unit = "writes/batch"
+direction = "lower_is_better"
+max = 2
+noise_floor = 0.01
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Checkpoint writes are bounded by the acknowledgment batch."
+[metrics."postgres.offset_writes_per_delivered_message"]
+unit = "writes/event"
+direction = "lower_is_better"
+max = 1
+noise_floor = 0.001
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Checkpoint write amplification is normalized by delivery."
+
+[metrics."postgres.active_connections_growth_slope_per_hour"]
+unit = "connections/hour"
+direction = "lower_is_better"
+max = 10
+noise_floor = 0.1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Connections must not grow after recovery."
+[metrics."relay.file_descriptors_growth_slope_per_hour"]
+unit = "descriptors/hour"
+direction = "lower_is_better"
+max = 10
+noise_floor = 0.1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Descriptors must not grow after recovery."
+[metrics."relay.async_tasks_growth_slope_per_hour"]
+unit = "tasks/hour"
+direction = "lower_is_better"
+max = 10
+noise_floor = 0.1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Owned tasks must balance on restart and reload."
+[metrics."postgres.outbox_rows_growth_slope_per_hour"]
+unit = "rows/hour"
+direction = "lower_is_better"
+max = 1000
+noise_floor = 1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Rows must flatten after backlog recovery and cleanup."
+[metrics."postgres.outbox_heap_growth_slope_bytes_per_hour"]
+unit = "bytes/hour"
+direction = "lower_is_better"
+max = 10485760
+noise_floor = 1024
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Heap storage must flatten after cleanup."
+[metrics."postgres.outbox_index_growth_slope_bytes_per_hour"]
+unit = "bytes/hour"
+direction = "lower_is_better"
+max = 10485760
+noise_floor = 1024
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Index storage must flatten after cleanup."
+[metrics."postgres.dlq_rows_growth_slope_per_hour"]
+unit = "rows/hour"
+direction = "lower_is_better"
+max = 1000
+noise_floor = 1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "DLQ rows must flatten outside deliberate failure phases."
+[metrics."postgres.checkpoint_rows_growth_slope_per_hour"]
+unit = "rows/hour"
+direction = "lower_is_better"
+max = 1000
+noise_floor = 1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Checkpoint rows remain bounded by pipeline and group count."
+[metrics."postgres.temp_files_growth_slope_per_hour"]
+unit = "files/hour"
+direction = "lower_is_better"
+max = 1000
+noise_floor = 1
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Temporary files must not grow after query phases."
+[metrics."postgres.temp_bytes_growth_slope_bytes_per_hour"]
+unit = "bytes/hour"
+direction = "lower_is_better"
+max = 1073741824
+noise_floor = 1024
+max_regression_pct = 25
+owner = "postgres"
+rationale = "Temporary storage must not grow after query phases."
+[metrics."relay.log_rate_bytes_per_second"]
+unit = "bytes/second"
+direction = "lower_is_better"
+max = 1048576
+noise_floor = 1024
+max_regression_pct = 25
+owner = "relay"
+rationale = "Retry and recovery logs remain bounded."
+[metrics."relay.metric_series_high_water"]
+unit = "series"
+direction = "lower_is_better"
+max = 10000
+noise_floor = 1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Metric cardinality is bounded by fixed labels and pipeline count."
+[metrics."relay.metric_series_growth_slope_per_hour"]
+unit = "series/hour"
+direction = "lower_is_better"
+max = 10
+noise_floor = 0.1
+max_regression_pct = 25
+owner = "relay"
+rationale = "Metric series must not grow after reload."

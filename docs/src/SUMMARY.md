@@ -52,6 +52,7 @@
 - [v0.49.0 migration guide](operations/v1-migration-guide.md)
 - [Backup and Restore](operations/runbook-backup-restore.md)
 - [Deployment Guide](operations/deployment-guide.md)
+- [Capacity Planning](operations/capacity-planning.md)
 - [Maintenance](operations/maintenance.md)
 - [Monitoring Cookbook](operations/monitoring-cookbook.md)
 - [Troubleshooting](operations/troubleshooting.md)

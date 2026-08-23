@@ -306,10 +306,15 @@ bench:
 check-operational-budgets:
     python3 scripts/check_operational_budgets.py --check-config
 
-# Check one recorded operational benchmark result against the reviewed budgets.
+# Check one recorded operational benchmark result against the reviewed v1 budgets.
 # Usage: just check-operational-result target/operational-benchmarks/result.json
 check-operational-result RESULT:
     python3 scripts/check_operational_budgets.py --result "{{RESULT}}"
+
+# Compare repeated operational results without adding a wrapper runner.
+# Usage: just check-operational-comparison PROFILE TIER REPORT RESULT1 RESULT2 RESULT3
+check-operational-comparison PROFILE TIER REPORT RESULT1 RESULT2 RESULT3:
+    python3 scripts/check_operational_budgets.py --profile "{{PROFILE}}" --tier "{{TIER}}" --report "{{REPORT}}" --result "{{RESULT1}}" --result "{{RESULT2}}" --result "{{RESULT3}}"
 
 # Default: fmt + lint + test-unit
 all: fmt lint test-unit

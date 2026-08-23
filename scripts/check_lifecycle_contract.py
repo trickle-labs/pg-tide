@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the v0.52 lifecycle policy against repository artifacts."""
+"""Check the v0.53 lifecycle policy against repository artifacts."""
 
 from __future__ import annotations
 
@@ -125,7 +125,9 @@ def check_alignment(policy: dict) -> None:
         fail(f"{alignment['chart']} does not declare {target}")
     for name in alignment["examples"]:
         path = ROOT / name
-        if not path.is_file() or f":{target}" not in path.read_text(encoding="utf-8"):
+        if not path.is_file() or not any(
+            marker in path.read_text(encoding="utf-8") for marker in (f":{target}", f"-{target}")
+        ):
             fail(f"{name} does not reference relay {target}")
     evidence = ROOT / alignment["evidence"]
     if not evidence.is_file():
@@ -137,8 +139,8 @@ def check_alignment(policy: dict) -> None:
 def check_policy(policy: dict) -> None:
     if policy.get("schema_version") != 1:
         fail("schema_version must be 1")
-    if policy.get("target_version") != "0.52.0" or policy.get("floor_version") != "0.47.0":
-        fail("policy must cover v0.47.0 through v0.52.0")
+    if policy.get("target_version") != "0.53.0" or policy.get("floor_version") != "0.47.0":
+        fail("policy must cover v0.47.0 through v0.53.0")
     if policy.get("compatibility_error_code") != "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE":
         fail("unexpected compatibility error code")
     check_migrations(policy)

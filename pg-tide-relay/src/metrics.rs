@@ -16,6 +16,8 @@ pub const METRIC_CONSUMER_LAG: &str = "pg_tide_relay_consumer_lag";
 pub const METRIC_DELIVERY_LATENCY: &str = "pg_tide_relay_delivery_latency_seconds";
 /// v0.16.0: New coordinator metrics.
 pub const METRIC_OWNED_PIPELINES: &str = "pg_tide_relay_owned_pipelines";
+/// v0.53.0: Number of long-lived tasks owned directly by the relay.
+pub const METRIC_OWNED_ASYNC_TASKS: &str = "pg_tide_relay_owned_async_tasks";
 pub const METRIC_RECONCILE_DURATION: &str = "pg_tide_relay_reconcile_duration_seconds";
 pub const METRIC_PIPELINE_ERRORS: &str = "pg_tide_relay_pipeline_errors_total";
 /// v0.17.0: DLQ write error counter (permanent DLQ failures that pause the pipeline).
@@ -63,6 +65,7 @@ pub struct RelayMetrics {
     pub delivery_latency_seconds: HistogramVec,
     /// v0.16.0: Number of pipeline workers currently owned by this coordinator.
     pub owned_pipelines: IntGaugeVec,
+    pub owned_async_tasks: IntGaugeVec,
     /// v0.16.0: Duration of each reconcile loop iteration.
     pub reconcile_duration_seconds: HistogramVec,
     /// v0.16.0: Pipeline errors labelled by error class (transient/permanent).
@@ -188,6 +191,14 @@ impl RelayMetrics {
             &["relay_group"],
         )?;
 
+        let owned_async_tasks = IntGaugeVec::new(
+            prometheus::opts!(
+                METRIC_OWNED_ASYNC_TASKS,
+                "Number of long-lived tasks directly owned by the relay"
+            ),
+            &["kind"],
+        )?;
+
         let reconcile_duration_seconds = HistogramVec::new(
             prometheus::HistogramOpts::new(
                 METRIC_RECONCILE_DURATION,
@@ -257,6 +268,7 @@ impl RelayMetrics {
         registry.register(Box::new(consumer_lag.clone()))?;
         registry.register(Box::new(delivery_latency_seconds.clone()))?;
         registry.register(Box::new(owned_pipelines.clone()))?;
+        registry.register(Box::new(owned_async_tasks.clone()))?;
         registry.register(Box::new(reconcile_duration_seconds.clone()))?;
         registry.register(Box::new(pipeline_errors_total.clone()))?;
         registry.register(Box::new(dlq_write_errors.clone()))?;
@@ -390,6 +402,7 @@ impl RelayMetrics {
             consumer_lag,
             delivery_latency_seconds,
             owned_pipelines,
+            owned_async_tasks,
             reconcile_duration_seconds,
             pipeline_errors_total,
             dlq_write_errors,
@@ -421,6 +434,26 @@ impl RelayMetrics {
         let mut buffer = String::new();
         encoder.encode_utf8(&metric_families, &mut buffer)?;
         Ok(buffer)
+    }
+
+    /// Register one directly-owned long-lived task until it exits or is aborted.
+    pub fn track_owned_task(self: &Arc<Self>, kind: &'static str) -> OwnedTaskGuard {
+        self.owned_async_tasks.with_label_values(&[kind]).inc();
+        OwnedTaskGuard {
+            gauge: self.owned_async_tasks.clone(),
+            kind,
+        }
+    }
+}
+
+pub struct OwnedTaskGuard {
+    gauge: IntGaugeVec,
+    kind: &'static str,
+}
+
+impl Drop for OwnedTaskGuard {
+    fn drop(&mut self) {
+        self.gauge.with_label_values(&[self.kind]).dec();
     }
 }
 
@@ -508,7 +541,9 @@ pub async fn start_metrics_server(
 
     tracing::info!("metrics server listening on {addr}");
 
+    let task_metrics = Arc::clone(&metrics);
     tokio::spawn(async move {
+        let _task = task_metrics.track_owned_task("metrics_server");
         if let Err(e) = axum::serve(listener, app).await {
             tracing::error!("metrics server error: {e}");
         }
@@ -532,6 +567,10 @@ mod tests {
         metrics
             .owned_pipelines
             .with_label_values(&["test-group"])
+            .set(0);
+        metrics
+            .owned_async_tasks
+            .with_label_values(&["test"])
             .set(0);
         metrics
             .reconcile_duration_seconds
@@ -568,6 +607,7 @@ mod tests {
         assert!(rendered.contains(METRIC_MESSAGES_PUBLISHED));
         // v0.16.0: verify new coordinator metrics are registered.
         assert!(rendered.contains(METRIC_OWNED_PIPELINES));
+        assert!(rendered.contains(METRIC_OWNED_ASYNC_TASKS));
         assert!(rendered.contains(METRIC_RECONCILE_DURATION));
         assert!(rendered.contains(METRIC_SOURCE_POLL_QUERIES));
         assert!(rendered.contains(METRIC_OFFSET_WRITES));

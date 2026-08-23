@@ -251,24 +251,24 @@ mod tests {
 
     #[test]
     fn rejects_lower_and_upper_bounds() {
-        assert!(evaluate("0.52.0", Some("0.50.0")).is_err());
-        assert!(evaluate("0.52.0", Some("0.53.0")).is_err());
+        assert!(evaluate("0.53.0", Some("0.51.0")).is_err());
+        assert!(evaluate("0.53.0", Some("0.54.0")).is_err());
     }
 
     #[test]
     fn rejects_malformed_prerelease_future_and_missing_versions() {
-        for extension in [Some("0.51"), Some("0.51.0-rc.1"), Some("0.52.0")] {
-            assert!(evaluate("0.51.0", extension).is_err());
+        for extension in [Some("0.51"), Some("0.51.0-rc.1"), Some("0.54.0")] {
+            assert!(evaluate("0.53.0", extension).is_err());
         }
-        assert!(evaluate("0.51.0", None).is_err());
+        assert!(evaluate("0.53.0", None).is_err());
     }
 
     #[test]
     fn error_text_is_bounded_and_deterministic() {
-        let error = evaluate("0.51.0", Some("not-a-version")).unwrap_err();
+        let error = evaluate("0.53.0", Some("not-a-version")).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE: installed_version=not-a-version; relay_version=0.51.0; policy_version=v1; compatibility_class=incompatible; supported_range=0.51.0..=0.52.0; next_action=Upgrade or restore pg_tide to 0.51.0 or 0.52.0, then restart pg-tide.; reason=malformed extension version"
+            "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE: installed_version=not-a-version; relay_version=0.53.0; policy_version=v1; compatibility_class=incompatible; supported_range=0.52.0..=0.53.0; next_action=Upgrade or restore pg_tide to 0.52.0 or 0.53.0, then restart pg-tide.; reason=malformed extension version"
         );
     }
 }

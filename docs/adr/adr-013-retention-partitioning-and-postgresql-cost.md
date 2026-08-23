@@ -120,9 +120,10 @@ The source of each budget is fixed:
 | Recovery | backlog at sink restoration and time/slope to steady state |
 | HA interruption | timestamped owner loss to resumed acknowledged delivery |
 
-`benchmarks/operational/budgets.toml` is the reviewed machine-readable gate.
-`baseline.json` records the named reference environment and is not a capacity
-claim until its scheduled reference run has populated the measurements.
+`benchmarks/budgets-v1.toml` is the reviewed machine-readable gate.
+`benchmarks/operational/baseline-v1.json` records the named reference
+environment. Values remain environment-specific and are not universal capacity
+claims.
 
 ## Consequences
 

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "release": "v0.53.0",
+  "status": "pending",
+  "budget_contract": "benchmarks/budgets-v1.toml",
+  "baseline": "benchmarks/operational/baseline-v1.json",
+  "reference_environment": "benchmarks/reference-environment.md",
+  "required_results": [
+    "operational-reference-scheduled",
+    "operational-growth-scheduled",
+    "operational-soak-scheduled",
+    "operational-qualification-release",
+    "operational-candidate-contract-release"
+  ],
+  "qualification": {
+    "duration_hours": 24,
+    "retries": 0,
+    "artifact_source": "checksum-recorded release-mode artifacts built from the exact commit",
+    "raw_bundle": null,
+    "comparison_report": null
+  },
+  "candidate_workflow": {
+    "path": ".github/workflows/performance.yml",
+    "tier": "release",
+    "short_contract_status": "non_qualifying"
+  },
+  "optimization": {"required": null, "evidence": null},
+  "capacity_guide": "docs/src/operations/capacity-planning.md",
+  "open_blockers": ["Reference runner evidence and independent approval are required before release."],
+  "approvals": {"performance_reviewer": null, "release_manager": null}
+}

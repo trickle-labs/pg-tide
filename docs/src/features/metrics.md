@@ -21,6 +21,7 @@ where emitted by the relay (`pipeline`, `direction`, and metric-specific labels)
 | `pg_tide_relay_retry_state` | Current retry/backoff state |
 | `pg_tide_relay_dlq_depth` | Unresolved DLQ entries |
 | `pg_tide_relay_owned_pipelines` | Pipelines owned by this relay |
+| `pg_tide_relay_owned_async_tasks` | Directly owned long-lived relay tasks; `kind` is fixed-cardinality |
 | `pg_tide_relay_pool_connections` | Pool connections by state |
 
 See `pg-tide/dashboards/relay-health.json` for the core dashboard and
