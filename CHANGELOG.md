@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.54.0 — Lifecycle and Release Integration](#0540--lifecycle-and-release-integration)
 - [0.53.0 — Performance, Capacity, and Long-Run Stability](#0530--performance-capacity-and-long-run-stability)
 - [0.51.0 — Upgrade, Rollback, and Recovery Integrity](#0510--upgrade-rollback-and-recovery-integrity)
 - [0.52.0 — Security and Supply-Chain Assurance](#0520--security-and-supply-chain-assurance)
@@ -59,6 +60,15 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.54.0] — 2026-08-23 — Lifecycle and Release Integration
+
+- Added the v0.53.0 to v0.54.0 adjacent extension migration and lifecycle
+  compatibility window.
+- Aligned relay, extension, package, and Helm chart versions at v0.54.0.
+- Preserved pending v0.53.0 performance evidence for qualification in v0.56.0.
 
 ---
 
