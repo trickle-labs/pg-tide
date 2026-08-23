@@ -288,7 +288,7 @@ Full documentation is at **[trickle-labs.github.io/pg-tide](https://trickle-labs
 - [Getting Started](https://trickle-labs.github.io/pg-tide/getting-started/first-pipeline.html)
 - [SQL API Reference](https://trickle-labs.github.io/pg-tide/sql-reference/outbox-api.html)
 - [Relay Configuration](https://trickle-labs.github.io/pg-tide/relay-guide/configuration.html)
-- [Architecture](https://trickle-labs.github.io/pg-tide/evaluate/architecture.html)
+- [Architecture](https://github.com/trickle-labs/pg-tide/blob/main/docs/src/evaluate/architecture.md)
 
 ## Upgrading
 

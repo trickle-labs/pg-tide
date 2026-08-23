@@ -634,11 +634,11 @@ The new `build_object_store_from_pipeline()` helper (feature-gated on `delta | i
 
 New documentation in `docs/src/guides/ducklake/`:
 
-- **[`ecosystem-compatibility.md`](docs/src/guides/ducklake/ecosystem-compatibility.md)** — compatibility matrix covering DuckDB, DataFusion, Apache Spark, Trino, and pandas+DuckDB against all four storage backends (local, S3, GCS, Azure). Includes ready-to-run time-travel query examples for each engine.
-- **[`datafusion.md`](docs/src/guides/ducklake/datafusion.md)** — DataFusion quick-start: resolving Parquet paths from the DuckLake catalog, reading snapshots with PyArrow, and performing time-travel by snapshot ID.
-- **[`spark.md`](docs/src/guides/ducklake/spark.md)** — Spark quick-start: PySpark Parquet read from DuckLake catalog paths, time-travel via snapshot ID, and a polling-based micro-batch streaming pattern.
-- **[`trino.md`](docs/src/guides/ducklake/trino.md)** — Trino quick-start: Hive connector configuration, Python-based catalog sync script, and SQL time-travel via versioned external tables.
-- **[`pandas.md`](docs/src/guides/ducklake/pandas.md)** — Pandas quick-start: three patterns — DuckDB-native (recommended), PyArrow direct, and incremental snapshot polling with a live watch loop.
+- **[`ecosystem-compatibility.md`](https://github.com/trickle-labs/pg-tide/blob/3e3a0e8ba9e8133b96f2c2b312bc35e57f16e82d/docs/src/guides/ducklake/ecosystem-compatibility.md)** — compatibility matrix covering DuckDB, DataFusion, Apache Spark, Trino, and pandas+DuckDB against all four storage backends (local, S3, GCS, Azure). Includes ready-to-run time-travel query examples for each engine.
+- **[`datafusion.md`](https://github.com/trickle-labs/pg-tide/blob/3e3a0e8ba9e8133b96f2c2b312bc35e57f16e82d/docs/src/guides/ducklake/datafusion.md)** — DataFusion quick-start: resolving Parquet paths from the DuckLake catalog, reading snapshots with PyArrow, and performing time-travel by snapshot ID.
+- **[`spark.md`](https://github.com/trickle-labs/pg-tide/blob/3e3a0e8ba9e8133b96f2c2b312bc35e57f16e82d/docs/src/guides/ducklake/spark.md)** — Spark quick-start: PySpark Parquet read from DuckLake catalog paths, time-travel via snapshot ID, and a polling-based micro-batch streaming pattern.
+- **[`trino.md`](https://github.com/trickle-labs/pg-tide/blob/3e3a0e8ba9e8133b96f2c2b312bc35e57f16e82d/docs/src/guides/ducklake/trino.md)** — Trino quick-start: Hive connector configuration, Python-based catalog sync script, and SQL time-travel via versioned external tables.
+- **[`pandas.md`](https://github.com/trickle-labs/pg-tide/blob/3e3a0e8ba9e8133b96f2c2b312bc35e57f16e82d/docs/src/guides/ducklake/pandas.md)** — Pandas quick-start: three patterns — DuckDB-native (recommended), PyArrow direct, and incremental snapshot polling with a live watch loop.
 
 ### CI additions
 
@@ -898,7 +898,7 @@ zero breaking changes to existing pipelines.
   is loaded from the `tide` catalog at runtime.
 - New `pg-tide migrate-config` subcommand prints the SQL needed to seed the
   catalog from an existing TOML file.
-- Migration guide: [docs/src/relay-guide/config-migration.md](../relay-guide/config-migration.md).
+- Migration guide: [docs/src/relay-guide/config-migration.md](docs/src/relay-guide/config-migration.md).
 
 **Native claim-check via pg_largeobject (v0.28.0)**
 - New `tide.outbox_publish_large(name, payload, dedup_key, threshold_bytes)`
@@ -907,7 +907,7 @@ zero breaking changes to existing pipelines.
 - The relay source automatically fetches the real payload via `lo_get()` before
   forwarding to the sink, then calls `lo_unlink()` after the ack to reclaim
   storage — no application changes needed.
-- Architecture rationale: [ADR-008](../../adr/adr-008-claim-check-native-pathway.md).
+- Architecture rationale: [ADR-008](docs/adr/adr-008-claim-check-native-pathway.md).
 - `pg-tide doctor` now checks EXECUTE privilege on `lo_get`.
 
 **Per-tenant DB roles (v0.28.0)**
