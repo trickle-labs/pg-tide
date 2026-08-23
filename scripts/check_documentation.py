@@ -17,6 +17,7 @@ MARKER = re.compile(
 )
 CLASSIFICATION = re.compile(r"^<!-- pg-tide-example: (illustrative|historical|labs) -->$")
 FENCE = re.compile(r"^```(?:[A-Za-z0-9_+-]+)?\s*$")
+LINK = re.compile(r"\]\(([^)#]+\.md)(?:#[^)]*)?\)")
 
 
 class DocumentationError(ValueError):
@@ -76,6 +77,29 @@ def check_document(path: Path, tests: dict[str, dict], ids: set[str]) -> None:
             raise DocumentationError(f"{path}:{index + 1}: {test_id} has no evidence path")
 
 
+def check_navigation() -> None:
+    summary = ROOT / "docs/src/SUMMARY.md"
+    links: dict[Path, list[int]] = {}
+    for index, match in enumerate(LINK.finditer(summary.read_text(encoding="utf-8")), start=1):
+        target = (summary.parent / match.group(1)).resolve()
+        try:
+            target.relative_to(summary.parent.resolve())
+        except ValueError:
+            continue
+        links.setdefault(target, []).append(index)
+
+    pages = {path.resolve() for path in (ROOT / "docs/src").rglob("*.md")} - {summary.resolve()}
+    missing = sorted(path.relative_to(ROOT) for path in pages if path not in links)
+    duplicate = sorted(
+        (path.relative_to(ROOT), positions) for path, positions in links.items() if len(positions) > 1
+    )
+    if missing:
+        raise DocumentationError("orphan documentation pages:\n" + "\n".join(f"- {path}" for path in missing))
+    if duplicate:
+        details = ", ".join(f"{path} (SUMMARY lines {positions})" for path, positions in duplicate)
+        raise DocumentationError(f"documentation pages linked more than once: {details}")
+
+
 def check() -> None:
     tests = required_tests()
     ids: set[str] = set()
@@ -84,6 +108,7 @@ def check() -> None:
             check_document(path, tests, ids)
     if not ids:
         raise DocumentationError("no tested documentation examples found")
+    check_navigation()
     print(f"documentation contract valid ({len(ids)} tested examples)")
 
 

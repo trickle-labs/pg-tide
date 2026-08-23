@@ -75,7 +75,7 @@ SELECT extversion FROM pg_extension WHERE extname = 'pg_tide';
 Start the relay:
 
 ```bash
-pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
+pg-tide run --postgres-url "postgres://user:pass@localhost:5432/mydb"
 ```
 
 Messages flow from the outbox to NATS JetStream. Change the pipeline config in PostgreSQL — the relay picks it up without a restart.

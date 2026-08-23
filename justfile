@@ -161,6 +161,9 @@ lint-quoting:
 test-unit:
     cargo test --package {{PG_TIDE_RELAY}} --bins -- --test-threads=4
 
+test-support-bundle:
+    cargo test --package {{PG_TIDE_RELAY}} --lib --no-default-features --features core support_bundle_tests
+
 # Security-focused tests, including the no-PostgreSQL v0.44 contract checks.
 # Service-backed privilege and migration tests remain in test-integration.
 test-security:
@@ -185,6 +188,17 @@ test-extension-clean:
 test-unit-clean:
     cargo test --package {{PG_TIDE_RELAY}} --bins --locked -- --test-threads=4
 
+# Install the pinned user-scoped project tools. System services are separate
+# prerequisites and are not installed by this recipe.
+setup:
+    rustup toolchain install 1.97.1 --profile minimal
+    cargo install cargo-pgrx --version '=0.18.0' --locked
+    cargo install mdbook --version '=0.4.52' --locked
+    cargo install mdbook-admonish --version '=1.20.0' --locked
+
+# Run the service-free unit suite.
+test: test-unit
+
 # Run all tests
 test-all: test-unit test-integration
 
@@ -196,9 +210,17 @@ build-relay:
 build:
     cargo build --all
 
-# Check all
-check:
+# Compile the workspace without running tests.
+check-compile:
     cargo check --all
+
+# Build the documentation after its contract checks pass.
+docs:
+    python3 scripts/check_documentation.py
+    mdbook build
+
+# Check the service-free contributor gate.
+check: check-compile lint test check-connectors check-v1-contracts check-v1-surface check-flakes check-required-tests check-lifecycle-contract check-baseline test-observability check-repository-hygiene docs
 
 # Build documentation (requires mdbook)
 docs-build:
@@ -227,6 +249,10 @@ check-flakes:
 # Validate the authoritative PR, scheduled, and release test inventory.
 check-required-tests:
     python3 scripts/check_required_tests.py --check-manifest
+
+# Validate retained scripts, indexes, path ownership, and file-size limits.
+check-repository-hygiene:
+    python3 scripts/check_repository_hygiene.py
 
 # Validate the clean-tag pre-v1 comparison baseline and dependency digest.
 check-baseline:

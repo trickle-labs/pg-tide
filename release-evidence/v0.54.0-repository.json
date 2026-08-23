@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "release": "v0.54.0",
+  "status": "pending",
+  "baseline_release": "v0.48.0",
+  "baseline_source_tag": "v0.47.0",
+  "baseline": "release-evidence/pre-v1-baseline/baseline.json",
+  "captured_commit": null,
+  "dirty": null,
+  "measurements": {},
+  "open_blockers": ["The exact v0.54.0 candidate comparison has not been captured."]
+}

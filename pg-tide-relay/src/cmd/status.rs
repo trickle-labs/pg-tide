@@ -133,7 +133,7 @@ async fn query_rows(
             )
             .await?
     } else {
-        compatibility_rows(&client).await?
+        compatibility_rows(client).await?
     })
 }
 

@@ -13,14 +13,6 @@ const REDACTION_POLICY_VERSION: &str = "v1";
 const MAX_PIPELINES: usize = 100;
 const MAX_STRING_BYTES: usize = 256;
 const MAX_BUNDLE_BYTES: u64 = 1024 * 1024;
-const BUNDLE_FILES: [&str; 6] = [
-    "manifest.json",
-    "versions.json",
-    "doctor.json",
-    "status.json",
-    "error-codes.json",
-    "metrics-metadata.json",
-];
 
 #[derive(Debug)]
 struct DoctorCollection {
@@ -51,10 +43,7 @@ pub async fn collect_support_bundle(
         |_error| failed_collection("postgres.unavailable"),
         |result| result.data,
     );
-    let status_data = status.map_or_else(
-        |_error| failed_collection("postgres.unavailable"),
-        |data| data,
-    );
+    let status_data = status.unwrap_or_else(|_error| failed_collection("postgres.unavailable"));
     write_support_bundle(
         target,
         doctor_data,
@@ -987,6 +976,15 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::erro
 #[cfg(test)]
 mod support_bundle_tests {
     use super::*;
+
+    const BUNDLE_FILES: [&str; 6] = [
+        "manifest.json",
+        "versions.json",
+        "doctor.json",
+        "status.json",
+        "error-codes.json",
+        "metrics-metadata.json",
+    ];
 
     #[test]
     fn bounds_strings_and_arrays_without_leaking_urls() {

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "release": "v0.54.0",
+  "status": "pending",
+  "policy": "schemas/lifecycle-compatibility-v1.json",
+  "required_tests": "tests/required-tests.toml",
+  "inherited_correctness": "release-evidence/v0.50.0-correctness.json",
+  "inherited_lifecycle": "release-evidence/v0.51.0-lifecycle.json",
+  "inherited_security": "release-evidence/v0.52.0-security.json",
+  "inherited_performance": "release-evidence/v0.53.0-performance.json",
+  "operations": "release-evidence/v0.54.0-operations.json",
+  "runbook_drills": "release-evidence/v0.54.0-runbook-drills.json",
+  "repository": "release-evidence/v0.54.0-repository.json",
+  "candidate": {"commit": null, "artifact_digests": [], "image_digests": []},
+  "open_blockers": [
+    "v0.54.0 candidate artifacts, required-test results, runbook drills, and approvals are not complete",
+    "v0.53.0 operational performance qualification is explicitly deferred to v0.56.0"
+  ],
+  "release_manager": {"status": "required", "approved_by": null, "approved_at": null}
+}

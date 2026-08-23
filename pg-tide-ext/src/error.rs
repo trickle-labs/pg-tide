@@ -50,6 +50,7 @@ pub enum PgTideError {
 }
 
 impl PgTideError {
+    #[allow(dead_code)]
     pub const fn code(&self) -> &'static str {
         match self {
             Self::UnsupportedSurface { .. } => "PGTIDE_CONFIG_UNSUPPORTED_SURFACE",

@@ -256,7 +256,7 @@ This is powerful — different event types from the same outbox can be routed to
 If you're using the Docker Compose setup, the relay is already running. Otherwise, start it manually:
 
 ```bash
-pg-tide --postgres-url "postgres://postgres:postgres@localhost:5432/app"
+pg-tide run --postgres-url "postgres://postgres:postgres@localhost:5432/app"
 ```
 
 You'll see log output like:

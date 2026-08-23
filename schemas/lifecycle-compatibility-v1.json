@@ -36,5 +36,5 @@
     {"id": "lifecycle-compatibility-pr", "targets": ["pg-tide-relay/src/compatibility.rs", "pg-tide-relay/src/cmd/self_test.rs"]},
     {"id": "lifecycle-adjacent-pr", "targets": ["scripts/package_extension.sh", "scripts/catalog_snapshot.py", "sql", "pg-tide-relay/tests/migration_test.rs"]}
   ],
-  "version_alignment": {"workspace": "Cargo.toml", "controls": ["pg_tide.control", "pg-tide-ext/pg_tide.control"], "chart": "helm/pg-tide/Chart.yaml", "examples": ["examples/cnpg/cluster.yaml", "examples/cnpg/cluster-image-volume.yaml", "examples/cnpg/upgrade-rehearsal.yaml"], "evidence": "release-evidence/v0.53.0-index.json"}
+  "version_alignment": {"workspace": "Cargo.toml", "controls": ["pg_tide.control", "pg-tide-ext/pg_tide.control"], "chart": "helm/pg-tide/Chart.yaml", "examples": ["examples/cnpg/cluster.yaml", "examples/cnpg/cluster-image-volume.yaml", "examples/cnpg/upgrade-rehearsal.yaml"], "evidence": "release-evidence/v0.54.0-index.json"}
 }

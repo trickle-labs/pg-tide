@@ -90,7 +90,7 @@ SELECT tide.relay_set_outbox_v2(
 );
 
 -- Start the relay — messages flow automatically
--- pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
+-- pg-tide run --postgres-url "postgres://user:pass@localhost:5432/mydb"
 ```
 
 ---

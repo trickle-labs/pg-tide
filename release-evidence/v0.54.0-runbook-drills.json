@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "release": "v0.54.0",
+  "status": "pending",
+  "runbook_manifest": "docs/runbook-evidence.toml",
+  "required_scenarios": [
+    "relay-will-not-start",
+    "extension-version-mismatch",
+    "privilege-failure",
+    "pipeline-invalid",
+    "pipeline-undiscovered",
+    "nats-unavailable",
+    "kafka-unavailable",
+    "postgres-destination-unavailable",
+    "webhook-authentication-failure",
+    "tls-failure",
+    "lag-growth",
+    "dlq-growth",
+    "duplicate-observation",
+    "ownership-ambiguity",
+    "postgresql-failover",
+    "cleanup-failure",
+    "disk-growth",
+    "failed-upgrade",
+    "rollback",
+    "restore"
+  ],
+  "drills": [],
+  "open_blockers": ["Independent non-author drill records and matching digests are not present."],
+  "approval": {"approved_by": null, "approved_at": null}
+}
