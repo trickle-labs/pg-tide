@@ -33,6 +33,7 @@ configured with plain SQL.
 Requires **PostgreSQL 18**. The block below runs against a database with the
 `pg_tide` extension installed:
 
+<!-- pg-tide-example: tested id=readme-quickstart-sql test=quickstart-sql-pr -->
 <!-- quickstart:run -->
 ```sql
 -- Install the extension (idempotent)
