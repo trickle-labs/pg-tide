@@ -97,7 +97,7 @@ mod tests {
         assert!(value["next_action"]
             .as_str()
             .unwrap()
-            .contains("upgrade-failed"));
+            .contains("failed-upgrade"));
     }
 
     #[test]

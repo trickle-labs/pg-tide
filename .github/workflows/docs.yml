@@ -119,7 +119,6 @@ jobs:
         with:
           args: >-
             --exclude-loopback
-            --exclude-mail
             --timeout 30
             --max-retries 3
             --accept 200,204,206,301,302,307,308

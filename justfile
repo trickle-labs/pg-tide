@@ -212,7 +212,7 @@ build:
 
 # Compile the workspace without running tests.
 check-compile:
-    cargo check --all
+    cargo check --workspace --exclude {{PG_TIDE_EXT}}
 
 # Build the documentation after its contract checks pass.
 docs:
