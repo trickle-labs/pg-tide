@@ -63,6 +63,7 @@ psql "postgres://postgres:postgres@localhost:5432/app"
 
 The pg_tide extension creates the `tide` schema with all the catalog tables, views, and functions you'll need:
 
+<!-- pg-tide-example: tested id=first-pipeline-install-sql test=quickstart-sql-pr -->
 <!-- quickstart:run -->
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_tide;
@@ -70,6 +71,7 @@ CREATE EXTENSION IF NOT EXISTS pg_tide;
 
 Let's verify it's installed correctly:
 
+<!-- pg-tide-example: tested id=first-pipeline-version-sql test=quickstart-sql-pr -->
 <!-- quickstart:run -->
 ```sql
 SELECT extname, extversion FROM pg_extension WHERE extname = 'pg_tide';
@@ -98,6 +100,7 @@ An outbox is a named message stream. You might have one outbox for order events,
 
 Let's create an outbox for order events:
 
+<!-- pg-tide-example: tested id=first-pipeline-outbox-sql test=quickstart-sql-pr -->
 <!-- quickstart:run -->
 ```sql
 SELECT tide.outbox_create_if_not_exists('orders',
@@ -226,6 +229,7 @@ SELECT tide.create_consumer_group('nats-relay', 'orders',
 
 Now we tell pg_tide how to deliver messages from the `orders` outbox to NATS. The native relay polls the shared `tide.tide_outbox_messages` table directly and tracks a durable offset per relay group, pipeline, and outbox (ADR-011) — no consumer group is required:
 
+<!-- pg-tide-example: tested id=first-pipeline-relay-sql test=quickstart-sql-pr -->
 <!-- quickstart:run -->
 ```sql
 SELECT tide.relay_set_outbox_v2(
@@ -252,7 +256,7 @@ This is powerful — different event types from the same outbox can be routed to
 If you're using the Docker Compose setup, the relay is already running. Otherwise, start it manually:
 
 ```bash
-pg-tide --postgres-url "postgres://postgres:postgres@localhost:5432/app"
+pg-tide run --postgres-url "postgres://postgres:postgres@localhost:5432/app"
 ```
 
 You'll see log output like:

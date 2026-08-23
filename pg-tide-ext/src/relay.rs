@@ -247,7 +247,7 @@ fn relay_set_outbox_v2_impl(config: pgrx::JsonB) -> Result<(), PgTideError> {
 
 /// Enable a relay pipeline.
 ///
-/// Returns `TRUE` if a row was modified, `FALSE` if the pipeline did not exist.
+/// Returns `TRUE` if a row was modified, or errors if the pipeline does not exist.
 /// Sends a `pg_notify('tide_relay_config')` to wake up any listening relay instances.
 #[pg_extern(schema = "tide")]
 pub fn relay_enable(p_name: &str) -> bool {
@@ -714,7 +714,7 @@ mod tests {
 
     // ── error paths ────────────────────────────────────────────────────────
 
-    #[pg_test(error = "relay pipeline not found: does-not-exist")]
+    #[pg_test(error = "PGTIDE_RELAY_NOT_FOUND: relay pipeline not found: does-not-exist")]
     fn test_relay_enable_unknown_pipeline_is_safe() {
         // Missing pipelines fail closed rather than becoming a successful no-op.
         crate::relay::relay_enable("does-not-exist");

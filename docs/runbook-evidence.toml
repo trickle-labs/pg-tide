@@ -5,88 +5,79 @@ alerts = ["none"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "postgresql-inbox-connector"
+id = "postgres-destination-unavailable"
 path = "docs/src/operations/runbook-pg-inbox.md"
 alerts = ["PgTidePublishErrors", "PgTideConsumerLagHigh"]
 tests = ["scripts/check_observability.py", "pg-tide-relay/tests/pg_inbox_sink_test.rs"]
 workflow = ".github/workflows/ci.yml:test-integration-relay"
 owner = "pg-tide maintainers"
-last_reviewed = "0.47.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "nats-jetstream-connector"
+id = "nats-unavailable"
 path = "docs/src/operations/runbook-nats.md"
 alerts = ["PgTidePublishErrors", "PgTideConsumerLagHigh"]
 tests = ["scripts/check_observability.py", "pg-tide-relay/tests/public_api_outbox_to_nats_e2e.rs"]
 workflow = ".github/workflows/ci.yml:public-api-nats-e2e"
 owner = "pg-tide maintainers"
-last_reviewed = "0.47.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "kafka-connector"
+id = "kafka-unavailable"
 path = "docs/src/operations/runbook-kafka.md"
 alerts = ["PgTidePublishErrors", "PgTideConsumerLagHigh"]
 tests = ["scripts/check_observability.py", "pg-tide-relay/tests/public_api_outbox_to_kafka_e2e.rs"]
 workflow = ".github/workflows/ci.yml:public-api-kafka-e2e"
 owner = "pg-tide maintainers"
-last_reviewed = "0.47.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "webhook-connector"
+id = "webhook-authentication-failure"
 path = "docs/src/operations/runbook-webhook.md"
 alerts = ["PgTidePublishErrors", "PgTideConsumerLagHigh"]
 tests = ["scripts/check_observability.py", "pg-tide-relay/tests/webhook_test.rs"]
 workflow = ".github/workflows/ci.yml:test-integration"
 owner = "pg-tide maintainers"
-last_reviewed = "0.47.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "pipeline-not-discovered"
+id = "pipeline-undiscovered"
 path = "docs/src/operations/runbooks.md"
 alerts = ["PgTidePipelineUnhealthy"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "pipeline-has-lag"
+id = "lag-growth"
 path = "docs/src/operations/runbooks.md"
 alerts = ["PgTideConsumerLagHigh", "PgTidePoolWaiting"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "sink-authentication-failure"
-path = "docs/src/operations/runbooks.md"
-alerts = ["PgTidePublishErrors"]
-tests = ["scripts/check_observability.py"]
-workflow = ".github/workflows/ci.yml:operator-surfaces"
-owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
-
-[[runbook]]
-id = "dlq-is-growing"
+id = "dlq-growth"
 path = "docs/src/operations/runbooks.md"
 alerts = ["PgTideDLQDepthHigh"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "advisory-lock-ownership"
+id = "ownership-ambiguity"
 path = "docs/src/operations/runbooks.md"
 alerts = ["none"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
 id = "postgresql-failover"
@@ -95,40 +86,94 @@ alerts = ["none"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "retention-cleanup"
+id = "cleanup-failure"
 path = "docs/src/operations/runbooks.md"
 alerts = ["none"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "disk-usage"
+id = "disk-growth"
 path = "docs/src/operations/runbooks.md"
 alerts = ["none"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "upgrade-failed"
+id = "failed-upgrade"
 path = "docs/src/operations/runbooks.md"
 alerts = ["none"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
 
 [[runbook]]
-id = "duplicate-messages"
+id = "duplicate-observation"
 path = "docs/src/operations/runbooks.md"
 alerts = ["none"]
 tests = ["scripts/check_observability.py"]
 workflow = ".github/workflows/ci.yml:operator-surfaces"
 owner = "pg-tide maintainers"
-last_reviewed = "0.45.0"
+last_reviewed = "0.54.0"
+
+[[runbook]]
+id = "extension-version-mismatch"
+path = "docs/src/operations/runbook-relay-upgrade.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/migration_test.rs"]
+workflow = ".github/workflows/ci.yml:test-integration-core"
+owner = "pg-tide maintainers"
+last_reviewed = "0.54.0"
+
+[[runbook]]
+id = "privilege-failure"
+path = "docs/src/operations/troubleshooting.md"
+alerts = ["PgTidePublishErrors"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/publisher_acl_test.rs"]
+workflow = ".github/workflows/security.yml:privilege-model"
+owner = "pg-tide maintainers"
+last_reviewed = "0.54.0"
+
+[[runbook]]
+id = "pipeline-invalid"
+path = "docs/src/operations/troubleshooting.md"
+alerts = ["PgTidePipelineUnhealthy"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/src/config/schema_support.rs"]
+workflow = ".github/workflows/ci.yml:operator-surfaces"
+owner = "pg-tide maintainers"
+last_reviewed = "0.54.0"
+
+[[runbook]]
+id = "tls-failure"
+path = "docs/src/operations/troubleshooting.md"
+alerts = ["PgTidePublishErrors"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/tls_test.rs"]
+workflow = ".github/workflows/security.yml:network-security-core"
+owner = "pg-tide maintainers"
+last_reviewed = "0.54.0"
+
+[[runbook]]
+id = "restore"
+path = "docs/src/operations/runbook-backup-restore.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/migration_test.rs"]
+workflow = ".github/workflows/ci.yml:test-integration-core"
+owner = "pg-tide maintainers"
+last_reviewed = "0.54.0"
+
+[[runbook]]
+id = "rollback"
+path = "docs/src/operations/runbook-relay-upgrade.md"
+alerts = ["none"]
+tests = ["scripts/check_observability.py", "pg-tide-relay/tests/migration_test.rs"]
+workflow = ".github/workflows/ci.yml:test-integration-core"
+owner = "pg-tide maintainers"
+last_reviewed = "0.54.0"

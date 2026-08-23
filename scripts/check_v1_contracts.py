@@ -18,6 +18,7 @@ MANIFEST = ROOT / "schemas/v1-contract-manifest.toml"
 SURFACES = {
     "sql.public.v1", "pipeline.config.v1", "metrics.core.v1", "health.http.v1",
     "cli.machine.v1", "event.native.v1", "event.cloudevents.v1", "connectors.supported.v1",
+    "operator.errors.v1", "support.bundle.v1",
 }
 REQUIRED = {
     "id", "version", "normative_doc", "artifact", "source", "check", "owner",

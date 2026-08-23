@@ -1,5 +1,5 @@
 schema_version = 1
-inventory_version = "0.53.0"
+inventory_version = "0.54.0"
 
 [[test]]
 id = "connector-registry-pr"
@@ -71,8 +71,8 @@ level = "pr"
 triggers = ["pull_request", "push"]
 workflow = ".github/workflows/ci.yml"
 ci_job = "clean-checkout"
-command = "cargo test --workspace --exclude pg-tide-ext --locked --no-default-features --features core"
-targets = ["Cargo.lock", "pg-tide-relay"]
+command = "just check"
+targets = ["justfile", "CONTRIBUTING.md", ".github/workflows/ci.yml"]
 dependencies = ["rust-1.97.1"]
 owner = "@grove"
 blocking = true
@@ -298,6 +298,70 @@ ci_job = "operator-surfaces"
 command = "python3 scripts/check_observability.py"
 targets = ["scripts/check_observability.py", "docs/runbook-evidence.toml"]
 dependencies = ["python3", "bash"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "operator-error-catalog-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "operator-error-catalog"
+command = "python3 scripts/generate_operator_errors.py --check"
+targets = ["operator-errors.toml", "scripts/generate_operator_errors.py", "schemas/operator-errors-v1.json", "pg-tide-relay/src/operator_errors.rs", "docs/src/reference/error-catalog.md"]
+dependencies = ["python3"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "documentation-contract-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/docs.yml"
+ci_job = "documentation-contract"
+command = "python3 scripts/check_documentation.py"
+targets = ["scripts/check_documentation.py", "README.md", "docs/src/SUMMARY.md", "tests/required-tests.toml"]
+dependencies = ["python3"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "repository-hygiene-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "repository-hygiene"
+command = "python3 scripts/check_repository_hygiene.py"
+targets = ["scripts/check_repository_hygiene.py", "scripts/README.md", "plans/README.md"]
+dependencies = ["python3", "git"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "support-bundle-pr"
+level = "pr"
+triggers = ["pull_request", "push"]
+workflow = ".github/workflows/ci.yml"
+ci_job = "support-bundle"
+command = "cargo test --package pg-tide-relay --lib --no-default-features --features core support_bundle_tests"
+targets = ["pg-tide-relay/src/cmd/doctor.rs", "pg-tide-relay/src/cmd/status.rs", "schemas/support-bundle-v1.schema.json"]
+dependencies = ["rust-1.97.1"]
 owner = "@grove"
 blocking = true
 max_retries = 0

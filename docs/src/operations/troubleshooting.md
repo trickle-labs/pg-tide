@@ -11,10 +11,10 @@ Common issues and their solutions.
 The relay needs a PostgreSQL connection. Provide it via CLI flag or environment variable:
 
 ```bash
-pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
+pg-tide run --postgres-url "postgres://user:pass@localhost:5432/mydb"
 # or
 export PG_TIDE_POSTGRES_URL="postgres://..."
-pg-tide
+pg-tide run
 ```
 
 ### "PostgreSQL connection failed, retrying"

@@ -104,3 +104,29 @@ codeowner = "@grove"
 classification = "frozen"
 evolution = "add versions only with compatibility evidence; removing a supported connector requires deprecation and review"
 last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "operator.errors.v1"
+version = 1
+normative_doc = "docs/src/reference/error-catalog.md"
+artifact = "schemas/operator-errors-v1.json"
+source = "operator-errors.toml"
+check = "python3 scripts/generate_operator_errors.py --check"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "add bounded codes and metadata rows; do not change existing codes or CLI diagnostic fields"
+last_reviewed = "v0.47.0"
+
+[[surface]]
+id = "support.bundle.v1"
+version = 1
+normative_doc = "docs/src/support/support-bundles.md"
+artifact = "schemas/support-bundle-v1.schema.json"
+source = "pg-tide-relay/src/cmd/doctor.rs"
+check = "just test-support-bundle"
+owner = "@grove"
+codeowner = "@grove"
+classification = "frozen"
+evolution = "add bounded metadata fields only; preserve the fixed file set and redaction boundary"
+last_reviewed = "v0.47.0"

@@ -69,44 +69,13 @@ pub async fn run_status(
     tokio::spawn(async move {
         let _ = conn.await;
     });
-
     let compatibility = compatibility::check_client(&client, env!("CARGO_PKG_VERSION")).await?;
-
-    let status_view_exists: bool = client
-        .query_one(
-            "SELECT to_regclass('tide.relay_pipeline_status') IS NOT NULL",
-            &[],
-        )
-        .await?
-        .get(0);
-    let all_rows = if status_view_exists {
-        client
-            .query(
-                "SELECT pipeline_id, direction, enabled, ownership, health,
-                        consumer_lag, last_offset, last_checkpoint_success_at,
-                        last_error_code, last_error_component, last_error_class,
-                        last_error_at, retry_attempt, retry_state, next_retry_at,
-                        unresolved_dlq_depth, last_state_update_at
-                   FROM tide.relay_pipeline_status
-                  ORDER BY pipeline_id, direction",
-                &[],
-            )
-            .await?
-    } else {
-        compatibility_rows(&client).await?
-    };
+    let all_rows = query_rows(&client).await?;
 
     if matches!(output_format, OutputFormat::Json) {
-        let pipelines = all_rows
-            .iter()
-            .map(status_row_json)
-            .collect::<Result<Vec<_>, _>>()?;
         crate::cmd::output::success(
             "status",
-            serde_json::json!({
-                "compatibility": compatibility,
-                "pipelines": pipelines
-            }),
+            status_data(&compatibility, &all_rows)?,
             output_format,
         )?;
     } else {
@@ -120,12 +89,66 @@ pub async fn run_status(
         render_rows(&all_rows)?;
     }
 
-    // v0.33.0: Optional inbox fleet summary.
     if inbox_summary && matches!(output_format, OutputFormat::Text) {
         print_inbox_fleet_summary(&client).await;
     }
 
     Ok(())
+}
+
+/// Collect the same bounded status data used by the JSON renderer.
+pub async fn collect_status(url: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let (client, conn) = pg_tls::connect(url)
+        .await
+        .map_err(|e| format!("connection failed: {e}"))?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let compatibility = compatibility::check_client(&client, env!("CARGO_PKG_VERSION")).await?;
+    let all_rows = query_rows(&client).await?;
+    Ok(status_data(&compatibility, &all_rows)?)
+}
+
+async fn query_rows(
+    client: &tokio_postgres::Client,
+) -> Result<Vec<tokio_postgres::Row>, Box<dyn std::error::Error>> {
+    let status_view_exists: bool = client
+        .query_one(
+            "SELECT to_regclass('tide.relay_pipeline_status') IS NOT NULL",
+            &[],
+        )
+        .await?
+        .get(0);
+    Ok(if status_view_exists {
+        client
+            .query(
+                "SELECT pipeline_id, direction, enabled, ownership, health,
+                        consumer_lag, last_offset, last_checkpoint_success_at,
+                        last_error_code, last_error_component, last_error_class,
+                        last_error_at, retry_attempt, retry_state, next_retry_at,
+                        unresolved_dlq_depth, last_state_update_at
+                   FROM tide.relay_pipeline_status
+                  ORDER BY pipeline_id, direction",
+                &[],
+            )
+            .await?
+    } else {
+        compatibility_rows(client).await?
+    })
+}
+
+fn status_data(
+    compatibility: &compatibility::CompatibilityDecision,
+    rows: &[tokio_postgres::Row],
+) -> Result<serde_json::Value, tokio_postgres::Error> {
+    let pipelines = rows
+        .iter()
+        .map(status_row_json)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::json!({
+        "compatibility": compatibility,
+        "pipelines": pipelines
+    }))
 }
 
 fn status_row_json(row: &tokio_postgres::Row) -> Result<serde_json::Value, tokio_postgres::Error> {

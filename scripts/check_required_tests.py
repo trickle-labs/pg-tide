@@ -46,7 +46,7 @@ def workflow_jobs(workflow: Path) -> set[str]:
 def just_recipes() -> set[str]:
     recipes = set()
     for line in (ROOT / "justfile").read_text().splitlines():
-        match = re.match(r"^([A-Za-z0-9_-]+)(?:\s+[A-Z][A-Z0-9_]*)?:$", line)
+        match = re.match(r"^([A-Za-z0-9_-]+)(?:\s+[^:]+)?:", line)
         if match:
             recipes.add(match.group(1))
     return recipes

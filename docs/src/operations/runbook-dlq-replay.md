@@ -53,7 +53,7 @@ to the DLQ immediately.  Fix the sink, schema, or configuration first:
 
 ```bash
 # Validate pipeline config against the live catalog and sink:
-pg-tide validate-config --pipeline my-pipeline --postgres-url "$PG_TIDE_POSTGRES_URL"
+pg-tide config validate --pipeline my-pipeline --postgres-url "$PG_TIDE_POSTGRES_URL"
 
 # Check that the relay can connect to all required services:
 pg-tide doctor --postgres-url "$PG_TIDE_POSTGRES_URL"

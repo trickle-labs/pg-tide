@@ -11,6 +11,7 @@ use pg_tide_relay::pg_tls;
 
 mod cli;
 mod cmd;
+mod operator_errors;
 
 use clap::{CommandFactory, Parser};
 use futures_util::StreamExt;
@@ -80,6 +81,24 @@ fn emit_compatibility_failure(
     }
 }
 
+fn exit_with_diagnostic(
+    command: &str,
+    component: &str,
+    error: &(dyn std::error::Error + 'static),
+    output_format: OutputFormat,
+) -> ! {
+    if matches!(output_format, OutputFormat::Json) {
+        let _ = cmd::output::failure(
+            command,
+            cmd::diagnostic::from_boxed_error(component, error),
+            output_format,
+        );
+    } else {
+        tracing::error!(error = %error, "{command} failed");
+    }
+    std::process::exit(1);
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -147,12 +166,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     cmd::validate_config::run_validate_config(&url, &pipeline, cli.output_format)
                         .await;
                 if let Err(error) = result {
-                    cmd::output::failure(
+                    exit_with_diagnostic(
                         "config validate",
-                        cmd::diagnostic::from_error("postgres.catalog", &error),
+                        "postgres.catalog",
+                        error.as_ref(),
                         cli.output_format,
-                    )?;
-                    return Err(error);
+                    );
                 }
                 return Ok(());
             }
@@ -167,12 +186,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let data = match cmd::config::run_export(&url, pipeline.as_deref()).await {
                     Ok(data) => data,
                     Err(error) => {
-                        cmd::output::failure(
+                        exit_with_diagnostic(
                             "config export",
-                            cmd::diagnostic::from_error("postgres.catalog", &error),
+                            "postgres.catalog",
+                            error.as_ref(),
                             cli.output_format,
-                        )?;
-                        return Err(error);
+                        );
                     }
                 };
                 if matches!(cli.output_format, OutputFormat::Json) {
@@ -189,7 +208,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "migrate-config");
-            return cmd::migrate_config::run_migrate_config(&url).await;
+            if let Err(error) = cmd::migrate_config::run_migrate_config(&url).await {
+                exit_with_diagnostic(
+                    "migrate-config",
+                    "postgres.catalog",
+                    error.as_ref(),
+                    cli.output_format,
+                );
+            }
+            return Ok(());
         }
         Some(Commands::Maintenance(MaintenanceCommands::Sweep {
             outbox,
@@ -212,26 +239,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await;
             if let Err(error) = result {
-                if matches!(cli.output_format, OutputFormat::Json) {
-                    cmd::output::failure(
-                        "maintenance sweep",
-                        cmd::diagnostic::from_error("postgres.maintenance", &error),
-                        cli.output_format,
-                    )?;
-                }
-                return Err(error);
+                exit_with_diagnostic(
+                    "maintenance sweep",
+                    "postgres.maintenance",
+                    error.as_ref(),
+                    cli.output_format,
+                );
             }
             return Ok(());
         }
-        Some(Commands::Doctor { postgres_url }) => {
+        Some(Commands::Doctor {
+            postgres_url,
+            bundle,
+        }) => {
             let url = postgres_url
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "doctor");
-            return cmd::doctor::run_doctor(&url, cli.output_format).await;
+            if let Some(bundle_path) = bundle {
+                match cmd::doctor::collect_support_bundle(&url, &bundle_path).await {
+                    Ok(result) => {
+                        tracing::info!(
+                            path = %result.path.display(),
+                            healthy = result.healthy,
+                            "support bundle written"
+                        );
+                    }
+                    Err(error) => {
+                        exit_with_diagnostic(
+                            "doctor",
+                            "support.bundle",
+                            error.as_ref(),
+                            cli.output_format,
+                        );
+                    }
+                }
+            }
+            if let Err(error) = cmd::doctor::run_doctor(&url, cli.output_format).await {
+                if matches!(cli.output_format, OutputFormat::Json) {
+                    std::process::exit(1);
+                }
+                exit_with_diagnostic(
+                    "doctor",
+                    "postgres.catalog",
+                    error.as_ref(),
+                    cli.output_format,
+                );
+            }
+            return Ok(());
         }
         Some(Commands::Replay(replay_cmd)) => {
-            return cmd::replay::run_replay_command(replay_cmd, &cfg.postgres_url).await;
+            if let Err(error) = cmd::replay::run_replay_command(replay_cmd, &cfg.postgres_url).await
+            {
+                exit_with_diagnostic("replay", "relay.replay", error.as_ref(), cli.output_format);
+            }
+            return Ok(());
         }
         Some(Commands::Status {
             postgres_url,
@@ -243,14 +305,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             require_postgres_url(&url, "status");
             let result = cmd::status::run_status(&url, inbox_summary, cli.output_format).await;
             if let Err(error) = result {
-                if matches!(cli.output_format, OutputFormat::Json) {
-                    cmd::output::failure(
-                        "status",
-                        cmd::diagnostic::from_boxed_error("postgres.status", error.as_ref()),
-                        cli.output_format,
-                    )?;
-                }
-                return Err(error);
+                exit_with_diagnostic(
+                    "status",
+                    "postgres.status",
+                    error.as_ref(),
+                    cli.output_format,
+                );
             }
             return Ok(());
         }
@@ -265,8 +325,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .or_else(|| std::env::var("PG_TIDE_POSTGRES_URL").ok())
                 .unwrap_or_else(|| cfg.postgres_url.clone());
             require_postgres_url(&url, "history");
-            return cmd::history::run_history(&url, &pipeline, limit, since.as_deref(), &output)
-                .await;
+            if let Err(error) =
+                cmd::history::run_history(&url, &pipeline, limit, since.as_deref(), &output).await
+            {
+                exit_with_diagnostic(
+                    "history",
+                    "postgres.catalog",
+                    error.as_ref(),
+                    cli.output_format,
+                );
+            }
+            return Ok(());
         }
         None => {
             eprintln!("warning: commandless relay startup is deprecated; use `run`");
@@ -277,7 +346,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // advisory lock, then exit 0 on success or 1 on failure.
     if cli.self_test {
         require_postgres_url(&cfg.postgres_url, "--self-test");
-        return cmd::self_test::run_self_test(&cfg.postgres_url, cli.output_format).await;
+        if let Err(error) =
+            cmd::self_test::run_self_test(&cfg.postgres_url, cli.output_format).await
+        {
+            if matches!(cli.output_format, OutputFormat::Json) {
+                std::process::exit(1);
+            }
+            exit_with_diagnostic(
+                "self-test",
+                "postgres.catalog",
+                error.as_ref(),
+                cli.output_format,
+            );
+        }
+        return Ok(());
     }
 
     require_postgres_url(&cfg.postgres_url, "relay daemon");
@@ -299,7 +381,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(decision) => decision,
         Err(error) => {
             emit_compatibility_failure(error.as_ref(), cli.output_format)?;
-            return Err(error.into());
+            std::process::exit(1);
         }
     };
     emit_compatibility_success(&compatibility, cli.output_format)?;

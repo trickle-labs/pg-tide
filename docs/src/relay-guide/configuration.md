@@ -15,7 +15,7 @@ Pipeline configuration (outbox sources, sink destinations, batch sizes) lives **
 The only required parameter is the PostgreSQL connection URL:
 
 ```bash
-pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
+pg-tide run --postgres-url "postgres://user:pass@localhost:5432/mydb"
 ```
 
 For production, use environment variables:
@@ -26,7 +26,7 @@ export PG_TIDE_METRICS_ADDR="0.0.0.0:9090"
 export PG_TIDE_LOG_FORMAT="json"
 export PG_TIDE_GROUP_ID="prod-relay"
 
-pg-tide
+pg-tide run
 ```
 
 ---
@@ -95,17 +95,17 @@ The `relay_group_id` parameter is critical for multi-deployment setups. It contr
 **Single deployment (default):**
 
 ```bash
-pg-tide --relay-group-id "default"
+pg-tide run --relay-group-id "default"
 ```
 
 **Multi-region deployment:**
 
 ```bash
 # US region — processes orders outbox → US NATS
-pg-tide --relay-group-id "us-east" --postgres-url "..."
+pg-tide run --relay-group-id "us-east" --postgres-url "..."
 
 # EU region — processes same orders outbox → EU NATS
-pg-tide --relay-group-id "eu-west" --postgres-url "..."
+pg-tide run --relay-group-id "eu-west" --postgres-url "..."
 ```
 
 Each group tracks its own offsets independently — the EU relay won't skip messages just because the US relay already processed them.
@@ -162,10 +162,10 @@ Run multiple relay instances with the **same** `relay_group_id`:
 
 ```bash
 # Instance 1
-pg-tide --relay-group-id "prod" --postgres-url "..."
+pg-tide run --relay-group-id "prod" --postgres-url "..."
 
 # Instance 2 (standby — takes over if instance 1 dies)
-pg-tide --relay-group-id "prod" --postgres-url "..."
+pg-tide run --relay-group-id "prod" --postgres-url "..."
 ```
 
 Advisory locks ensure only one instance owns each pipeline at a time. If the owning instance dies, its locks are released and another instance acquires them on the next discovery cycle.
@@ -235,5 +235,5 @@ sink_max_inflight = 5000
 
 ```bash
 # systemd unit or container entrypoint
-PG_TIDE_DRAIN_TIMEOUT=60 pg-tide --config /etc/pg-tide/relay.toml
+PG_TIDE_DRAIN_TIMEOUT=60 pg-tide run --config /etc/pg-tide/relay.toml
 ```

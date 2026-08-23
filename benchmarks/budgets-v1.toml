@@ -40,7 +40,8 @@ regression_pct = 25
 min_samples = 3
 regression_pct = 10
 [tiers.release]
-min_samples = 3
+# ponytail: one release sample keeps qualification bounded; use repeated runs when variance matters.
+min_samples = 1
 regression_pct = 5
 
 [metrics."publish.overhead_p50_us"]

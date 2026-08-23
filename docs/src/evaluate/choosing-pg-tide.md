@@ -57,15 +57,17 @@ Do not carry a latency number from another environment into a capacity plan.
 
 ### You have no PostgreSQL in your stack
 
-pg_tide is a PostgreSQL extension — that's the whole point. If your data lives in MySQL, MongoDB, DynamoDB, or another database, pg_tide can't help you. Look at:
+pg_tide is a PostgreSQL extension — that's the whole point. If your data lives
+outside PostgreSQL, pg_tide can't help you. Look at:
 
-- **Debezium** — CDC for MySQL, PostgreSQL, MongoDB, SQL Server, and more
-- **Maxwell** — MySQL-specific CDC tool
-- **DynamoDB Streams** — built-in change capture for DynamoDB
+- A purpose-built CDC tool — automatic change capture for non-PostgreSQL stores
 
 ### You're doing pure pub/sub without durability requirements
 
-If you need ephemeral fire-and-forget messaging — real-time typing indicators, presence updates, live dashboard refreshes — where missed messages are perfectly acceptable, a simple Redis Pub/Sub or NATS Core subscription is lighter and faster. No durability means no outbox, no offset tracking, and no relay to operate.
+If you need ephemeral fire-and-forget messaging — real-time typing indicators,
+presence updates, or live dashboard refreshes — a broker-native pub/sub
+subscription is lighter and faster. No durability means no outbox, offset
+tracking, or relay to operate.
 
 ### Your sustained throughput exceeds PostgreSQL's write capacity
 
@@ -77,7 +79,11 @@ However, before concluding that you need more throughput, consider whether you c
 
 ### You need automatic schema-change capture
 
-If your use case is "capture every row change in every table automatically, without modifying application code," Debezium's CDC approach is better suited. pg_tide requires you to explicitly publish events — you choose what gets published, when, and in what format. This is a strength (explicit > implicit for event contracts), but it requires more application involvement.
+If your use case is "capture every row change in every table automatically,
+without modifying application code," an automatic CDC tool is better suited.
+pg_tide requires you to explicitly publish events — you choose what gets
+published, when, and in what format. This is a strength (explicit > implicit
+for event contracts), but it requires more application involvement.
 
 ---
 
@@ -102,21 +108,24 @@ Typical use cases that pg_tide handles beautifully:
 
 ## Detailed Comparison with Alternatives
 
-### pg_tide vs. Debezium
+### pg_tide vs. automatic CDC
 
-| Aspect | pg_tide | Debezium |
+| Aspect | pg_tide | Automatic CDC |
 |--------|---------|----------|
-| **Mechanism** | Application explicitly writes to outbox table | CDC via PostgreSQL logical replication (captures WAL changes) |
+| **Mechanism** | Application explicitly writes to outbox table | CDC captures database changes automatically |
 | **Message format** | You control the payload — publish exactly what consumers need | Mirrors row-level changes (schema-coupled to table structure) |
 | **Event granularity** | Publish semantic events ("order confirmed") | Captures physical changes ("row updated in orders table") |
-| **Infrastructure** | PostgreSQL + single relay binary | PostgreSQL + Kafka Connect + Kafka + ZooKeeper/KRaft |
+| **Infrastructure** | PostgreSQL + single relay binary | Database-specific capture service and broker |
 | **Effectively exactly once** | Available with inbox dedup and transactional processing | Requires destination durability and idempotency |
-| **Operational cost** | One binary (~20 MB), no JVM | JVM-based Kafka Connect, requires Kafka cluster |
+| **Operational cost** | One binary, no broker cluster required | Capture service and broker operations |
 | **Flexibility** | Arbitrary events, decoupled from table schema | Automatic but tied to schema changes |
 | **Application changes** | Must call `outbox_publish()` | None (captures changes transparently) |
 | **Latency** | Profile- and sink-dependent | Replication-slot lag dependent |
 
-**Choose pg_tide** when you want explicit, semantic events that are decoupled from your table schema, and you prefer minimal infrastructure. **Choose Debezium** when you need automatic capture of all database changes without modifying application code, and you're willing to operate the Kafka ecosystem.
+**Choose pg_tide** when you want explicit, semantic events that are decoupled
+from your table schema and you prefer minimal infrastructure. Choose an
+automatic CDC tool when you need every database change without modifying
+application code and accept its operational model.
 
 ### pg_tide vs. Application-Level Outbox (DIY)
 
@@ -129,7 +138,7 @@ Typical use cases that pg_tide handles beautifully:
 | **Monitoring** | Prometheus metrics + SQL views out of the box | You instrument and maintain it |
 | **HA / failover** | Advisory lock coordination, automatic | You design and build it |
 | **Maintenance** | Upgrade extension + relay binary | Maintain all custom code indefinitely |
-| **Backends** | NATS, Kafka, Redis, RabbitMQ, SQS, Webhooks | Whatever you've implemented |
+| **Destinations** | NATS, Kafka, PostgreSQL inbox, Webhooks | Whatever you've implemented |
 
 **Choose pg_tide** to avoid reinventing reliable messaging infrastructure. A DIY outbox is deceptively simple to start but grows in complexity quickly as you add retry logic, offset tracking, multiple consumers, monitoring, and failover. **Choose DIY** only when you have very specific requirements that don't map to pg_tide's model.
 
@@ -187,11 +196,11 @@ fits the reviewed budgets.
 
 Ask yourself these questions in order:
 
-1. **Is PostgreSQL your primary data store?** If not → look at Debezium, platform-specific CDC
+1. **Is PostgreSQL your primary data store?** If not → look at a platform-specific CDC tool
 2. **Do your events need transactional guarantees?** If not → consider direct broker writes or pg_notify
 3. **Does the matching operational profile fit its reviewed budgets?** If not → consider Kafka/Redpanda
 4. **Do you want to minimize operational overhead?** If yes → pg_tide
-5. **Do you need automatic schema-change capture?** If yes → consider Debezium (or combine both)
+5. **Do you need automatic schema-change capture?** If yes → consider a CDC tool (or combine both)
 
 If you answered "yes" to questions 1, 2, 3, and 4 — pg_tide is an excellent
 fit, subject to a reproducible reference run.
@@ -219,9 +228,11 @@ If you've built a custom outbox pattern:
 4. Add inboxes for receiving-side deduplication
 5. Decommission your custom relay code
 
-### Coming from Debezium
+### Coming from an automatic CDC tool
 
-If you're considering pg_tide as a complement or replacement for Debezium:
+If you're considering pg_tide as a complement or replacement for automatic CDC:
 
-- **Complement:** Use Debezium for bulk CDC (replicating entire tables) and pg_tide for semantic business events (explicit, shaped events published by application logic)
-- **Replace:** If you're using Debezium primarily for outbox-style event publishing (Debezium's outbox router), pg_tide provides the same capability with far less infrastructure
+- **Complement:** Keep automatic CDC for bulk table replication and use pg_tide
+  for semantic business events shaped by application logic.
+- **Replace:** If automatic CDC is only being used for outbox-style events,
+  pg_tide provides that capability with less infrastructure.

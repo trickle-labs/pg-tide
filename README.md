@@ -33,6 +33,7 @@ configured with plain SQL.
 Requires **PostgreSQL 18**. The block below runs against a database with the
 `pg_tide` extension installed:
 
+<!-- pg-tide-example: tested id=readme-quickstart-sql test=quickstart-sql-pr -->
 <!-- quickstart:run -->
 ```sql
 -- Install the extension (idempotent)
@@ -74,7 +75,7 @@ SELECT extversion FROM pg_extension WHERE extname = 'pg_tide';
 Start the relay:
 
 ```bash
-pg-tide --postgres-url "postgres://user:pass@localhost:5432/mydb"
+pg-tide run --postgres-url "postgres://user:pass@localhost:5432/mydb"
 ```
 
 Messages flow from the outbox to NATS JetStream. Change the pipeline config in PostgreSQL — the relay picks it up without a restart.
@@ -287,7 +288,7 @@ Full documentation is at **[trickle-labs.github.io/pg-tide](https://trickle-labs
 - [Getting Started](https://trickle-labs.github.io/pg-tide/getting-started/first-pipeline.html)
 - [SQL API Reference](https://trickle-labs.github.io/pg-tide/sql-reference/outbox-api.html)
 - [Relay Configuration](https://trickle-labs.github.io/pg-tide/relay-guide/configuration.html)
-- [Architecture](https://trickle-labs.github.io/pg-tide/evaluate/architecture.html)
+- [Architecture](https://github.com/trickle-labs/pg-tide/blob/main/docs/src/evaluate/architecture.md)
 
 ## Upgrading
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the v0.53 lifecycle policy against repository artifacts."""
+"""Check the current lifecycle policy against repository artifacts."""
 
 from __future__ import annotations
 
@@ -139,8 +139,8 @@ def check_alignment(policy: dict) -> None:
 def check_policy(policy: dict) -> None:
     if policy.get("schema_version") != 1:
         fail("schema_version must be 1")
-    if policy.get("target_version") != "0.53.0" or policy.get("floor_version") != "0.47.0":
-        fail("policy must cover v0.47.0 through v0.53.0")
+    if policy.get("target_version") != "0.54.0" or policy.get("floor_version") != "0.47.0":
+        fail("policy must cover v0.47.0 through v0.54.0")
     if policy.get("compatibility_error_code") != "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE":
         fail("unexpected compatibility error code")
     check_migrations(policy)

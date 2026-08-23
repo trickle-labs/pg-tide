@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pg-tide.dev/schemas/support-bundle-v1.schema.json",
+  "title": "pg-tide support bundle manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "created_at",
+    "relay_version",
+    "included_files",
+    "truncation_counts",
+    "redaction_policy_version",
+    "sharing_warning"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "relay_version": {"type": "string", "maxLength": 64},
+    "included_files": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["filename", "bytes", "sha256", "collection"],
+        "properties": {
+          "filename": {
+            "type": "string",
+            "enum": [
+              "versions.json",
+              "doctor.json",
+              "status.json",
+              "error-codes.json",
+              "metrics-metadata.json"
+            ]
+          },
+          "bytes": {"type": "integer", "minimum": 0, "maximum": 1048576},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "collection": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status"],
+            "properties": {"status": {"enum": ["ok", "failed"]}}
+          }
+        }
+      }
+    },
+    "truncation_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields", "pipelines_total", "pipelines_omitted"],
+      "properties": {
+        "fields": {"type": "integer", "minimum": 0},
+        "pipelines_total": {"type": "integer", "minimum": 0},
+        "pipelines_omitted": {"type": "integer", "minimum": 0}
+      }
+    },
+    "redaction_policy_version": {"const": "v1"},
+    "sharing_warning": {"type": "string", "maxLength": 256}
+  }
+}

@@ -126,15 +126,22 @@ def check_boundary(document: dict, rows: list[dict]) -> None:
 def active_doc_paths() -> set[Path]:
     paths = {ROOT / "README.md", ROOT / "SUPPORT.md", ROOT / "Dockerfile", ROOT / "pg-tide.example.toml"}
     summary = ROOT / "docs/src/SUMMARY.md"
-    for link in re.findall(r"\]\(([^)#]+)", summary.read_text(encoding="utf-8")):
-        path = (summary.parent / link).resolve()
-        if (
-            path.is_file()
-            and "/archive/" not in str(path)
-            and "/adr/" not in str(path)
-            and path.name != "v1-migration-guide.md"
-        ):
-            paths.add(path)
+    historical = False
+    for line in summary.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            historical = line == "## Labs and Historical Material"
+        if historical:
+            continue
+        links = re.findall(r"\]\(([^)#]+)", line)
+        for link in links:
+            path = (summary.parent / link).resolve()
+            if (
+                path.is_file()
+                and "/archive/" not in str(path)
+                and "/adr/" not in str(path)
+                and path.name != "v1-migration-guide.md"
+            ):
+                paths.add(path)
     paths.update((ROOT / "helm/pg-tide").rglob("*"))
     paths.update((ROOT / ".github/workflows").glob("release.yml"))
     return {path for path in paths if path.is_file()}

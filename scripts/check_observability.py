@@ -46,7 +46,43 @@ if manifest.exists():
             missing=required-set(item)
             if missing: errors.append(f'{manifest}: {item.get("id", "unknown")} missing {sorted(missing)}')
             if not (root/item['path']).exists(): errors.append(f'{manifest}: missing {item["path"]}')
+            workflow, separator, job = item.get('workflow', '').partition(':')
+            workflow_path = root/workflow
+            if not separator or not workflow_path.is_file():
+                errors.append(f'{manifest}: {item.get("id", "unknown")} has invalid workflow {item.get("workflow")}')
+            elif not re.search(rf'^  {re.escape(job)}:\s*$', workflow_path.read_text(), re.MULTILINE):
+                errors.append(f'{manifest}: {item["id"]} references missing workflow job {job}')
     except Exception as e: errors.append(f'{manifest}: invalid TOML: {e}')
+drills=root/'release-evidence/v0.54.0-runbook-drills.json'
+if drills.exists() and manifest.exists():
+    try:
+        evidence=json.loads(drills.read_text())
+        manifest_ids={item['id'] for item in data.get('runbook', [])}
+        required_ids=set(evidence.get('required_scenarios', []))
+        if manifest_ids != required_ids:
+            errors.append(f'{drills}: scenario set does not match docs/runbook-evidence.toml')
+        required_fields={
+            'scenario_id', 'runbook_path', 'runbook_sha256', 'tested_commit',
+            'artifact_digests', 'environment', 'author', 'operator',
+            'started_at', 'completed_at', 'result', 'observations',
+            'automated_test_ids', 'sanitized_artifact_paths',
+            'sanitized_artifact_digests',
+        }
+        seen=set()
+        for drill in evidence.get('drills', []):
+            missing=required_fields-set(drill)
+            if missing:
+                errors.append(f'{drills}: drill missing {sorted(missing)}')
+                continue
+            scenario_id=drill['scenario_id']
+            if scenario_id not in required_ids or scenario_id in seen:
+                errors.append(f'{drills}: invalid or duplicate drill {scenario_id}')
+            seen.add(scenario_id)
+            if drill['result'] not in {'pending', 'pass', 'fail'}:
+                errors.append(f'{drills}: invalid result for {scenario_id}')
+            if drill['result'] == 'pass' and drill['author'] == drill['operator']:
+                errors.append(f'{drills}: author and operator must differ for {scenario_id}')
+    except Exception as e: errors.append(f'{drills}: invalid JSON evidence: {e}')
 if errors:
     print('\n'.join(errors)); sys.exit(1)
 print('observability contracts valid')

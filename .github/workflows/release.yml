@@ -207,7 +207,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: pg-tide-${{ matrix.target }}
+          name: pg-tide-candidate-${{ matrix.target }}
           path: pg-tide-${{ matrix.target }}.${{ matrix.archive_ext }}
 
   docker:

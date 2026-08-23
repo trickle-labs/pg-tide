@@ -67,7 +67,7 @@ spec:
   # outbox messages to the configured external sinks.
   sidecars:
     - name: pg-tide-relay
-      image: ghcr.io/trickle-labs/pg-tide:0.53.0
+      image: ghcr.io/trickle-labs/pg-tide:0.54.0
       args:
         - run
         - --log-format=json

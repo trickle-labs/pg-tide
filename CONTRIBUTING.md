@@ -2,11 +2,37 @@
 
 Thank you for contributing to pg_tide!
 
-## Development Setup
+## Development setup
 
-See [README.md](README.md) for the full setup guide.
+Install Rust 1.97.1 with `rustup`. Install PostgreSQL 18 and the system
+packages required by `cargo-pgrx` when you work on the extension. Install
+Docker when you run integration tests. Then run:
+
+```bash
+just setup
+```
+
+`just setup` installs the pinned user-scoped cargo-pgrx, mdBook, and
+mdbook-admonish tools. It does not install operating-system packages or start
+services.
 
 ## Workflow
+
+Use this service-free loop for normal changes:
+
+```bash
+just fmt
+just lint
+just test
+just docs
+just check
+```
+
+`just check` runs the compile, lint, unit, contract, documentation, and
+repository-hygiene checks. Use the explicit service-backed recipes when a
+change needs PostgreSQL, Docker, NATS, Kafka, or the extension toolchain.
+
+After **any** code change:
 
 After **any** code change:
 
