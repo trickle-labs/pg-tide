@@ -172,6 +172,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libssl-dev
 
+      - name: Install OpenSSL development files (Windows)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot) { $vcpkgRoot = 'C:\vcpkg' }
+          $env:VCPKG_ROOT = $vcpkgRoot
+          & "$vcpkgRoot\vcpkg.exe" install openssl:x64-windows
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+
       - name: Build release binary (core profile)
         run: cargo build --package pg-tide-relay --release --target ${{ matrix.target }} --no-default-features --features ${{ matrix.cargo_features }}
 
