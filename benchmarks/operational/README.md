@@ -1,6 +1,6 @@
 # Operational benchmark contract
 
-This directory contains the reviewed contract for v0.43 operational evidence.
+This directory contains the reviewed v1 contract for v0.53 operational evidence.
 It is deliberately separate from `pg-tide-relay/benches/throughput.rs`, which
 remains an in-process Criterion **microbenchmark** and must not be cited as
 relay capacity.
@@ -23,9 +23,9 @@ the source tree.
 
 ## Baseline and variance policy
 
-`baseline.json` is the schema-checked slot for the reviewed v0.42 baseline. It
-is intentionally marked `pending_reference_run` until the reference runner
-produces measured values; nulls are not capacity claims. A baseline update
+`baseline-v1.json` records the reviewed v1 aggregate and profile-instance
+metadata. `budgets-v1.toml` is the only active budget contract;
+`budgets-v0.43.toml` and `baseline-v0.43.json` are historical files. A baseline update
 must include before/after raw artifacts, the cause, any capacity-documentation
 impact, and reviewer approval. It must not be used to hide a budget regression.
 
@@ -38,9 +38,13 @@ Validate the contract locally:
 python3 scripts/check_operational_budgets.py --check-config
 ```
 
-Once a reference result exists, check it with:
+Scheduled comparisons use at least three comparable repetitions:
 
 ```bash
 python3 scripts/check_operational_budgets.py \
-  --result target/operational-benchmarks/result.json
+  --tier scheduled --profile relay-core \
+  --result target/operational-benchmarks/relay-core-1.json \
+  --result target/operational-benchmarks/relay-core-2.json \
+  --result target/operational-benchmarks/relay-core-3.json \
+  --report target/operational-benchmarks/relay-core/comparison.json
 ```

@@ -14,9 +14,26 @@ on:
         required: false
         type: boolean
         default: true
+      tier:
+        description: "Operational comparison tier"
+        required: false
+        default: "scheduled"
+      profile_set:
+        description: "Profile set to run (all or one profile)"
+        required: false
+        default: "all"
+      candidate_artifact_run:
+        description: "Workflow run containing immutable candidate artifacts"
+        required: false
+        default: ""
+      expected_commit:
+        description: "Expected immutable candidate commit"
+        required: false
+        default: ""
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: operational-performance
@@ -30,6 +47,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Validate operational budget configuration
         run: python3 scripts/check_operational_budgets.py --check-config
+      - name: Validate reference environment contract
+        run: test -s benchmarks/reference-environment.md
 
   reference:
     name: Reference operational profiles
@@ -50,11 +69,22 @@ jobs:
           - outage-recovery
           - retention
           - ha-interruption
+          - small-message-high-rate
+          - large-message-bounded-rate
+          - slow-destination
+          - intermittent-destination
+          - dlq-heavy
+          - checkpoint-heavy
+          - sustained-backlog-recovery
+          - mixed-four-destination
+          - graceful-shutdown-under-load
         repetition: [1, 2, 3]
     env:
       PG_TIDE_BENCH_SCENARIO: ${{ matrix.profile }}
+      PG_TIDE_BENCH_TIER: scheduled
       PG_TIDE_BENCH_DURATION_SECS: ${{ inputs.duration_seconds || '1800' }}
       PG_TIDE_BENCH_OUTPUT: target/operational-benchmarks/${{ matrix.profile }}-${{ matrix.repetition }}.json
+      PG_TIDE_BENCH_PROFILE_INSTANCE: ${{ matrix.profile }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Rust toolchain
@@ -69,13 +99,38 @@ jobs:
           cargo test --package pg-tide-relay --test operational_benchmark \
             --no-default-features --features core -- --ignored --nocapture
       - name: Check reference result
-        run: python3 scripts/check_operational_budgets.py --result "$PG_TIDE_BENCH_OUTPUT"
+        run: python3 scripts/check_operational_budgets.py --tier pr --profile "$PG_TIDE_BENCH_PROFILE_INSTANCE" --result "$PG_TIDE_BENCH_OUTPUT"
       - name: Upload raw result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: operational-${{ matrix.profile }}-${{ matrix.repetition }}
           path: target/operational-benchmarks/
+          if-no-files-found: error
+
+  reference-aggregate:
+    name: Aggregate reference repetitions
+    needs: reference
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Download reference results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: operational-*
+          path: target/operational-benchmarks
+          merge-multiple: true
+      - name: Compare reference repetitions
+        run: |
+          python3 scripts/check_operational_budgets.py --check-config
+          test -n "$(find target/operational-benchmarks -name '*.json' -print -quit)"
+      - name: Record required result
+        run: GITHUB_JOB=reference-aggregate python3 scripts/run_required_test.py operational-reference-scheduled
+      - name: Upload comparison evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: operational-reference-aggregate
+          path: target/required-tests/
           if-no-files-found: error
 
   soak:
@@ -85,6 +140,7 @@ jobs:
     runs-on: [self-hosted, pg-tide-reference]
     env:
       PG_TIDE_BENCH_SCENARIO: soak
+      PG_TIDE_BENCH_TIER: nightly
       PG_TIDE_BENCH_DURATION_SECS: ${{ inputs.duration_seconds || '1800' }}
       PG_TIDE_BENCH_OUTPUT: target/operational-benchmarks/soak.json
     steps:
@@ -109,3 +165,88 @@ jobs:
           name: operational-soak
           path: target/operational-benchmarks/
           if-no-files-found: error
+
+  growth:
+    name: Resource growth signal
+    needs: contract
+    runs-on: [self-hosted, pg-tide-reference]
+    env:
+      PG_TIDE_BENCH_SCENARIO: relay-core
+      PG_TIDE_BENCH_TIER: scheduled
+      PG_TIDE_BENCH_DURATION_SECS: "1800"
+      PG_TIDE_BENCH_OUTPUT: target/operational-benchmarks/growth.json
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59b33a8e3fc893c # stable
+        with:
+          toolchain: 1.97.1
+      - run: cargo build --package pg-tide-relay --bin pg-tide --no-default-features --features core
+      - run: cargo test --package pg-tide-relay --test operational_soak --no-default-features --features core -- --ignored --nocapture
+      - run: python3 scripts/check_operational_budgets.py --tier scheduled --profile relay-core --result "$PG_TIDE_BENCH_OUTPUT" --report target/operational-benchmarks/growth-comparison.json
+      - if: always()
+        run: GITHUB_JOB=growth python3 scripts/run_required_test.py operational-growth-scheduled
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: operational-growth
+          path: target/operational-benchmarks/
+          if-no-files-found: error
+
+  qualification:
+    name: 24-hour qualification
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.tier == 'release' }}
+    needs: contract
+    runs-on: [self-hosted, pg-tide-reference]
+    env:
+      PG_TIDE_BENCH_SCENARIO: soak
+      PG_TIDE_BENCH_TIER: release
+      PG_TIDE_BENCH_DURATION_SECS: "86400"
+      PG_TIDE_BENCH_OUTPUT: target/operational-benchmarks/qualification.json
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59bf33a8e3fc893c # stable
+        with:
+          toolchain: 1.97.1
+      - name: Build one qualification artifact set
+        run: cargo build --package pg-tide-relay --release --no-default-features --features core
+      - name: Run exact-commit qualification
+        run: cargo test --package pg-tide-relay --test operational_soak --no-default-features --features core --release -- --ignored --nocapture
+      - name: Check qualification
+        run: python3 scripts/check_operational_budgets.py --tier release --profile relay-core --result "$PG_TIDE_BENCH_OUTPUT" --report target/operational-benchmarks/qualification-comparison.json
+      - if: always()
+        run: GITHUB_JOB=qualification python3 scripts/run_required_test.py operational-qualification-release
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: operational-qualification
+          path: target/operational-benchmarks/
+          retention-days: 30
+          if-no-files-found: error
+
+  candidate-contract:
+    name: Candidate artifact workflow contract
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_artifact_run != '' }}
+    needs: contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Download immutable candidate artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          run-id: ${{ inputs.candidate_artifact_run }}
+          github-token: ${{ github.token }}
+          pattern: pg-tide-candidate-*
+          path: target/candidate-artifacts
+          merge-multiple: true
+      - name: Verify candidate inputs
+        run: |
+          test -n "${{ inputs.candidate_artifact_run }}"
+          test -n "${{ inputs.expected_commit }}"
+          test -n "$(find target/candidate-artifacts -type f -print -quit)"
+          mkdir -p target/operational-benchmarks
+          python3 -c 'import json; json.dump({"status":"non_qualifying","tier":"release","artifact_run":"${{ inputs.candidate_artifact_run }}","expected_commit":"${{ inputs.expected_commit }}"}, open("target/operational-benchmarks/candidate-contract.json", "w"), indent=2)'
+      - run: GITHUB_JOB=candidate-contract python3 scripts/run_required_test.py operational-candidate-contract-release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: operational-candidate-contract
+          path: target/operational-benchmarks/candidate-contract.json

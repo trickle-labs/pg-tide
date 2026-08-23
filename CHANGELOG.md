@@ -7,6 +7,7 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 ## Table of Contents
 
 <!-- TOC start -->
+- [0.53.0 — Performance, Capacity, and Long-Run Stability](#0530--performance-capacity-and-long-run-stability)
 - [0.51.0 — Upgrade, Rollback, and Recovery Integrity](#0510--upgrade-rollback-and-recovery-integrity)
 - [0.52.0 — Security and Supply-Chain Assurance](#0520--security-and-supply-chain-assurance)
 - [0.50.0 — Delivery Correctness and Failure Semantics](#0500--delivery-correctness-and-failure-semantics)
@@ -58,6 +59,18 @@ For future plans and upcoming features, see [ROADMAP.md](ROADMAP.md).
 - [0.2.0 — Post-0.1.0 Hardening & Observability](#020--post-010-hardening--observability)
 - [0.1.0 — Initial Release](#010--initial-release)
 <!-- TOC end -->
+
+---
+
+## [0.53.0] — 2026-08-23 — Performance, Capacity, and Long-Run Stability
+
+- Added the versioned operational performance contract, reference-environment
+  fingerprint, repeated-run comparisons, and sustained-growth evidence paths.
+- Added the v0.52.0 to v0.53.0 adjacent migration and lifecycle compatibility
+  coverage.
+
+Release evidence remains pending until the exact candidate passes the required
+performance and qualification gates.
 
 ---
 

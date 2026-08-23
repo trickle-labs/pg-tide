@@ -5,23 +5,26 @@
   "extension": "pg_tide",
   "policy_version": "v1",
   "floor_version": "0.47.0",
-  "target_version": "0.52.0",
-  "relay_window": {"minimum": "0.51.0", "maximum": "0.52.0", "rollback_target": "0.51.0"},
+  "target_version": "0.53.0",
+  "relay_window": {"minimum": "0.52.0", "maximum": "0.53.0", "rollback_target": "0.52.0"},
   "compatibility_error_code": "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE",
   "migrations": [
     {"from": "0.47.0", "to": "0.48.0", "file": "sql/pg_tide--0.47.0--0.48.0.sql", "transactional": true, "relay_mode": "stopped", "reversible": true, "reverse_file": "sql/pg_tide--0.48.0--0.47.0.sql", "recovery": "retry"},
     {"from": "0.48.0", "to": "0.49.0", "file": "sql/pg_tide--0.48.0--0.49.0.sql", "transactional": true, "relay_mode": "stopped", "reversible": false, "recovery": "restore-or-continue-forward"},
     {"from": "0.49.0", "to": "0.50.0", "file": "sql/pg_tide--0.49.0--0.50.0.sql", "transactional": true, "relay_mode": "stopped", "reversible": true, "reverse_file": "sql/pg_tide--0.50.0--0.49.0.sql", "recovery": "retry"},
     {"from": "0.50.0", "to": "0.51.0", "file": "sql/pg_tide--0.50.0--0.51.0.sql", "transactional": true, "relay_mode": "0.50.0-and-0.51.0", "reversible": false, "recovery": "retry-before-commit-or-restore-after-commit"},
-    {"from": "0.51.0", "to": "0.52.0", "file": "sql/pg_tide--0.51.0--0.52.0.sql", "transactional": true, "relay_mode": "0.52.0-only-before-extension-update", "reversible": false, "recovery": "retry-before-commit-or-restore-after-commit", "status": "pending"}
+    {"from": "0.51.0", "to": "0.52.0", "file": "sql/pg_tide--0.51.0--0.52.0.sql", "transactional": true, "relay_mode": "0.52.0-only-before-extension-update", "reversible": false, "recovery": "retry-before-commit-or-restore-after-commit"},
+    {"from": "0.52.0", "to": "0.53.0", "file": "sql/pg_tide--0.52.0--0.53.0.sql", "transactional": true, "relay_mode": "0.53.0-only-before-extension-update", "reversible": false, "recovery": "retry-before-commit-or-restore-after-commit"}
   ],
   "matrix": [
     {"extension": "0.51.0", "relay": "0.51.0", "status": "supported", "test": "lifecycle-adjacent-pr"},
     {"extension": "0.51.0", "relay": "0.52.0", "status": "supported", "test": "lifecycle-compatibility-pr"},
     {"extension": "0.52.0", "relay": "0.52.0", "status": "supported", "test": "lifecycle-compatibility-pr"},
-    {"extension": "0.52.0", "relay": "0.51.0", "status": "rejected", "test": "lifecycle-compatibility-pr"},
-    {"extension": "<0.51.0", "relay": "0.52.0", "status": "rejected", "test": "lifecycle-compatibility-pr"},
-    {"extension": ">0.52.0", "relay": "0.52.0", "status": "rejected", "test": "lifecycle-compatibility-pr"}
+    {"extension": "0.52.0", "relay": "0.53.0", "status": "supported", "test": "lifecycle-compatibility-pr"},
+    {"extension": "0.53.0", "relay": "0.53.0", "status": "supported", "test": "lifecycle-compatibility-pr"},
+    {"extension": "0.53.0", "relay": "0.52.0", "status": "rejected", "test": "lifecycle-compatibility-pr"},
+    {"extension": "<0.52.0", "relay": "0.53.0", "status": "rejected", "test": "lifecycle-compatibility-pr"},
+    {"extension": ">0.53.0", "relay": "0.53.0", "status": "rejected", "test": "lifecycle-compatibility-pr"}
   ],
   "recovery": {"delivery": "at-least-once", "external_destinations": "not-rolled-back", "event_identity": "stable-through-restore", "logical_restore": "supported-heap-layout-state-only", "physical_restore": "complete-postgresql-cluster-state", "pitr": "may-redeliver-before-checkpoint-commit", "leases": "reacquired-after-restore"},
   "required_tests": [
@@ -29,5 +32,5 @@
     {"id": "lifecycle-compatibility-pr", "targets": ["pg-tide-relay/src/compatibility.rs", "pg-tide-relay/src/cmd/self_test.rs"]},
     {"id": "lifecycle-adjacent-pr", "targets": ["scripts/package_extension.sh", "scripts/catalog_snapshot.py", "sql", "pg-tide-relay/tests/migration_test.rs"]}
   ],
-  "version_alignment": {"workspace": "Cargo.toml", "controls": ["pg_tide.control", "pg-tide-ext/pg_tide.control"], "chart": "helm/pg-tide/Chart.yaml", "examples": ["examples/cnpg/cluster.yaml", "examples/cnpg/cluster-image-volume.yaml", "examples/cnpg/upgrade-rehearsal.yaml"], "evidence": "release-evidence/v0.52.0-index.json"}
+  "version_alignment": {"workspace": "Cargo.toml", "controls": ["pg_tide.control", "pg-tide-ext/pg_tide.control"], "chart": "helm/pg-tide/Chart.yaml", "examples": ["examples/cnpg/cluster.yaml", "examples/cnpg/cluster-image-volume.yaml", "examples/cnpg/upgrade-rehearsal.yaml"], "evidence": "release-evidence/v0.53.0-index.json"}
 }

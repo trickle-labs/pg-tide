@@ -15,6 +15,8 @@ impl RelayProcess {
                     .unwrap_or("target/debug/pg-tide")
                     .to_string()
             });
+        let metrics_addr = std::env::var("PG_TIDE_BENCH_METRICS_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:19090".to_string());
         let child = Command::new(&binary)
             .args([
                 "--postgres-url",
@@ -22,7 +24,7 @@ impl RelayProcess {
                 "--relay-group-id",
                 relay_group,
                 "--metrics-addr",
-                "127.0.0.1:0",
+                &metrics_addr,
                 "--log-level",
                 "warn",
                 "run",

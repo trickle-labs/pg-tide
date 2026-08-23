@@ -106,6 +106,12 @@ jobs:
               assert security["status"] == "ready"
               assert review["status"] == "approved"
               assert response["status"] == "complete"
+          if tag == "v0.53.0":
+              performance = load("v0.53.0-performance.json")
+              assert performance["status"] == "ready"
+              assert performance["qualification"]["retries"] == 0
+              assert performance["qualification"]["raw_bundle"]
+              assert performance["qualification"]["comparison_report"]
 
           issues = json.loads(subprocess.check_output([
               "gh", "issue", "list", "--state", "open", "--search", "is:issue",

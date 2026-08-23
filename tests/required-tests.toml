@@ -1,5 +1,5 @@
 schema_version = 1
-inventory_version = "0.52.0"
+inventory_version = "0.53.0"
 
 [[test]]
 id = "connector-registry-pr"
@@ -56,7 +56,7 @@ triggers = ["pull_request", "push"]
 workflow = ".github/workflows/ci.yml"
 ci_job = "operational-contract"
 command = "python3 scripts/check_operational_budgets.py --check-config"
-targets = ["benchmarks/operational/budgets.toml", "benchmarks/operational/baseline.json"]
+targets = ["benchmarks/budgets-v1.toml", "benchmarks/operational/baseline-v1.json", "benchmarks/reference-environment.md"]
 dependencies = ["python3"]
 owner = "@grove"
 blocking = true
@@ -311,15 +311,15 @@ level = "scheduled"
 triggers = ["schedule", "workflow_dispatch"]
 workflow = ".github/workflows/performance.yml"
 ci_job = "reference"
-command = "python3 scripts/check_operational_budgets.py --result target/operational-benchmarks/result.json"
-targets = ["scripts/check_operational_budgets.py", "benchmarks/operational/README.md"]
+command = "python3 scripts/check_operational_budgets.py --tier scheduled --profile relay-core --result target/operational-benchmarks/relay-core-1.json --result target/operational-benchmarks/relay-core-2.json --result target/operational-benchmarks/relay-core-3.json --report target/operational-benchmarks/relay-core/comparison.json"
+targets = ["scripts/check_operational_budgets.py", "benchmarks/budgets-v1.toml", "benchmarks/operational/baseline-v1.json", "benchmarks/operational/README.md"]
 dependencies = ["postgresql-18", "docker", "nats"]
 owner = "@grove"
 blocking = true
 max_retries = 0
 allow_local_skip = false
 flake_policy = "never-quarantine"
-evidence = ["target/required-tests/{id}.json", "target/operational-benchmarks/result.json"]
+evidence = ["target/required-tests/{id}.json", "target/operational-benchmarks/relay-core/comparison.json"]
 
 [[test]]
 id = "operational-soak-scheduled"
@@ -327,7 +327,7 @@ level = "scheduled"
 triggers = ["schedule", "workflow_dispatch"]
 workflow = ".github/workflows/performance.yml"
 ci_job = "soak"
-command = "python3 scripts/check_operational_budgets.py --result target/operational-benchmarks/soak-result.json"
+command = "python3 scripts/check_operational_budgets.py --tier scheduled --profile relay-core --result target/operational-benchmarks/soak.json --report target/operational-benchmarks/soak-comparison.json"
 targets = ["scripts/check_operational_budgets.py", "pg-tide-relay/tests/operational_soak.rs"]
 dependencies = ["postgresql-18", "docker", "nats"]
 owner = "@grove"
@@ -336,6 +336,54 @@ max_retries = 0
 allow_local_skip = false
 flake_policy = "never-quarantine"
 evidence = ["target/required-tests/{id}.json"]
+
+[[test]]
+id = "operational-growth-scheduled"
+level = "scheduled"
+triggers = ["schedule", "workflow_dispatch"]
+workflow = ".github/workflows/performance.yml"
+ci_job = "growth"
+command = "python3 scripts/check_operational_budgets.py --tier scheduled --profile relay-core --result target/operational-benchmarks/growth.json --report target/operational-benchmarks/growth-comparison.json"
+targets = ["scripts/check_operational_budgets.py", "pg-tide-relay/tests/operational_benchmark.rs"]
+dependencies = ["postgresql-18", "docker", "nats"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json", "target/operational-benchmarks/growth-comparison.json"]
+
+[[test]]
+id = "operational-qualification-release"
+level = "release"
+triggers = ["release", "workflow_dispatch"]
+workflow = ".github/workflows/performance.yml"
+ci_job = "qualification"
+command = "python3 scripts/check_operational_budgets.py --tier release --profile relay-core --result target/operational-benchmarks/qualification.json --report target/operational-benchmarks/qualification-comparison.json"
+targets = ["release-evidence/v0.53.0-performance.json", "pg-tide-relay/tests/operational_soak.rs"]
+dependencies = ["postgresql-18", "docker", "nats", "immutable-release-artifacts"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json", "target/operational-benchmarks/qualification-comparison.json"]
+
+[[test]]
+id = "operational-candidate-contract-release"
+level = "release"
+triggers = ["release", "workflow_dispatch"]
+workflow = ".github/workflows/performance.yml"
+ci_job = "candidate-contract"
+command = "test \"$(python3 -c 'import json; print(json.load(open(\"target/operational-benchmarks/candidate-contract.json\"))[\"status\"])')\" = non_qualifying"
+targets = [".github/workflows/performance.yml", "release-evidence/v0.53.0-performance.json"]
+dependencies = ["gh", "immutable-release-artifacts"]
+owner = "@grove"
+blocking = true
+max_retries = 0
+allow_local_skip = false
+flake_policy = "never-quarantine"
+evidence = ["target/required-tests/{id}.json", "target/operational-benchmarks/candidate-contract.json"]
 
 [[test]]
 id = "release-evidence-release"

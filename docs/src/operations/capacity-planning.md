@@ -2,11 +2,13 @@
 
 pg_tide does not publish a universal messages-per-second number. Capacity is
 the result of payload size, PostgreSQL settings, batch size, pipeline count,
-sink acknowledgment behavior, and hardware. The v0.43 reference profiles and
+sink acknowledgment behavior, and hardware. The v0.53 reference profiles and
 reviewed budgets live in
 [`benchmarks/operational/`](../../../../benchmarks/operational/README.md).
-The committed baseline is a schema slot until a named reference runner has
-recorded measurements.
+The reference fingerprint is documented in
+[`benchmarks/reference-environment.md`](../../../../benchmarks/reference-environment.md).
+The committed baseline is environment-specific evidence, not a universal
+guarantee.
 
 ## Profiles and evidence
 
@@ -22,6 +24,15 @@ The required profiles are:
 | `outage-recovery` | 1 KiB JSON | 1 | backlog growth and drain slope |
 | `retention` | 1 KiB JSON | 2 consumers | safe watermark, sweep, WAL, vacuum |
 | `ha-interruption` | 1 KiB JSON | 1, 2 relays | owner-loss delivery interruption |
+| `small-message-high-rate` | 1 KiB distribution | 1 | sustained event and byte rate |
+| `large-message-bounded-rate` | 16/64 KiB distribution | 1 | byte rate, memory, WAL, storage |
+| `slow-destination` | 1 KiB | 1 webhook | backpressure and bounded resources |
+| `intermittent-destination` | 1 KiB | 1 webhook | deterministic retry and recovery |
+| `dlq-heavy` | 1 KiB | 1 | DLQ depth, replay, and terminal identity |
+| `checkpoint-heavy` | 1 KiB | 1 | batch-one checkpoint cost |
+| `sustained-backlog-recovery` | 1 KiB | 1 | net catch-up headroom |
+| `mixed-four-destination` | 1 KiB | 4 | PostgreSQL inbox, NATS, Kafka, webhook |
+| `graceful-shutdown-under-load` | 1 KiB | 1 | shutdown and restart correctness |
 
 Every result records the commit, environment, PostgreSQL/NATS versions,
 payload, batch, poll interval, pipeline count, warmup, duration, and exact
@@ -40,8 +51,8 @@ network bytes/second = r × measured encoded payload bytes
 recovery seconds = backlog / (acknowledged_rate - application_rate)
 ```
 
-Use the measured values from the matching profile, not values from a different
-payload or sink. Reserve additional space for WAL, vacuum headroom, backups,
+Use the measured values from the matching profile and destination boundary, not
+values from a different payload or sink. Reserve additional space for WAL, vacuum headroom, backups,
 and conversion's temporary copy. A sink outage accumulates committed rows;
 relay backoff protects the sink but does not reject application transactions.
 
@@ -122,6 +133,27 @@ promise. Compare idle worker RSS, catalog discovery queries, active throughput,
 and offset writes against the budget. Run at least two relays for HA and size
 the interruption budget from the measured owner-loss-to-resumed-delivery
 interval.
+
+## Conservative worked examples
+
+Use the accepted v1 result for the named profile and keep the smallest rounded
+capacity choice after the stated headroom:
+
+1. NATS outage: `relay-core` retained bytes/event × application rate × outage
+   seconds, plus 30% WAL and vacuum headroom.
+2. Kafka: `large-message-bounded-rate` encoded destination bytes/second ×
+   required rate, plus 30% broker and relay headroom. Encoded bytes are not
+   JSON payload bytes.
+3. PostgreSQL inbox: `mixed-four-destination` destination row/index bytes/event
+   × retained events, plus cleanup and dead-tuple headroom.
+4. Webhook: `slow-destination` acknowledged rate must exceed application rate;
+   reserve disk for measured backlog during the slow window.
+5. Four destinations: size each destination independently and use the slowest
+   sustained rate, then add relay, network, retention, and destination costs.
+6. Fifty pipelines: use the `pipeline-density` 50-pipeline instance for idle
+   memory, tasks, connections, discovery, and metric-series headroom.
+7. DLQ: use `dlq-heavy` terminal-failure row size × bounded replay set, and
+   reserve storage until replay and cleanup complete.
 
 ## Alerts
 
