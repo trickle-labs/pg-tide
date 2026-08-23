@@ -1,4 +1,6 @@
 /// CLI argument definitions for pg-tide.
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
@@ -253,6 +255,10 @@ pub enum Commands {
         /// PostgreSQL URL to diagnose.  Overrides --postgres-url.
         #[arg(long, env = "PG_TIDE_POSTGRES_URL", value_parser = validate_postgres_url_scheme)]
         postgres_url: Option<String>,
+
+        /// Write a bounded, redacted support bundle to this directory.
+        #[arg(long, value_name = "DIRECTORY")]
+        bundle: Option<PathBuf>,
     },
 
     /// Replay workbench: preview, execute, or resolve DLQ entries.
@@ -430,7 +436,7 @@ pub enum ReplayCommands {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn canonical_command_tree_parses() {
@@ -456,12 +462,83 @@ mod tests {
                 .command,
             Some(Commands::Maintenance(MaintenanceCommands::Sweep { .. }))
         ));
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "doctor"]).unwrap().command,
+            Some(Commands::Doctor { .. })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "doctor", "--bundle", "/tmp/pg-tide-support"])
+                .unwrap()
+                .command,
+            Some(Commands::Doctor {
+                bundle: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "status"]).unwrap().command,
+            Some(Commands::Status { .. })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "--postgres-url", "postgres://example", "run"])
+                .unwrap()
+                .command,
+            Some(Commands::Run)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pg-tide", "replay", "preview", "--outbox", "orders"])
+                .unwrap()
+                .command,
+            Some(Commands::Replay(ReplayCommands::Preview { .. }))
+        ));
+    }
+
+    #[test]
+    fn documented_commands_have_help() {
+        let command = Cli::command();
+        for name in ["run", "doctor", "status", "config", "replay", "maintenance"] {
+            let subcommand = command
+                .get_subcommands()
+                .find(|subcommand| subcommand.get_name() == name)
+                .unwrap_or_else(|| panic!("missing command {name}"));
+            assert!(
+                subcommand
+                    .get_about()
+                    .is_some_and(|about| !about.to_string().trim().is_empty()),
+                "command {name} must have a one-line purpose"
+            );
+        }
+        assert!(command
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "config")
+            .and_then(|config| config
+                .get_subcommands()
+                .find(|subcommand| subcommand.get_name() == "validate"))
+            .is_some());
+        assert!(command
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "config")
+            .and_then(|config| config
+                .get_subcommands()
+                .find(|subcommand| subcommand.get_name() == "export"))
+            .is_some());
+        assert!(command
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "maintenance")
+            .and_then(|maintenance| maintenance
+                .get_subcommands()
+                .find(|subcommand| subcommand.get_name() == "sweep"))
+            .is_some());
     }
 
     #[test]
     fn output_selector_is_global() {
         let cli = Cli::try_parse_from(["pg-tide", "--output", "json", "status"]).unwrap();
         assert!(matches!(cli.output_format, OutputFormat::Json));
+        assert!(Cli::try_parse_from([
+            "pg-tide", "--output", "json", "replay", "preview", "--outbox", "orders",
+        ])
+        .is_ok());
     }
 
     #[test]

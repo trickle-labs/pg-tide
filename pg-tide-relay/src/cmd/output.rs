@@ -19,16 +19,6 @@ pub struct Diagnostic {
     pub message: String,
     pub likely_cause: String,
     pub next_action: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub installed_version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub relay_version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub policy_version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub compatibility_class: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub supported_range: Option<String>,
 }
 
 pub fn success<T: Serialize>(

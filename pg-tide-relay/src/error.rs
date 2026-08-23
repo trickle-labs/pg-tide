@@ -184,6 +184,66 @@ pub struct IncompatibleExtensionVersion {
 }
 
 impl RelayError {
+    /// Return the bounded operator code used by the CLI diagnostic catalog.
+    pub fn operator_code(&self) -> &'static str {
+        self.operator_code_for("")
+    }
+
+    /// Return the bounded operator code, allowing the shared boundary to use
+    /// command context for errors whose type is intentionally generic.
+    pub fn operator_code_for(&self, component: &str) -> &'static str {
+        if component.contains("support.bundle") {
+            return "PGTIDE_SUPPORT_BUNDLE_WRITE_FAILED";
+        }
+        if component.contains("maintenance") {
+            return "PGTIDE_MAINTENANCE_SWEEP_FAILED";
+        }
+        if component.contains("replay") {
+            return "PGTIDE_REPLAY_INPUT_INVALID";
+        }
+        if component.contains("shutdown") {
+            return "PGTIDE_SHUTDOWN_FAILED";
+        }
+        match self {
+            Self::IncompatibleExtensionVersion(_) => "PGTIDE_EXTENSION_VERSION_INCOMPATIBLE",
+            Self::ConnectionFailed { err, .. } | Self::Postgres(err) => postgres_operator_code(err),
+            Self::Config(message) if message.to_ascii_lowercase().contains("ssrf") => {
+                "PGTIDE_WEBHOOK_SSRF_REJECTED"
+            }
+            Self::Config(_) | Self::InvalidConfig { .. } | Self::MissingConfigKey { .. } => {
+                "PGTIDE_PIPELINE_INVALID"
+            }
+            Self::UnsupportedSurface { .. } => "PGTIDE_CONFIG_UNSUPPORTED_SURFACE",
+            Self::PipelineNotFound(_) => "PGTIDE_PIPELINE_NOT_FOUND",
+            Self::SinkPublish { .. } | Self::SinkUnhealthy { .. } => "PGTIDE_CONNECTOR_UNAVAILABLE",
+            Self::ConnectorFailure {
+                connector, code, ..
+            } => connector_operator_code(connector, *code),
+            Self::SecretNotFound { .. }
+            | Self::SecretReadError { .. }
+            | Self::InvalidSecretToken(_) => "PGTIDE_CONNECTOR_AUTHENTICATION",
+            Self::TlsRequired { .. } | Self::InsecureTransport { .. } | Self::TlsSetup(_) => {
+                "PGTIDE_TLS_VERIFICATION_FAILED"
+            }
+            Self::ChannelClosed => "PGTIDE_SHUTDOWN_FAILED",
+            Self::Other(message) if message.to_ascii_lowercase().contains("replay") => {
+                "PGTIDE_REPLAY_INPUT_INVALID"
+            }
+            Self::Other(message) if message.to_ascii_lowercase().contains("sweep") => {
+                "PGTIDE_MAINTENANCE_SWEEP_FAILED"
+            }
+            Self::SourcePoll { .. } => "PGTIDE_CONNECTOR_UNAVAILABLE",
+            Self::SourceDecode { .. }
+            | Self::UnsupportedPayloadVersion(_)
+            | Self::PayloadDecode { .. }
+            | Self::Json(_)
+            | Self::Toml(_) => "PGTIDE_PIPELINE_INVALID",
+            Self::Io(_) if component.contains("support") => "PGTIDE_SUPPORT_BUNDLE_WRITE_FAILED",
+            Self::Io(_) | Self::NotImplemented { .. } => "PGTIDE_INTERNAL_FAILURE",
+            Self::Other(_) => "operator.failure",
+        }
+    }
+
     pub fn config(msg: impl Into<String>) -> Self {
         Self::Config(msg.into())
     }
@@ -369,5 +429,35 @@ impl RelayError {
             Self::Postgres(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+fn postgres_operator_code(error: &tokio_postgres::Error) -> &'static str {
+    match error.code().map(|state| state.code()) {
+        Some("28P01") => "PGTIDE_POSTGRES_AUTHENTICATION",
+        Some("42501") => "PGTIDE_POSTGRES_AUTHORIZATION",
+        Some("42P01" | "42703" | "42883") => "PGTIDE_CATALOG_MISSING",
+        Some("08001" | "08003" | "08006" | "08007" | "57P01") => "PGTIDE_POSTGRES_UNAVAILABLE",
+        _ => "PGTIDE_POSTGRES_UNAVAILABLE",
+    }
+}
+
+fn connector_operator_code(connector: &str, code: ConnectorFailureCode) -> &'static str {
+    if connector == "webhook" && code == ConnectorFailureCode::InvalidDestination {
+        return "PGTIDE_WEBHOOK_SSRF_REJECTED";
+    }
+    match code {
+        ConnectorFailureCode::Unavailable => "PGTIDE_CONNECTOR_UNAVAILABLE",
+        ConnectorFailureCode::Timeout => "PGTIDE_CONNECTOR_TIMEOUT",
+        ConnectorFailureCode::Throttled => "PGTIDE_CONNECTOR_THROTTLED",
+        ConnectorFailureCode::Authentication => "PGTIDE_CONNECTOR_AUTHENTICATION",
+        ConnectorFailureCode::Authorization => "PGTIDE_CONNECTOR_AUTHORIZATION",
+        ConnectorFailureCode::TlsVerification => "PGTIDE_TLS_VERIFICATION_FAILED",
+        ConnectorFailureCode::InvalidDestination => "PGTIDE_CONNECTOR_INVALID_DESTINATION",
+        ConnectorFailureCode::MessageTooLarge => "PGTIDE_CONNECTOR_MESSAGE_TOO_LARGE",
+        ConnectorFailureCode::ProtocolRejection => "PGTIDE_CONNECTOR_PROTOCOL_REJECTION",
+        ConnectorFailureCode::InvalidConfig => "PGTIDE_CONNECTOR_INVALID_CONFIG",
+        ConnectorFailureCode::Shutdown => "PGTIDE_SHUTDOWN_FAILED",
+        ConnectorFailureCode::Unknown => "PGTIDE_CONNECTOR_UNKNOWN",
     }
 }
