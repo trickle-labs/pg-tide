@@ -504,7 +504,7 @@ jobs:
               "schema_version": 1,
               "release": os.environ["GITHUB_REF_NAME"],
               "candidate_commit": os.environ["GITHUB_SHA"],
-              "source_index": "release-evidence/v0.47.0-index.json",
+              "source_index": f"release-evidence/{os.environ['GITHUB_REF_NAME']}-index.json",
               "artifacts": artifacts,
               "image": provenance["subject"][0],
               "evidence_files": sorted(
@@ -512,7 +512,9 @@ jobs:
                   if path.is_file()
               ),
           }
-          Path("release-evidence/v0.47.0-final.json").write_text(
+          Path(
+              f"release-evidence/{os.environ['GITHUB_REF_NAME']}-final.json"
+          ).write_text(
               json.dumps(record, indent=2) + "\n"
           )
           PY
