@@ -6,10 +6,26 @@ pub fn from_error(component: &str, error: impl std::fmt::Display) -> Diagnostic 
     // ponytail: classify legacy boxed command errors from their bounded wording;
     // replace with typed RelayError returns when those command APIs are revised.
     let text = error.to_string().to_ascii_lowercase();
-    let code = if text.contains("tls") || text.contains("ssl") {
+    let code = if text.contains("support.bundle") {
+        "PGTIDE_SUPPORT_BUNDLE_WRITE_FAILED"
+    } else if text.contains("shutdown") {
+        "PGTIDE_SHUTDOWN_FAILED"
+    } else if text.contains("replay") || text.contains("dlq") {
+        "PGTIDE_REPLAY_INPUT_INVALID"
+    } else if text.contains("webhook") && text.contains("ssrf") {
+        "PGTIDE_WEBHOOK_SSRF_REJECTED"
+    } else if text.contains("tls") || text.contains("ssl") {
         "PGTIDE_TLS_VERIFICATION_FAILED"
+    } else if text.contains("authentication") {
+        "PGTIDE_POSTGRES_AUTHENTICATION"
     } else if text.contains("not found") && text.contains("pipeline") {
         "PGTIDE_PIPELINE_NOT_FOUND"
+    } else if text.contains("not discovered") {
+        "PGTIDE_PIPELINE_NOT_DISCOVERED"
+    } else if text.contains("not owned") {
+        "PGTIDE_PIPELINE_NOT_OWNED"
+    } else if text.contains("catalog") && text.contains("missing") {
+        "PGTIDE_CATALOG_MISSING"
     } else if text.contains("preflight") || text.contains("invalid config") {
         "PGTIDE_PIPELINE_INVALID"
     } else if text.contains("permission") || text.contains("authorization") {
