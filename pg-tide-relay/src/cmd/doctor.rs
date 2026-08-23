@@ -1,6 +1,69 @@
 /// `pg-tide doctor` — PostgreSQL connectivity and catalog health check.
 use crate::cli::OutputFormat;
 use pg_tide_relay::{compatibility, pg_tls};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const BUNDLE_SCHEMA_VERSION: u32 = 1;
+const REDACTION_POLICY_VERSION: &str = "v1";
+const MAX_PIPELINES: usize = 100;
+const MAX_STRING_BYTES: usize = 256;
+const MAX_BUNDLE_BYTES: u64 = 1024 * 1024;
+const BUNDLE_FILES: [&str; 6] = [
+    "manifest.json",
+    "versions.json",
+    "doctor.json",
+    "status.json",
+    "error-codes.json",
+    "metrics-metadata.json",
+];
+
+#[derive(Debug)]
+struct DoctorCollection {
+    data: Value,
+    healthy: bool,
+}
+
+/// Result returned to the CLI owner after an atomic bundle attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SupportBundleResult {
+    pub path: PathBuf,
+    pub healthy: bool,
+}
+
+/// Collect and atomically write a support bundle.  The caller owns rendering
+/// and exit-code handling so the existing doctor envelope stays unchanged.
+pub async fn collect_support_bundle(
+    url: &str,
+    target: &Path,
+) -> Result<SupportBundleResult, Box<dyn std::error::Error>> {
+    let doctor = collect_doctor_data(url).await;
+    let status = crate::cmd::status::collect_status(url).await;
+    let healthy = doctor.as_ref().is_ok_and(|result| result.healthy) && status.is_ok();
+
+    let doctor_ok = doctor.is_ok();
+    let status_ok = status.is_ok();
+    let doctor_data = doctor.map_or_else(
+        |_error| failed_collection("postgres.unavailable"),
+        |result| result.data,
+    );
+    let status_data = status.map_or_else(
+        |_error| failed_collection("postgres.unavailable"),
+        |data| data,
+    );
+    write_support_bundle(
+        target,
+        doctor_data,
+        status_data,
+        doctor_ok,
+        status_ok,
+        healthy,
+    )
+}
 
 /// Validate PostgreSQL connectivity, schema presence, and catalog health.
 pub async fn run_doctor(
@@ -21,7 +84,7 @@ pub async fn run_doctor(
     run_doctor_with_threshold(url, 100).await
 }
 
-async fn run_doctor_json(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn collect_doctor_data(url: &str) -> Result<DoctorCollection, Box<dyn std::error::Error>> {
     let (client, conn) = match pg_tls::connect(url).await {
         Ok(connection) => connection,
         Err(error) => return Err(format!("connection failed: {error}").into()),
@@ -110,8 +173,16 @@ async fn run_doctor_json(url: &str) -> Result<(), Box<dyn std::error::Error>> {
             })).collect::<Vec<_>>(),
         },
     });
-    if checks_ok {
-        crate::cmd::output::success("doctor", data, OutputFormat::Json)?;
+    Ok(DoctorCollection {
+        data,
+        healthy: checks_ok,
+    })
+}
+
+async fn run_doctor_json(url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let collection = collect_doctor_data(url).await?;
+    if collection.healthy {
+        crate::cmd::output::success("doctor", collection.data, OutputFormat::Json)?;
         Ok(())
     } else {
         Err("doctor found one or more failed checks".into())
@@ -631,4 +702,369 @@ async fn table_exists(client: &tokio_postgres::Client, table: &str) -> bool {
         .await
         .map(|row| row.get(0))
         .unwrap_or(false)
+}
+
+fn failed_collection(code: &str) -> Value {
+    serde_json::json!({
+        "collection": {"status": "failed", "error_code": code}
+    })
+}
+
+fn write_support_bundle(
+    target: &Path,
+    doctor_data: Value,
+    status_data: Value,
+    doctor_ok: bool,
+    status_ok: bool,
+    healthy: bool,
+) -> Result<SupportBundleResult, Box<dyn std::error::Error>> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        return Err("support.bundle.write_failed: parent directory is unavailable".into());
+    }
+    if fs::symlink_metadata(target).is_ok() {
+        return Err("support.bundle.target_exists: target directory already exists".into());
+    }
+
+    let temporary = temporary_sibling(parent)?;
+    let result = write_bundle_contents(
+        &temporary,
+        doctor_data,
+        status_data,
+        doctor_ok,
+        status_ok,
+        healthy,
+    );
+    match result {
+        Ok(()) => {
+            if let Err(error) = fs::rename(&temporary, target) {
+                let _ = fs::remove_dir_all(&temporary);
+                return Err(format!("support.bundle.write_failed: rename failed: {error}").into());
+            }
+            Ok(SupportBundleResult {
+                path: target.to_path_buf(),
+                healthy,
+            })
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&temporary);
+            Err(error)
+        }
+    }
+}
+
+fn write_bundle_contents(
+    directory: &Path,
+    doctor_data: Value,
+    status_data: Value,
+    doctor_ok: bool,
+    status_ok: bool,
+    healthy: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut truncations = 0u64;
+    let total_pipelines = status_data
+        .get("pipelines")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let doctor_data = bound_json(doctor_data, &mut truncations);
+    let status_data = bound_json(status_data, &mut truncations);
+    let versions = versions_data(&doctor_data);
+    let error_codes = error_codes_data(&status_data);
+    let metrics = metrics_metadata();
+    let payloads = [
+        ("versions.json", versions, doctor_ok),
+        ("doctor.json", doctor_data, doctor_ok),
+        ("status.json", status_data, status_ok),
+        ("error-codes.json", error_codes, status_ok),
+        ("metrics-metadata.json", metrics, true),
+    ];
+
+    let mut entries = Vec::with_capacity(payloads.len());
+    let mut total_bytes = 0u64;
+    for (name, value, collected) in payloads {
+        let bytes = serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": BUNDLE_SCHEMA_VERSION,
+            "collection": {"status": if collected { "ok" } else { "failed" }},
+            "health": if healthy { "pass" } else { "fail" },
+            "data": value,
+        }))?;
+        total_bytes = total_bytes.saturating_add(bytes.len() as u64);
+        entries.push((name, bytes, collected));
+    }
+    if total_bytes > MAX_BUNDLE_BYTES {
+        return Err("support.bundle.write_failed: bundle exceeds 1 MiB".into());
+    }
+
+    set_private_directory(directory)?;
+    for (name, bytes, _) in &entries {
+        write_private_file(&directory.join(name), bytes)?;
+    }
+
+    let files = entries
+        .iter()
+        .map(|(name, bytes, collected)| {
+            serde_json::json!({
+                "filename": name,
+                "bytes": bytes.len(),
+                "sha256": sha256(bytes),
+                "collection": {"status": if *collected { "ok" } else { "failed" }},
+            })
+        })
+        .collect::<Vec<_>>();
+    let manifest = serde_json::json!({
+        "schema_version": BUNDLE_SCHEMA_VERSION,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "relay_version": env!("CARGO_PKG_VERSION"),
+        "included_files": files,
+        "truncation_counts": {
+            "fields": truncations,
+            "pipelines_total": total_pipelines,
+            "pipelines_omitted": total_pipelines.saturating_sub(MAX_PIPELINES),
+        },
+        "redaction_policy_version": REDACTION_POLICY_VERSION,
+        "sharing_warning": "Support data is bounded and redacted; review it before sharing.",
+    });
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
+    if total_bytes + manifest_bytes.len() as u64 > MAX_BUNDLE_BYTES {
+        let _ = fs::remove_dir_all(directory);
+        return Err("support.bundle.write_failed: bundle exceeds 1 MiB".into());
+    }
+    write_private_file(&directory.join("manifest.json"), &manifest_bytes)?;
+    Ok(())
+}
+
+fn versions_data(doctor: &Value) -> Value {
+    let compatibility = doctor.get("compatibility").unwrap_or(&Value::Null);
+    serde_json::json!({
+        "relay_version": compatibility.get("relay_version").cloned().unwrap_or_else(|| Value::String(env!("CARGO_PKG_VERSION").into())),
+        "extension_version": compatibility.get("extension_version").cloned().unwrap_or(Value::Null),
+        "policy_version": compatibility.get("policy_version").cloned().unwrap_or(Value::Null),
+        "compatibility_class": compatibility.get("compatibility_class").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn error_codes_data(status: &Value) -> Value {
+    let pipelines = status
+        .get("pipelines")
+        .and_then(Value::as_array)
+        .map(|pipelines| {
+            pipelines
+                .iter()
+                .filter_map(|pipeline| {
+                    Some(serde_json::json!({
+                        "pipeline_id": pipeline.get("pipeline_id")?.clone(),
+                        "last_error_code": pipeline.get("last_error_code")?.clone(),
+                        "last_error_component": pipeline.get("last_error_component")?.clone(),
+                        "last_error_class": pipeline.get("last_error_class")?.clone(),
+                        "last_error_at": pipeline.get("last_error_at")?.clone(),
+                    }))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    serde_json::json!({"pipelines": pipelines})
+}
+
+fn metrics_metadata() -> Value {
+    let metrics = include_str!("../../../schemas/metrics-v1.tsv")
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            Some(serde_json::json!({
+                "name": fields.next()?,
+                "type": fields.next()?,
+                "unit": fields.next()?,
+                "labels": fields.next()?.split(',').collect::<Vec<_>>(),
+            }))
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({"metrics": metrics})
+}
+
+fn bound_json(value: Value, truncations: &mut u64) -> Value {
+    match value {
+        Value::String(value) => {
+            if value.contains("://") {
+                *truncations += 1;
+                Value::String("[REDACTED]".into())
+            } else if value.len() > MAX_STRING_BYTES {
+                *truncations += 1;
+                let mut end = MAX_STRING_BYTES;
+                while !value.is_char_boundary(end) {
+                    end -= 1;
+                }
+                Value::String(value[..end].to_string())
+            } else {
+                Value::String(value)
+            }
+        }
+        Value::Array(values) => {
+            let mut values = values;
+            if values.len() > MAX_PIPELINES {
+                *truncations += (values.len() - MAX_PIPELINES) as u64;
+                values.truncate(MAX_PIPELINES);
+            }
+            Value::Array(
+                values
+                    .into_iter()
+                    .map(|value| bound_json(value, truncations))
+                    .collect(),
+            )
+        }
+        Value::Object(values) => Value::Object(
+            values
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    if matches!(
+                        key.as_str(),
+                        "payload"
+                            | "headers"
+                            | "config"
+                            | "environment"
+                            | "certificate"
+                            | "certificates"
+                            | "key"
+                            | "keys"
+                            | "logs"
+                            | "message"
+                            | "reason"
+                            | "url"
+                    ) {
+                        *truncations += 1;
+                        None
+                    } else {
+                        Some((key, bound_json(value, truncations)))
+                    }
+                })
+                .collect(),
+        ),
+        value => value,
+    }
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn temporary_sibling(parent: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let pid = std::process::id();
+    let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    for attempt in 0..100u32 {
+        let candidate = parent.join(format!(".pg-tide-bundle-{pid}-{time}-{attempt}"));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err("support.bundle.write_failed: temporary directory unavailable".into())
+}
+
+fn set_private_directory(path: &Path) -> Result<(), std::io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file: File = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod support_bundle_tests {
+    use super::*;
+
+    #[test]
+    fn bounds_strings_and_arrays_without_leaking_urls() {
+        let mut truncations = 0;
+        let value = bound_json(
+            serde_json::json!({
+                "endpoint": "postgres://user:secret@example.test/db",
+                "pipelines": (0..101).map(|_| "x").collect::<Vec<_>>(),
+                "long": "x".repeat(MAX_STRING_BYTES + 1),
+            }),
+            &mut truncations,
+        );
+        assert_eq!(value["endpoint"], "[REDACTED]");
+        assert_eq!(value["pipelines"].as_array().map(Vec::len), Some(100));
+        assert!(truncations >= 2);
+        assert!(!serde_json::to_string(&value).unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn fixed_file_set_and_digests_are_written() {
+        let root = std::env::temp_dir().join(format!("pg-tide-bundle-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let result = write_support_bundle(
+            &root,
+            serde_json::json!({"compatibility": {"relay_version": "0.54.0"}}),
+            serde_json::json!({"pipelines": []}),
+            true,
+            true,
+            true,
+        )
+        .unwrap();
+        let mut names = fs::read_dir(&result.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        let mut expected = BUNDLE_FILES.map(str::to_string).to_vec();
+        expected.sort();
+        assert_eq!(names, expected);
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        for entry in manifest["included_files"].as_array().unwrap() {
+            let bytes = fs::read(root.join(entry["filename"].as_str().unwrap())).unwrap();
+            assert_eq!(entry["bytes"], bytes.len());
+            assert_eq!(entry["sha256"], sha256(&bytes));
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn existing_target_is_refused_without_overwrite() {
+        let root =
+            std::env::temp_dir().join(format!("pg-tide-bundle-existing-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let error =
+            write_support_bundle(&root, Value::Null, Value::Null, false, false, false).unwrap_err();
+        assert!(error.to_string().contains("target_exists"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_collection_writes_no_secret_canary() {
+        let root =
+            std::env::temp_dir().join(format!("pg-tide-bundle-canary-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        write_support_bundle(
+            &root,
+            serde_json::json!({"error": "postgres://user:canary@example.test/db"}),
+            failed_collection("postgres.unavailable"),
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        for entry in fs::read_dir(&root).unwrap() {
+            let bytes = fs::read(entry.unwrap().path()).unwrap();
+            assert!(!String::from_utf8_lossy(&bytes).contains("canary"));
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
 }
