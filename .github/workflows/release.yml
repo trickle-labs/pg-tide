@@ -142,11 +142,9 @@ jobs:
             archive_ext: tar.gz
             cargo_features: core
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             binary: pg-tide
             archive_ext: tar.gz
-            # kafka (rdkafka-sys) cross-compiles librdkafka with the host gcc producing x86_64
-            # objects; the aarch64 cross-linker then rejects them ("file in wrong format")
             cargo_features: core
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -168,16 +166,14 @@ jobs:
           toolchain: 1.97.1
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools (aarch64-linux)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Install OpenSSL development files (Linux)
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y --no-install-recommends libssl-dev
 
       - name: Build release binary (core profile)
         run: cargo build --package pg-tide-relay --release --target ${{ matrix.target }} --no-default-features --features ${{ matrix.cargo_features }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Package binary (tar.gz)
         if: matrix.archive_ext == 'tar.gz'
