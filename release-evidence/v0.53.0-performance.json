@@ -13,7 +13,7 @@
     "operational-candidate-contract-release"
   ],
   "qualification": {
-    "duration_hours": 24,
+    "duration_hours": 8,
     "retries": 0,
     "artifact_source": "checksum-recorded release-mode artifacts built from the exact commit",
     "raw_bundle": null,
