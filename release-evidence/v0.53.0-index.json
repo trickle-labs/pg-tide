@@ -9,6 +9,6 @@
   "inherited_security": "release-evidence/v0.52.0-security.json",
   "performance": "release-evidence/v0.53.0-performance.json",
   "candidate": {"commit": null, "artifact_digests": [], "image_digests": []},
-  "open_blockers": ["24-hour qualification and reference-run review are not present in this implementation checkout"],
+  "open_blockers": ["8-hour performance qualification is explicitly deferred to v0.56.0 because the required reference runner is unavailable; reference-run review and approval remain pending."],
   "release_manager": {"status": "required", "approved_by": null, "approved_at": null}
 }

@@ -26,6 +26,6 @@
   },
   "optimization": {"required": null, "evidence": null},
   "capacity_guide": "docs/src/operations/capacity-planning.md",
-  "open_blockers": ["Reference runner evidence and independent approval are required before release."],
+  "open_blockers": ["8-hour qualification is explicitly deferred to v0.56.0 because the required reference runner is unavailable; reference-run evidence and independent approval remain pending."],
   "approvals": {"performance_reviewer": null, "release_manager": null}
 }
