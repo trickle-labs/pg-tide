@@ -37,7 +37,7 @@ pg_tide's roadmap is organized around a focused, dependable, production-grade pr
 | **v0.51.0** | Upgrade, Rollback, and Recovery Integrity | Medium–Large | v0.50.0 | Declare v1 upgrade floor; fresh-install vs upgrade parity; sequential & interrupted migrations; relay/extension rollback; backup/restore | Delivered |
 | **v0.52.0** | Security and Supply-Chain Assurance | Medium–Large | v0.51.0 | Reduced-product threat model, privilege review, TLS/SSRF testing, secret canaries, minimal artifacts, SBOM & provenance | Delivered |
 | **v0.53.0** | Performance, Capacity, and Long-Run Stability | Medium–Large | v0.52.0 | Versioned operational budgets, reference environment, regression checks, leak detection, 24h qualification soak & 72h candidate soak | Delivered |
-| **v0.54.0** | Operator Experience, Documentation, and Hygiene | Medium–Large | v0.53.0 | Consolidated operator journey, executable docs in CI, runbook drills, archive cleanup, repository hygiene | Planned |
+| **v0.54.0** | Operator Experience, Documentation, and Hygiene | Medium–Large | v0.53.0 | Consolidated operator journey, executable docs in CI, runbook drills, archive cleanup, repository hygiene | Delivered |
 | **v0.55.0** | Independent Validation and Release Readiness | Medium | v0.54.0 | 4 production pilots, 5 independent reviews, ownership succession, full release rehearsal, zero-blocker gate | Planned |
 | **v1.0.0-rc.N** | Release Candidate Series | Blocker fixes | v0.55.0 | Blocker fixes only, exact candidate artifact verification | Planned |
 | **v1.0.0** | The Trust Release | Promotion | Final RC | GA promotion of the validated candidate with full production guarantees | Planned |
