@@ -1,10 +1,18 @@
 # pg_tide Pre-v1.0 Hardening, Simplification, and Trust Plan
 
-**Status:** Proposed  
+**Status:** Completed through v0.54.0; remaining schedule superseded
 **Starting point:** v0.47.0  
-**Target:** v1.0.0  
+**Delivered range:** v0.48.0 through v0.54.0
 **Recommended repository path:** `plans/PLAN_PRE_V1_0.md`  
 **Primary objective:** Turn the v0.47.0 public-beta contract into a small, dependable, independently validated v1 product.
+
+> **Supersession note (2026-09-01):** v0.48.0 through v0.54.0 delivered the
+> reduction and hardening work in this plan. The former v0.55.0 release-readiness
+> scope and v1.0.0 schedule are no longer active. The project will implement
+> inbound connectors in v0.55.0 through v0.59.0 under
+> [`plan_outbound.md`](../plan_outbound.md), and v1.0.0 is postponed
+> indefinitely. The remaining sections below preserve the original plan and
+> its historical acceptance criteria.
 
 ---
 

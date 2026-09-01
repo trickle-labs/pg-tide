@@ -1,7 +1,7 @@
 # pg_tide inbound and outbound connector implementation plan
 
 > **Status:** Proposed
-> **Release placement:** Post-v1.0 product expansion, no earlier than v1.1.0
+> **Release placement:** Pre-v1 expansion from v0.55.0 through v0.59.0
 > **Starting point:** v0.54.0 and current `main`
 > **Product decision:** Support four connector families with explicit roles:
 > PostgreSQL outbox/inbox, NATS JetStream, Apache Kafka, and HTTPS webhooks.
@@ -21,21 +21,21 @@ The result is a four-family connector set with a narrow, supportable route
 matrix and one delivery rule: pg_tide acknowledges the external source only
 after the inbox transaction commits.
 
-The implementation belongs after v1.0.0. The v0.47.0 contract freeze and the
+The implementation begins after v0.54.0. The v0.47.0 contract freeze and the
 v0.49.0 product reduction intentionally excluded inbound connectors, fan-in,
-and general reverse routing so the first stable release could prove its
-outbound behavior. Starting inbound work before the v1.0.0 evidence and release
-gates close would reopen that settled scope. The first change under this plan
-must therefore record the post-v1 contract decision and use the preserved
-`pre-v1-experimental-surface` tag only as research. It must not restore the old
-source modules wholesale.
+and general reverse routing so the project could prove its outbound behavior
+before expanding again. That reduction did its job. pg_tide will now remain on
+pre-v1 versions while the inbound product is built and proven, and v1.0.0 has
+no scheduled date. The first change under this plan must record the revised
+pre-v1 contract decision and use the preserved `pre-v1-experimental-surface`
+tag only as research. It must not restore the old source modules wholesale.
 
 The program is complete when all of the following statements are true:
 
 1. Existing forward configurations continue to run without migration or
    changed defaults. PostgreSQL outbox to PostgreSQL inbox, NATS, Kafka, and
    webhook tests pass with the same checkpoint, retry, DLQ, wire-format,
-   metrics, health, and shutdown behavior that v1.0.0 shipped.
+  metrics, health, and shutdown behavior established through v0.54.0.
 
 2. A user can create, inspect, enable, disable, delete, validate, export, and
    run NATS-to-inbox, Kafka-to-inbox, and webhook-to-inbox pipelines through
@@ -119,14 +119,13 @@ not an accidental result of two factory match arms.
 
 ### 3.1 Release preconditions
 
-Do not begin implementation until v1.0.0 is tagged and its release evidence is
-closed. At that point, record the exact starting commit, the generated
-connector registry, the pipeline schema digest, the SQL function inventory,
-the supported Cargo profiles, and the required-test manifest. Run the current
-contract, lifecycle, connector, documentation, and repository checks before
-changing any source or catalog behavior. A pre-existing failure blocks the
-first implementation pull request because it would make later compatibility
-claims ambiguous.
+Begin v0.55.0 from the delivered v0.54.0 tag. Record the exact starting commit,
+the generated connector registry, the pipeline schema digest, the SQL function
+inventory, the supported Cargo profiles, and the required-test manifest. Run
+the current contract, lifecycle, connector, documentation, and repository
+checks before changing any source or catalog behavior. A pre-existing failure
+blocks the first implementation pull request because it would make later
+compatibility claims ambiguous.
 
 The baseline command set is:
 
@@ -159,7 +158,7 @@ pipeline documents with no explicit schema version still normalize to schema
 version 1, missing `source_type` still means `outbox` when the source object is
 present, and old `config` sink objects still normalize as they do today.
 
-Inbound connector values are an additive post-v1 change to pipeline schema
+Inbound connector values are an additive pre-v1 change to pipeline schema
 version 1 because the JSON shape does not change. The contract-change record
 must say that `source_type` gains `nats`, `kafka`, and `webhook`, while the
 accepted sink for those values is only `inbox`. Do not add a duplicate
@@ -189,6 +188,36 @@ consumer group but does not create topics. The webhook source owns request
 authentication and bounded request handling, but it does not become a general
 HTTP gateway, transformation service, or asynchronous job API. A request is
 not accepted with `202` for later delivery under this contract.
+
+### 3.4 Version allocation
+
+This plan is divided into five pre-v1 releases. Each release leaves `main` with
+a coherent supported product and closes its own evidence. Preview code may be
+reviewed across several pull requests inside a release, but a release must not
+advertise a connector source that has not passed that release's support gate.
+If a connector misses its gate, the connector moves to the next v0.x release;
+the acknowledgement contract is not weakened to keep the version number.
+
+| Version | Size | Theme | Required outcome |
+|---|---|---|---|
+| **v0.55.0** | Medium | Direction-aware relay foundation | Source-owned batch settlement, unchanged forward behavior, internal direction and route validation, and no public inbound source yet |
+| **v0.56.0** | Medium-large | NATS JetStream inbound | Public reverse catalog/API activation, a supported durable NATS pull-consumer source delivering to PostgreSQL inbox, and closure of the deferred v0.53.0 eight-hour performance qualification |
+| **v0.57.0** | Large | Apache Kafka inbound | Supported consumer-group source with correct multi-partition checkpoints, rebalance handling, and inbox-first offset commits |
+| **v0.58.0** | Large | HTTPS webhook inbound | Supported process-level HTTPS receiver with authentication, bounded handoff, commit-before-response behavior, and graceful drain |
+| **v0.59.0** | Medium-large | Bidirectional hardening and validation | Mixed-direction regression, security and performance closure, operational drills, upgrade proof, production pilots, independent reviews, and release evidence |
+
+v1.0.0 and its release-candidate series are postponed indefinitely. They are
+not dependencies of this program, and no v0.55.0 through v0.59.0 acceptance
+criterion may defer correctness or security work to them. A future decision to
+resume v1 planning starts from the product and evidence that exist then rather
+than preserving the old v0.55.0 release-readiness schedule.
+
+The pending v0.53.0 operational qualification remains assigned to v0.56.0 as
+recorded in the v0.53.0 and v0.54.0 evidence. Run its eight-hour, zero-retry
+workflow against the exact v0.56.0 candidate and close the original evidence
+records only after the reference-run review and approvals exist. This proves
+the inherited outbound budget. NATS inbound performance evidence and the full
+seven-route qualification in v0.59.0 remain separate claims.
 
 ## 4. Shared reverse delivery contract
 
@@ -328,7 +357,7 @@ Replay remains source-specific. NATS redelivery and Kafka offset reset use
 their broker administration contracts and are documented operations, not an
 integer outbox replay cursor passed to every source. Webhook replay belongs to
 the sender. The existing `pg-tide replay` path remains limited to native
-outbox sources unless a separate post-v1 design defines safe broker replay
+outbox sources unless a separate design defines safe broker replay
 commands.
 
 ### 4.5 Ordering and backpressure
@@ -369,7 +398,7 @@ globally unique because the SQL API already rejects a pipeline name present in
 either catalog. Notifications from either table trigger the same bounded
 reconcile pass.
 
-Restore `tide.relay_set_inbox_v2(JSONB)` as a new post-v1 public API with a
+Restore `tide.relay_set_inbox_v2(JSONB)` as a pre-v1 public API with a
 smaller contract than the removed experimental version. It accepts a pipeline
 name, an existing local inbox or remote inbox destination, one of the three
 supported source types, a connector-specific source object, batch and retry
@@ -487,7 +516,7 @@ declare maximum record and batch sizes, actual ordering, acknowledgement point,
 deduplication identity, retryable and permanent errors, TLS behavior,
 authentication modes, backpressure, shutdown behavior, tested service
 versions, docs, owner, security contact, and evidence. Preview rows may appear
-in post-v1 generated surfaces without being described as supported.
+in generated pre-v1 surfaces without being described as supported.
 
 ## 6. Foundation workstream
 
@@ -848,7 +877,7 @@ Keep changes reviewable and preserve a green forward product after each merge.
 The following sequence is ordered by dependency, not by an obligation to ship
 every item in one release.
 
-1. **Decision and baseline.** Record the post-v1 contract change, exact route
+1. **Decision and baseline.** Record the revised pre-v1 contract change, exact route
    matrix, baseline digests, preservation-tag review, threats, and initial
    required-test entries as pending. This pull request changes no runtime
    behavior.
@@ -961,7 +990,8 @@ own evidence.
 
 ## 16. Final acceptance checklist
 
-- [ ] v1.0.0 is released and the post-v1 contract expansion is approved.
+- [ ] The v0.54.0 baseline is recorded and the pre-v1 connector expansion is
+  approved.
 - [ ] The closed seven-route matrix is generated, documented, and rejected
   consistently outside its allowed pairs.
 - [ ] Existing forward pipeline documents and behavior require no migration.

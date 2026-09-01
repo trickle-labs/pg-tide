@@ -1,10 +1,12 @@
 # pg_tide Roadmap
 
-pg_tide's roadmap is organized around a focused, dependable, production-grade product: PostgreSQL transactional outbox publishing, idempotent inbox delivery, and a durable, highly available relay delivering events to PostgreSQL, NATS JetStream, Apache Kafka, and HTTPS webhooks.
+pg_tide's roadmap is organized around a focused, dependable, production-grade product: PostgreSQL transactional outbox publishing, idempotent inbox delivery, and a durable, highly available relay delivering events to and from NATS JetStream, Apache Kafka, and HTTPS webhooks through PostgreSQL outboxes and inboxes.
 
 ## Active Roadmap
 
-- **[Pre-v1.0 Hardening, Simplification, and Trust Plan (v0.48.0 – v1.0.0)](plans/PLAN_PRE_V1_0.md)** — The active roadmap governing pre-v1 baseline closure, non-core surface removal, delivery correctness proofs, lifecycle testing, security auditing, performance budgeting, documentation execution, production pilots, and independent reviews.
+- **[Inbound and Outbound Connector Implementation Plan (v0.55.0 – v0.59.0)](plan_outbound.md)** — The active roadmap for direction-aware relay foundations, NATS and Kafka consumers, HTTPS webhook ingress, PostgreSQL inbox delivery, and mixed-direction production validation.
+
+The earlier **[Pre-v1.0 Hardening, Simplification, and Trust Plan](plans/PLAN_PRE_V1_0.md)** delivered v0.48.0 through v0.54.0. Its former v0.55.0 release-readiness step and v1.0.0 schedule are superseded by the connector program below. v1.0.0 is postponed indefinitely and has no target date.
 
 ## Foundational Roadmap
 
@@ -27,7 +29,7 @@ pg_tide's roadmap is organized around a focused, dependable, production-grade pr
 | **v0.46.0** | Four Connectors, Fully Trusted | Production support for PG Inbox, NATS JetStream, Kafka, and HTTPS Webhook | Delivered |
 | **v0.47.0** | Public Beta and API Freeze | Frozen v1 contract, machine-readable schemas/fixtures, release gates & evidence framework | Delivered |
 
-### Phase 2: Pre-v1.0 Hardening, Simplification, and Trust (v0.48.0 – v1.0.0) — *Active*
+### Phase 2: Pre-v1.0 Hardening, Simplification, and Trust (v0.48.0 – v0.54.0) — *Complete*
 
 | Version | Theme | Scope | Dependency | Main Outcome | Status |
 |---|---|---|---|---|---|
@@ -38,9 +40,23 @@ pg_tide's roadmap is organized around a focused, dependable, production-grade pr
 | **v0.52.0** | Security and Supply-Chain Assurance | Medium–Large | v0.51.0 | Reduced-product threat model, privilege review, TLS/SSRF testing, secret canaries, minimal artifacts, SBOM & provenance | Delivered |
 | **v0.53.0** | Performance, Capacity, and Long-Run Stability | Medium–Large | v0.52.0 | Versioned operational budgets, reference environment, regression checks, leak detection, 24h qualification soak & 72h candidate soak | Delivered |
 | **v0.54.0** | Operator Experience, Documentation, and Hygiene | Medium–Large | v0.53.0 | Consolidated operator journey, executable docs in CI, runbook drills, archive cleanup, repository hygiene | Delivered |
-| **v0.55.0** | Independent Validation and Release Readiness | Medium | v0.54.0 | 4 production pilots, 5 independent reviews, ownership succession, full release rehearsal, zero-blocker gate | Planned |
-| **v1.0.0-rc.N** | Release Candidate Series | Blocker fixes | v0.55.0 | Blocker fixes only, exact candidate artifact verification | Planned |
-| **v1.0.0** | The Trust Release | Promotion | Final RC | GA promotion of the validated candidate with full production guarantees | Planned |
+
+### Phase 3: Pre-v1 Bidirectional Connectors (v0.55.0 – v0.59.0) — *Active*
+
+| Version | Theme | Scope | Dependency | Main Outcome | Status |
+|---|---|---|---|---|---|
+| **[v0.55.0](roadmap/v0.55.0.md)** | Direction-Aware Relay Foundation | Medium | v0.54.0 | Source-owned batch settlement, unchanged forward behavior, internal direction model, and closed route validation | Planned |
+| **[v0.56.0](roadmap/v0.56.0.md)** | NATS JetStream Inbound | Medium–Large | v0.55.0 | Public reverse pipeline API, supported durable NATS pull-consumer delivery to PostgreSQL inbox, and deferred v0.53.0 performance qualification | Planned |
+| **[v0.57.0](roadmap/v0.57.0.md)** | Apache Kafka Inbound | Large | v0.56.0 | Supported consumer-group source with per-partition commits, rebalance safety, and inbox-first acknowledgement | Planned |
+| **[v0.58.0](roadmap/v0.58.0.md)** | HTTPS Webhook Inbound | Large | v0.57.0 | Supported authenticated HTTPS receiver with bounded handoff and commit-before-response behavior | Planned |
+| **[v0.59.0](roadmap/v0.59.0.md)** | Bidirectional Hardening and Validation | Medium–Large | v0.58.0 | Mixed-direction regression, upgrade proof, performance and security closure, operational drills, pilots, and independent reviews | Planned |
+
+### Deferred stable release
+
+| Version | Status | Resumption condition |
+|---|---|---|
+| **[v1.0.0-rc.N](roadmap/v1.0.0-rc.md)** | Postponed indefinitely | A future roadmap decision defines a stable scope from the product and evidence available at that time |
+| **[v1.0.0](roadmap/v1.0.0.md)** | Postponed indefinitely | A validated release candidate exists under a newly approved v1 plan |
 
 ---
 
